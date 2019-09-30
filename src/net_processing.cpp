@@ -1248,6 +1248,10 @@ void PeerLogicValidation::BlockChecked(const CBlock& block, const CValidationSta
         if (it != mapBlockSource.end() && State(it->second.first) && state.GetRejectCode() > 0 && state.GetRejectCode() < REJECT_INTERNAL) {
             CBlockReject reject = {(unsigned char)state.GetRejectCode(), state.GetRejectReason().substr(0, MAX_REJECT_MESSAGE_LENGTH), hash};
             State(it->second.first)->rejects.push_back(reject);
+        }
+        // If the block failed validation, we know where it came from and we're still connected
+        // to that peer, maybe punish.
+        if (it != mapBlockSource.end() && State(it->second.first)) {
             MaybePunishNode(/*nodeid=*/ it->second.first, state, /*via_compact_block=*/ !it->second.second);
         }
     }
