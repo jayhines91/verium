@@ -1,18 +1,18 @@
-Veribase integration/staging tree
+Verium Reserve integration/staging tree
 =====================================
 
 https://vericonomy.com
 
-What is Veribase?
+What is Verium Reserve?
 ----------------
 
-VeriCoin is a Proof-of-Stake-Time cryptocurrency.
-VeriCoin uses peer-to-peer technology to operate
+Verium Reserve is a Proof-of-Work-Time cryptocurrency.
+Verium Reserve uses peer-to-peer technology to operate
 with no central authority: managing transactions and issuing money are carried
 out collectively by the network.
 
 For more information, as well as an immediately usable, binary version of
-the Vericoin software, see https://vericonomy.com/
+the Verium Reserve software, see https://vericonomy.com/
 
 License
 -------
@@ -24,8 +24,8 @@ Development Process
 -------------------
 
 The `master` branch is regularly built and tested, but is not guaranteed to be
-completely stable. [Tags](https://github.com/VeriConomy/veribase/tags) are created
-regularly to indicate new official, stable release versions of Veribase.
+completely stable. [Tags](https://github.com/VeriConomy/verium/tags) are created
+regularly to indicate new official, stable release versions of Verium Reserve.
 
 The contribution workflow is described in [CONTRIBUTING.md](CONTRIBUTING.md)
 and useful hints for developers can be found in [doc/developer-notes.md](doc/developer-notes.md).

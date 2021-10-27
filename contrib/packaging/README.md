@@ -4,7 +4,7 @@ Vericonomy packaging
 Vericonomy is packaged and distributed through different channels.
 
 Advanced users can compile Vericonomy from source. Static binaries for Linux, as well as installers for Windows and macOS are
-provided on the [website](https://vericoin.info/).
+provided on the [website](https://vericonomy.com/).
 
 In addition, this repository contains packaging metadata for package managers running on Linux. Currently
 

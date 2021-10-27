@@ -24,7 +24,7 @@ BITCOIN_TX_NAME=vericoin-tx
 BITCOIN_WALLET_TOOL_NAME=vericoin-wallet
 
 dnl Define Verium as default coin type
-client_is_verium=no
+client_is_verium=yes
 if test "x$client_is_verium" = xyes; then
   AC_DEFINE(CLIENT_IS_VERIUM, 1, [Set verium as default coin type])
   AC_PACKAGE_NAME=Verium

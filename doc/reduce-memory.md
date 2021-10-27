@@ -44,7 +44,7 @@ By default, since glibc `2.10`, the C library will create up to two heap arenas 
 ```bash
 #!/usr/bin/env bash
 export MALLOC_ARENA_MAX=1
-vericoind
+veriumd
 ```
 
 The behavior was introduced to increase CPU locality of allocated memory and performance with concurrent allocation, so this setting could in theory reduce performance. However, in Veribase very little parallel allocation happens, so the impact is expected to be small or absent.

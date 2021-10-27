@@ -8,14 +8,14 @@ thread queue, wallet balance.
 Running
 ---------------------
 
-For benchmarks purposes you only need to compile `vericoin_bench`. Beware of configuring without `--enable-debug` as this would impact
+For benchmarks purposes you only need to compile `verium_bench`. Beware of configuring without `--enable-debug` as this would impact
 benchmarking by unlatching log printers and lock analysis.
 
-    make -C src vericoin_bench
+    make -C src verium_bench
 
 After compiling Veribase, the benchmarks can be run with:
 
-    src/bench/bench_vericoin
+    src/bench/bench_verium
 
 The output will look similar to:
 ```
@@ -27,7 +27,7 @@ AssembleBlock, 5, 700, 1.79954, 0.000510913, 0.000517018, 0.000514497
 Help
 ---------------------
 
-    src/bench/bench_vericoin --help
+    src/bench/bench_verium --help
 
 To print options like scaling factor or per-benchmark filter.
 

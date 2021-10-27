@@ -98,7 +98,7 @@ pushd "$TARGET" || exit 1
           exit 1
         fi
 
-        git clone https://github.com/VeriConomy/vericoin "$tag"
+        git clone https://github.com/VeriConomy/verium "$tag"
         pushd "$tag" || exit 1
         {
           git checkout "$tag"
@@ -120,9 +120,9 @@ pushd "$TARGET" || exit 1
           make
           # Move binaries, so they're in the same place as in the release download:
           mkdir bin
-          mv src/vericoind src/vericoin-cli src/vericoin-tx bin
+          mv src/veriumd src/verium-cli src/verium-tx bin
           if [ "$FUNCTIONAL_TESTS" -eq "0" ]; then
-            mv src/qt/vericoin-qt bin
+            mv src/qt/verium-qt bin
           fi
         }
         popd || exit 1

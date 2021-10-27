@@ -73,9 +73,9 @@ When rebuilding during development, note that running `make`, without giving a t
 Obviously, it is important to build and run the tests at appropriate times -- but when you just want a quick compile to check your work, consider picking one or a set of build targets relevant to what you're working on, e.g.:
 
 ```sh
-make src/vericoind src/vericoin-cli
-make src/qt/vericoin-qt
-make -C src vericoin_bench
+make src/veriumd src/verium-cli
+make src/qt/verium-qt
+make -C src verium_bench
 ```
 
 (You can and should combine this with `-j`, as above, for a parallel build.)

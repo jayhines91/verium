@@ -6,12 +6,12 @@
 """
     ZMQ example using python3's asyncio
 
-    Vericoin should be started with the command line arguments:
-        vericoind -daemon \
-                -zmqpubrawtx=tcp://127.0.0.1:58683 \
-                -zmqpubrawblock=tcp://127.0.0.1:58683 \
-                -zmqpubhashtx=tcp://127.0.0.1:58683 \
-                -zmqpubhashblock=tcp://127.0.0.1:58683
+    Verium should be started with the command line arguments:
+        veriumd -daemon \
+                -zmqpubrawtx=tcp://127.0.0.1:33987 \
+                -zmqpubrawblock=tcp://127.0.0.1:33987 \
+                -zmqpubhashtx=tcp://127.0.0.1:33987 \
+                -zmqpubhashblock=tcp://127.0.0.1:33987
 
     We use the asyncio library here.  `self.handle()` installs itself as a
     future at the end of the function.  Since it never returns with the event

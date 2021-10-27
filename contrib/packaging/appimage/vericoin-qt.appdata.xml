@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Copyright 2013 First Lastname <your@email.com> -->
 <component type="desktop-application">
-  <id>vericoin-qt</id>
+  <id>verium-qt</id>
   <metadata_license>FSFAP</metadata_license>
   <project_license>MIT</project_license>
-  <name>Vericoin Vault</name>
-  <summary>Connect to the Vericoin P2P Network</summary>
+  <name>Verium Reserve</name>
+  <summary>Connect to the Verium P2P Network</summary>
 
   <description>
     <p>
-        Vericoin is an experimental digital currency that enables instant payments to anyone, anywhere in the world. Vericoin uses peer-to-peer technology to operate with no central authority: managing transactions and issuing money are carried out collectively by the network. Vericoin is the name of open source software which enables the use of this currency.
+        Verium Reserve is an experimental digital currency that enables instant payments to anyone, anywhere in the world. Verium Reserve uses peer-to-peer technology to operate with no central authority: managing transactions and issuing money are carried out collectively by the network. Verium Reserve is the name of open source software which enables the use of this currency.
     </p>
     <p>
-        Vericoin is part of the Vericonomy opensource and decentralized organisation.
+        Verium Reserve is part of the Vericonomy opensource and decentralized organisation.
     </p>
   </description>
 

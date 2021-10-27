@@ -1,5 +1,5 @@
-IDI_ICON1 ICON DISCARDABLE "icons/vericoin.ico"
-IDI_ICON2 ICON DISCARDABLE "icons/vericoin.ico"
+IDI_ICON1 ICON DISCARDABLE "icons/verium.ico"
+IDI_ICON2 ICON DISCARDABLE "icons/verium.ico"
 
 #include <windows.h>             // needed for VERSIONINFO
 #include "../../clientversion.h" // holds the needed client version information

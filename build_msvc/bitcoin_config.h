@@ -262,13 +262,13 @@
 #define PACKAGE_BUGREPORT "https://github.com/VeriConomy/veribase/issues"
 
 /* Define to the full name of this package. */
-#define PACKAGE_NAME "vericoin"
+#define PACKAGE_NAME "verium"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "vericoin 2.0.1"
+#define PACKAGE_STRING "verium 2.0.1"
 
 /* Define to the one symbol short name of this package. */
-#define PACKAGE_TARNAME "vericoin"
+#define PACKAGE_TARNAME "verium"
 
 /* Define to the home page for this package. */
 #define PACKAGE_URL "https://vericonomy.com/"
