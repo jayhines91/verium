@@ -3256,9 +3256,9 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
             return state.Invalid(ValidationInvalidReason::BLOCK_CHECKPOINT, error("%s: forked chain older than last checkpoint (height %d)", __func__, nHeight), REJECT_CHECKPOINT, "bad-fork-prior-to-checkpoint");
     }
 
-    // Check timestamp against prev
-    if (block.GetBlockTime() <= pindexPrev->GetMedianTimePast())
-        return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID, "time-too-old", "block's timestamp is too early");
+    // [VRM 1.3.5 PATCH] Disable timestamp-too-old check to allow syncing legacy 1.3.1 chain; will be re-enabled on next release with block height
+    if (false && block.GetBlockTime() <= pindexPrev->GetMedianTimePast())
+    return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID, "time-too-old", "block's timestamp is too early");
 
     // Check timestamp
     if (block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME)
