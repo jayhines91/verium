@@ -1,0 +1,14 @@
+diff --git a/boost/thread/pthread/thread_data.hpp b/boost/thread/pthread/thread_data.hpp
+index 1234567..89abcdef 100644
+--- a/boost/thread/pthread/thread_data.hpp
++++ b/boost/thread/pthread/thread_data.hpp
+@@
+-#if defined(PTHREAD_STACK_MIN) && PTHREAD_STACK_MIN > 0
+-        if (size < PTHREAD_STACK_MIN)
+-            size = PTHREAD_STACK_MIN;
+-#endif
++#if defined(PTHREAD_STACK_MIN)
++        if (size < static_cast<std::size_t>(PTHREAD_STACK_MIN))
++            size = static_cast<std::size_t>(PTHREAD_STACK_MIN);
++#endif
+
