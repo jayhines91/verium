@@ -1,8 +1,4 @@
 name: Build Verium (Linux)
-
-concurrency:
-  group: verium-ci-${{ github.ref }}   # same string in all 3 workflows
-  cancel-in-progress: true
   
 on:
   workflow_dispatch:
@@ -13,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-linux-${{ github.ref }}
+  group: verium-ci-${{ github.ref }}   
   cancel-in-progress: true
 
 defaults:
