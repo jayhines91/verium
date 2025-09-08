@@ -2,8 +2,6 @@ name: Build Verium (Linux)
   
 on:
   workflow_dispatch:
-#  pull_request:
-#  push:
 
 permissions:
   contents: write
