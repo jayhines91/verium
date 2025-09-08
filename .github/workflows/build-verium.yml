@@ -1,0 +1,111 @@
+name: Build Verium (0.14/0.15-style depends)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            host: x86_64-pc-linux-gnu
+          - os: windows-2022
+            host: x86_64-w64-mingw32
+          - os: macos-13
+            host: x86_64-apple-darwin16
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Base toolchains (roughly what Travis/AppVeyor used) ----
+      - name: Install base deps (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config automake libtool \
+                                  python3 ccache curl zip unzip
+
+      - name: Install base deps (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          brew update
+          brew install automake libtool pkg-config ccache
+
+      - name: Install base deps (Windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: bash
+        run: |
+          choco install -y msys2
+          echo "MSYS2 installed"
+          # depends recipes will drive the rest (mingw toolchain will be built/used there)
+
+      # ---- Speed it up: cache depends sources + built outputs ----
+      - name: Cache depends
+        uses: actions/cache@v4
+        with:
+          path: |
+            depends/sources
+            depends/built
+          key: ${{ runner.os }}-${{ matrix.host }}-${{ hashFiles('depends/packages/*.mk') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.host }}-
+
+      # ---- Build depends (includes Qt 5.9.8 per your recipe) ----
+      - name: Build depends
+        shell: bash
+        run: |
+          make -C depends HOST=${{ matrix.host }} -j"$(nproc || sysctl -n hw.ncpu || echo 2)"
+
+      # ---- Configure (Bitcoin/Verium autotools flow) ----
+      - name: Configure
+        shell: bash
+        run: |
+          ./autogen.sh
+          export CONFIG_SITE=$(pwd)/depends/${{ matrix.host }}/share/config.site
+          ./configure \
+            --prefix=$(pwd)/depends/${{ matrix.host }} \
+            --host=${{ matrix.host }} \
+            --disable-bench --disable-tests \
+            --enable-reduce-exports \
+            --disable-shared --enable-static
+
+      # ---- Build (daemon, cli, qt if present) ----
+      - name: Build
+        shell: bash
+        run: |
+          make -j"$(nproc || sysctl -n hw.ncpu || echo 2)"
+
+      # ---- Package outputs (adjust paths/names to your tree) ----
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p out
+          # tweak names/locations as needed for Verium sources:
+          cp src/veriumd* out/ 2>/dev/null || true
+          cp src/verium-cli* out/ 2>/dev/null || true
+          cp src/qt/verium-qt* out/ 2>/dev/null || true
+          if [ -z "$(ls -A out)" ]; then
+            echo "No binaries found in 'out' (check paths)"; exit 1
+          fi
+          if [[ "${{ matrix.os }}" == "windows-2022" ]]; then
+            7z a verium-${{ matrix.host }}.zip ./out/*
+          else
+            tar -czf verium-${{ matrix.host }}.tar.gz -C out .
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: verium-${{ matrix.host }}
+          path: |
+            verium-${{ matrix.host }}.tar.gz
+            verium-${{ matrix.host }}.zip
+          if-no-files-found: ignore
