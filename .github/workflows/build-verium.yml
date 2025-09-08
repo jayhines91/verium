@@ -1,4 +1,4 @@
-name: Build Verium (0.14/0.15-style depends)
+name: Build Verium (locked CI)
 
 on:
   push:
@@ -6,180 +6,248 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+# Use LF everywhere (avoids CRLF poisoning on Windows checkouts)
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            host: x86_64-pc-linux-gnu
-          - os: windows-2022
-            host: x86_64-w64-mingw32
-          - os: macos-13
-            host: x86_64-apple-darwin16
-    runs-on: ${{ matrix.os }}
-
+  # -------------------- Linux native build --------------------
+  linux:
+    runs-on: ubuntu-22.04
+    env:
+      HOST_TRIPLET: x86_64-pc-linux-gnu
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
 
-      # ---------- Linux ----------
-      - name: Install base deps (Linux)
-        if: startsWith(matrix.os, 'ubuntu')
+      - name: Base deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config automake libtool \
-                                  python3 ccache curl zip unzip
-      - name: Cache depends (Linux/macOS/Windows share same paths)
+          sudo apt-get install -y \
+            build-essential automake libtool pkg-config python3 \
+            curl zip unzip ccache
+
+      - name: Cache depends
         uses: actions/cache@v4
         with:
           path: |
             depends/sources
             depends/built
-          key: ${{ runner.os }}-${{ matrix.host }}-${{ hashFiles('depends/packages/*.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.host }}-
+          key: linux-${{ env.HOST_TRIPLET }}-${{ hashFiles('depends/packages/*.mk') }}
+          restore-keys: linux-${{ env.HOST_TRIPLET }}-
 
       - name: Build depends (Linux)
-        if: startsWith(matrix.os, 'ubuntu')
-        run: |
-          make -C depends HOST=${{ matrix.host }} -j"$(nproc || echo 2)"
+        run: make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)"
 
-      - name: Configure (Linux)
-        if: startsWith(matrix.os, 'ubuntu')
+      - name: Configure
         run: |
           ./autogen.sh
-          export CONFIG_SITE="$(pwd)/depends/${{ matrix.host }}/share/config.site"
+          export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
           ./configure \
-            --prefix="$(pwd)/depends/${{ matrix.host }}" \
-            --host=${{ matrix.host }} \
+            --prefix="$(pwd)/depends/${HOST_TRIPLET}" \
+            --host="${HOST_TRIPLET}" \
             --disable-bench --disable-tests \
             --enable-reduce-exports \
-            --disable-shared --enable-static
+            --disable-shared --enable-static || { echo "=== config.log ==="; (grep -nH . config.log || true); exit 1; }
 
-      - name: Build (Linux)
-        if: startsWith(matrix.os, 'ubuntu')
-        run: make -j"$(nproc || echo 2)"
+      - name: Build
+        run: make -j"$(nproc || echo 2)" V=1
 
-      # ---------- macOS ----------
-      - name: Install base deps (macOS)
-        if: startsWith(matrix.os, 'macos')
+      - name: Package (versioned) + checksums
+        run: |
+          set -euo pipefail
+          V="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+          if [ -z "$V" ]; then V=$(git describe --tags --dirty --always || echo untagged); fi
+          PKG="verium-${V}-${HOST_TRIPLET}.tar.gz"
+          mkdir -p out
+          cp -f src/veriumd* out/ 2>/dev/null || true
+          cp -f src/verium-cli* out/ 2>/dev/null || true
+          cp -f src/verium-tx* out/ 2>/dev/null || true
+          cp -f src/qt/verium-qt* out/ 2>/dev/null || true
+          [ -n "$(ls -A out)" ] || { echo "No binaries found in out/"; exit 2; }
+          tar -czf "$PKG" -C out .
+          sha256sum "$PKG" > "${PKG}.SHA256SUMS"
+          echo "ART_MAIN=$PKG" >> $GITHUB_ENV
+          echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ env.HOST_TRIPLET }}
+          path: |
+            ${{ env.ART_MAIN }}
+            ${{ env.ART_SUMS }}
+
+  # -------------------- Windows (cross-compile on Ubuntu) --------------------
+  windows_xwin:
+    runs-on: ubuntu-22.04
+    env:
+      HOST_TRIPLET: x86_64-w64-mingw32
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Base deps + MinGW
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential automake libtool pkg-config python3 \
+            g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 \
+            curl zip unzip ccache
+
+      - name: Cache depends
+        uses: actions/cache@v4
+        with:
+          path: |
+            depends/sources
+            depends/built
+          key: win-${{ env.HOST_TRIPLET }}-${{ hashFiles('depends/packages/*.mk') }}
+          restore-keys: win-${{ env.HOST_TRIPLET }}-
+
+      - name: Build depends (Win64)
+        run: make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)"
+
+      - name: Configure (Win64)
+        run: |
+          ./autogen.sh
+          export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
+          ./configure \
+            --host=${HOST_TRIPLET} \
+            --prefix="$(pwd)/depends/${HOST_TRIPLET}" \
+            --disable-bench --disable-tests \
+            --enable-reduce-exports \
+            --disable-shared --enable-static || { echo "=== config.log ==="; (grep -nH . config.log || true); exit 1; }
+
+      - name: Build (Win64)
+        run: make -j"$(nproc || echo 2)" V=1
+
+      - name: Package (versioned) + checksums
+        run: |
+          set -euo pipefail
+          V="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+          if [ -z "$V" ]; then V=$(git describe --tags --dirty --always || echo untagged); fi
+          PKGZIP="verium-${V}-${HOST_TRIPLET}.zip"
+          mkdir -p out
+          cp -f src/*.exe out/ 2>/dev/null || true
+          cp -f src/qt/*.exe out/ 2>/dev/null || true
+          [ -n "$(ls -A out)" ] || { echo "No Windows EXEs found in out/"; exit 2; }
+          (cd out && zip -r "../$PKGZIP" .)
+          sha256sum "$PKGZIP" > "${PKGZIP}.SHA256SUMS"
+          echo "ART_MAIN=$PKGZIP" >> $GITHUB_ENV
+          echo "ART_SUMS=${PKGZIP}.SHA256SUMS" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win64-${{ env.HOST_TRIPLET }}
+          path: |
+            ${{ env.ART_MAIN }}
+            ${{ env.ART_SUMS }}
+
+  # -------------------- macOS native build (dynamic host discovery) --------------------
+  mac:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Base deps
         run: |
           brew update
           brew install automake libtool pkg-config ccache
-      - name: Build depends (macOS)
-        if: startsWith(matrix.os, 'macos')
-        env:
-          # Adjust if your depends expects a specific target or SDK:
-          MACOSX_DEPLOYMENT_TARGET: "10.13"
-          SDKROOT: ${{ env.SDKROOT }}
-        run: |
-          # Try to locate SDK and export for consistency
-          if command -v xcrun >/dev/null 2>&1; then
-            export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
-          fi
-          make -C depends HOST=${{ matrix.host }} -j"$(sysctl -n hw.ncpu || echo 2)"
 
-      - name: Configure (macOS)
-        if: startsWith(matrix.os, 'macos')
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "10.13"
-        run: |
-          ./autogen.sh
-          export CONFIG_SITE="$(pwd)/depends/${{ matrix.host }}/share/config.site"
-          ./configure \
-            --prefix="$(pwd)/depends/${{ matrix.host }}" \
-            --host=${{ matrix.host }} \
-            --disable-bench --disable-tests \
-            --enable-reduce-exports \
-            --disable-shared --enable-static
-
-      - name: Build (macOS)
-        if: startsWith(matrix.os, 'macos')
-        run: make -j"$(sysctl -n hw.ncpu || echo 2)"
-
-      # ---------- Windows (MSYS2) ----------
-      - name: Set up MSYS2
-        if: startsWith(matrix.os, 'windows')
-        uses: msys2/setup-msys2@v2
+      - name: Cache depends
+        uses: actions/cache@v4
         with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            base-devel
-            git
-            zip
-            unzip
-            patch
-            dos2unix
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-pkg-config
-            mingw-w64-x86_64-cmake
-
-      - name: Normalize line endings (fix CRLF in makefiles/scripts)
-        if: startsWith(matrix.os, 'windows')
-        shell: msys2 {0}
-        run: |
-          find depends -type f \( -name '*.mk' -o -name 'Makefile' -o -name '*.sh' \) -print0 | xargs -0 dos2unix || true
-
-      - name: Sanity check POSIX tools
-        if: startsWith(matrix.os, 'windows')
-        shell: msys2 {0}
-        run: |
-          uname -a
-          command -v make; command -v sed; command -v cut; command -v sha256sum
-          gcc --version
-          g++ --version
-
-      - name: Build depends (Windows)
-        if: startsWith(matrix.os, 'windows')
-        shell: msys2 {0}
-        run: |
-          make -C depends HOST=${{ matrix.host }} -j"$(nproc || echo 2)"
-
-      - name: Configure (Windows)
-        if: startsWith(matrix.os, 'windows')
-        shell: msys2 {0}
-        run: |
-          ./autogen.sh
-          export CONFIG_SITE="$PWD/depends/${{ matrix.host }}/share/config.site"
-          ./configure \
-            --prefix="$PWD/depends/${{ matrix.host }}" \
-            --host=${{ matrix.host }} \
-            --disable-bench --disable-tests \
-            --enable-reduce-exports \
-            --disable-shared --enable-static
-
-      - name: Build (Windows)
-        if: startsWith(matrix.os, 'windows')
-        shell: msys2 {0}
-        run: make -j"$(nproc || echo 2)"
-
-      # ---------- Package ----------
-      - name: Collect artifacts
-        shell: bash
-        run: |
-          mkdir -p out
-          cp src/veriumd* out/ 2>/dev/null || true
-          cp src/verium-cli* out/ 2>/dev/null || true
-          cp src/qt/verium-qt* out/ 2>/dev/null || true
-          if [ -z "$(ls -A out)" ]; then
-            echo "No binaries found in 'out' (check paths)"; exit 1
-          fi
-          if [[ "${{ matrix.os }}" == "windows-2022" ]]; then
-            # Use zip (available in MSYS2) instead of 7z
-            /usr/bin/env bash -lc 'cd out && zip -r ../verium-${{ matrix.host }}.zip .'
-          else
-            tar -czf verium-${{ matrix.host }}.tar.gz -C out .
-          fi
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: verium-${{ matrix.host }}
           path: |
-            verium-${{ matrix.host }}.tar.gz
-            verium-${{ matrix.host }}.zip
-          if-no-files-found: ignore
+            depends/sources
+            depends/built
+          key: macos-${{ hashFiles('depends/packages/*.mk') }}
+          restore-keys: macos-
+
+      - name: Build depends (discover darwin triplet)
+        run: |
+          set -e
+          # Build with a generic apple-darwin host; depends will create a specific dir
+          make -C depends HOST=x86_64-apple-darwin -j"$(sysctl -n hw.ncpu || echo 2)"
+          # Discover actual host dir produced by depends:
+          HOSTDIR=$(ls -d depends/x86_64-apple-darwin* | head -n1)
+          [ -d "$HOSTDIR" ] || { echo "Could not find Darwin host dir under depends/"; exit 2; }
+          echo "HOSTDIR=$HOSTDIR" >> $GITHUB_ENV
+          echo "HOST_TRIPLET=$(basename "$HOSTDIR")" >> $GITHUB_ENV
+          echo "Using HOST_TRIPLET=$(basename "$HOSTDIR")"
+          ls -la "$HOSTDIR"
+
+      - name: Configure
+        run: |
+          ./autogen.sh
+          export CONFIG_SITE="$(pwd)/${HOSTDIR}/share/config.site"
+          export MACOSX_DEPLOYMENT_TARGET=10.13
+          ./configure \
+            --prefix="$(pwd)/${HOSTDIR}" \
+            --host="${HOST_TRIPLET}" \
+            --disable-bench --disable-tests \
+            --enable-reduce-exports \
+            --disable-shared --enable-static || { echo "=== config.log ==="; (grep -nH . config.log || true); exit 1; }
+
+      - name: Build
+        run: make -j"$(sysctl -n hw.ncpu || echo 2)" V=1
+
+      - name: Package (versioned) + checksums
+        run: |
+          set -euo pipefail
+          V="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+          if [ -z "$V" ]; then V=$(git describe --tags --dirty --always || echo untagged); fi
+          PKG="verium-${V}-${HOST_TRIPLET}.tar.gz"
+          mkdir -p out
+          cp -f src/veriumd* out/ 2>/dev/null || true
+          cp -f src/verium-cli* out/ 2>/dev/null || true
+          cp -f src/verium-tx* out/ 2>/dev/null || true
+          cp -f src/qt/verium-qt* out/ 2>/dev/null || true
+          [ -n "$(ls -A out)" ] || { echo "No binaries found in out/"; exit 2; }
+          tar -czf "$PKG" -C out .
+          shasum -a 256 "$PKG" > "${PKG}.SHA256SUMS"
+          echo "ART_MAIN=$PKG" >> $GITHUB_ENV
+          echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ env.HOST_TRIPLET }}
+          path: |
+            ${{ env.ART_MAIN }}
+            ${{ env.ART_SUMS }}
+
+  # -------------------- Release on tag (collects artifacts from all jobs) --------------------
+  release:
+    needs: [linux, windows_xwin, mac]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Flatten
+        run: |
+          mkdir -p upload
+          find dist -type f -maxdepth 3 -print -exec mv {} upload/ \; || true
+          ls -la upload
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: upload/*
+          draft: false
+          prerelease: false
