@@ -1,9 +1,12 @@
 name: Build Verium (macOS)
-
+concurrency:
+  group: verium-ci-${{ github.ref }}   # same string in all 3 workflows
+  cancel-in-progress: true
+  
 on:
   workflow_dispatch:
-  pull_request:
-  push:
+#  pull_request:
+#  push:
 
 permissions:
   contents: write
