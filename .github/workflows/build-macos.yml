@@ -1,0 +1,99 @@
+name: Build Verium (macOS)
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  mac:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Base deps
+        run: |
+          brew update
+          brew install automake libtool pkg-config ccache
+
+      # Optional: preseed sources
+      # - name: Preseed depends sources
+      #   run: |
+      #     mkdir -p depends/sources
+      #     gh release download deps-sources-v1 --pattern 'depends-sources-*.zip' --dir .
+      #     unzip -o depends-sources-*.zip -d depends/sources
+      #   env: { GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+
+      - name: Cache depends
+        uses: actions/cache@v4
+        with:
+          path: |
+            depends/sources
+            depends/built
+          key: macos-${{ hashFiles('depends/packages/*.mk') }}
+          restore-keys: macos-
+
+      - name: Build depends (discover darwin triplet)
+        run: |
+          set -e
+          make -C depends HOST=x86_64-apple-darwin -j"$(sysctl -n hw.ncpu || echo 2)"
+          HOSTDIR=$(ls -d depends/x86_64-apple-darwin* | head -n1)
+          [ -d "$HOSTDIR" ] || { echo "No Darwin host dir under depends/"; exit 2; }
+          echo "HOSTDIR=$HOSTDIR" >> $GITHUB_ENV
+          echo "HOST_TRIPLET=$(basename "$HOSTDIR")" >> $GITHUB_ENV
+          echo "Using $(basename "$HOSTDIR")"; ls -la "$HOSTDIR"
+
+      - name: Configure
+        run: |
+          ./autogen.sh
+          export CONFIG_SITE="$(pwd)/${HOSTDIR}/share/config.site"
+          export MACOSX_DEPLOYMENT_TARGET=10.13
+          set -o pipefail
+          ./configure \
+            --prefix="$(pwd)/${HOSTDIR}" \
+            --host="${HOST_TRIPLET}" \
+            --disable-bench --disable-tests \
+            --enable-reduce-exports \
+            --disable-shared --enable-static \
+          || { echo "=== config.log (tail) ==="; tail -n 200 config.log || true; exit 1; }
+
+      - name: Build
+        run: make -j"$(sysctl -n hw.ncpu || echo 2)" V=1
+
+      - name: Package + checksums
+        run: |
+          set -euo pipefail
+          V="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+          if [ -z "$V" ]; then V=$(git describe --tags --dirty --always || echo untagged); fi
+          PKG="verium-${V}-${HOST_TRIPLET}.tar.gz"
+          mkdir -p out
+          cp -f src/veriumd* out/ 2>/dev/null || true
+          cp -f src/verium-cli* out/ 2>/dev/null || true
+          cp -f src/verium-tx* out/ 2>/dev/null || true
+          cp -f src/qt/verium-qt* out/ 2>/dev/null || true
+          [ -n "$(ls -A out)" ] || { echo "No binaries in out/"; exit 2; }
+          tar -czf "$PKG" -C out .
+          shasum -a 256 "$PKG" > "${PKG}.SHA256SUMS"
+          echo "ART_MAIN=$PKG" >> $GITHUB_ENV
+          echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ env.HOST_TRIPLET }}
+          path: |
+            ${{ env.ART_MAIN }}
+            ${{ env.ART_SUMS }}
