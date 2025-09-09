@@ -2,12 +2,7 @@ name: Build Verium (Windows x86_64 via Ubuntu)
 
 on:
   workflow_dispatch:
-  inputs:
-      target_ref:
-        description: "Branch or tag to build"
-        default: "verium-1.3.5"
-        required: true
-
+  
 permissions:
   contents: write
 
