@@ -79,25 +79,18 @@ jobs:
            #include <QtCore/qstring.h>
            #include <QtCore/qvarlengtharray.h>
           +#include <limits>
-           
-           QT_BEGIN_NAMESPACE
-          PATCH
+     
+         QT_BEGIN_NAMESPACE
+        PATCH
 
-          f=depends/packages/qt.mk
+        # 2) Register the patch so depends applies it during preprocess
+        f=depends/packages/qt.mk
+        if [ -f "$f" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$f"; then
+          printf '\n$$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$f"
+        fi
 
-          # 2) Register the patch
-          if [ -f "$f" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$f"; then
-            printf '\n$$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$f"
-          fi
-
-          # 3) Also inject a preprocess sed (works even if patches list is skipped)
-          if [ -f "$f" ] && ! grep -q 'qbytearraymatcher.h.*limits' "$f"; then
-            cat >> "$f" <<'EOF'
-
-          # Inject <limits> include (MinGW/GCC11+ fix)
-          $(package)_preprocess_cmds += sed -i '/qvarlengtharray.h/a #include <limits>' qtbase/src/corelib/tools/qbytearraymatcher.h
-          EOF
-          fi
+        # 3) Ensure we don’t reuse a previously preprocessed Qt tree
+        rm -rf depends/work/build/*/qt/
 
       - name: Build depends (Win64)
         run: |
