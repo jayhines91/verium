@@ -88,7 +88,7 @@ jobs:
           export RC=${HOST_TRIPLET}-windres
           export WINDRES=${HOST_TRIPLET}-windres
 
-        if [ -n "${{ inputs.depends_target }}" ]; then
+          if [ -n "${{ inputs.depends_target }}" ]; then
           echo "Priming depends target: ${{ inputs.depends_target }}"
           make -C depends HOST=${HOST_TRIPLET} \
           CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 \
