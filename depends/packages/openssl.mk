@@ -49,6 +49,9 @@ $(package)_config_opts_x86_64_darwin=darwin64-x86_64-cc
 $(package)_config_opts_x86_64_mingw32=mingw64
 $(package)_config_opts_x86_64_mingw32+= -I/usr/share/mingw-w64/include
 $(package)_config_opts_i686_mingw32=mingw
+
+$(package)_make_opts_mingw32 += WINDRES=$(host)-windres RC=$(host)-windres
+$(package)_make_opts_mingw64 += WINDRES=$(host)-windres RC=$(host)-windres
 endef
 
 define $(package)_config_cmds
