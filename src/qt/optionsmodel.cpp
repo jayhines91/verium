@@ -20,7 +20,6 @@
 #include <netbase.h>
 #include <txdb.h> // for -dbcache defaults
 
-#include <QNetworkProxy>
 #include <QSettings>
 #include <QStringList>
 
