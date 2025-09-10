@@ -54,6 +54,7 @@ jobs:
           restore-keys: |
             win-${{ env.HOST_TRIPLET }}-
 
+      # cURL cross-compile: avoid AC_RUN tests, prefer WinSSL
       - name: Patch curl.mk for MinGW (avoid AC_RUN; prefer WinSSL)
         run: |
           set -e
@@ -71,32 +72,21 @@ jobs:
             fi
           fi
 
-      - name: Patch Qt 5.9.8 for modern GCC (add <limits>)
+      # Qt 5.9.8: force include <limits> for GCC/MinGW (no source patch)
+      - name: Qt: force include <limits> via flags
         run: |
           set -e
-          mkdir -p depends/patches/qt
-          PATCHFILE=depends/patches/qt/0001-qbytearraymatcher-include-limits.patch
-
-          # Write the patch safely (no heredoc)
-          printf '%s\n' \
-            '--- a/qtbase/src/corelib/tools/qbytearraymatcher.h' \
-            '+++ b/qtbase/src/corelib/tools/qbytearraymatcher.h' \
-            '@@ -40,6 +40,7 @@' \
-            '#include <QtCore/qbytearray.h>' \
-            '#include <QtCore/qstring.h>' \
-            '#include <QtCore/qvarlengtharray.h>' \
-            '+#include <limits>' \
-            '' \
-            'QT_BEGIN_NAMESPACE' \
-          > "$PATCHFILE"
-
-          # Register the patch in qt.mk if not already present
           qtmk=depends/packages/qt.mk
-          if [ -f "$qtmk" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$qtmk"; then
-            printf '\n$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$qtmk"
+          if [ -f "$qtmk" ]; then
+            if ! grep -q 'CXXFLAGS="-include limits"' "$qtmk"; then
+              {
+                echo ''
+                echo '# Ensure std::numeric_limits is available under modern GCC/MinGW'
+                echo '$(package)_config_env += CXXFLAGS="-include limits" CFLAGS="-include limits"'
+              } >> "$qtmk"
+            fi
           fi
-
-          # Ensure a fresh Qt extract so the patch will apply
+          # Ensure we don’t reuse a previously preprocessed Qt tree
           rm -rf depends/work/build/*/qt/
 
       - name: Build depends (Win64)
