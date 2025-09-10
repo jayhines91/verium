@@ -221,6 +221,22 @@ jobs:
             printf '\nLIBBITCOINQT_LIBS += $(QT_LIBS_NETWORK)\n' >> "$inc"
             echo "Appended QtNetwork libs to $inc"
           fi    
+
+      - name: Initialize Qt automake vars (fix += error)
+        run: |
+          set -e
+          f=src/Makefile.qt.include
+          if [ -f "$f" ]; then
+            # Insert only if not already present
+            grep -q '^[[:space:]]*LIBBITCOINQT_LIBS[[:space:]]*=' "$f" || \
+              sed -i '1i LIBBITCOINQT_LIBS =\nLIBBITCOINQT_INCLUDES =' "$f"
+            echo "Patched $f:"
+            head -n 8 "$f"
+          else
+            echo "ERROR: $f not found" >&2
+            exit 1
+          fi
+
                   
       - name: Configure (Win64)
         run: |
