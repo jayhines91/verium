@@ -254,6 +254,24 @@ jobs:
             --enable-reduce-exports \
             --disable-shared --enable-static
 
+      - name: Ensure QNetworkProxy includes are present where used
+        run: |
+          set -euo pipefail
+          # Scan for QNetworkProxy references in src/qt
+          files=$(git grep -l 'QNetworkProxy' -- 'src/qt/**/*.cpp' 'src/qt/**/*.h' || true)
+          for f in $files; do
+            # If file references QNetworkProxy but lacks its header, add it
+            if ! grep -qE '#include\s*<QNetworkProxy>|#include\s*<QtNetwork/QNetworkProxy>' "$f"; then
+              # Insert after the first local include if possible; else prepend
+              if grep -n '^#include' "$f" >/dev/null; then
+                awk 'NR==1,/#include/{print} NR==1 && !done && /#include/ {print "#include <QNetworkProxy>"; done=1; next} NR>1 {print}' "$f" > "$f.new" && mv "$f.new" "$f"
+              else
+                sed -i '1i #include <QNetworkProxy>' "$f"
+              fi
+            fi
+          done
+      
+
       - name: Build (Win64)
         run: |
           if [ "${{ inputs.verbose_make }}" = "true" ]; then
