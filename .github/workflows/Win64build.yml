@@ -30,7 +30,7 @@ jobs:
   win64:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout (defaults to master)
+      - name: Checkout (master)
         uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -54,120 +54,64 @@ jobs:
           restore-keys: |
             win-${{ env.HOST_TRIPLET }}-
 
-      # Prevent cURL configure from trying to run tests (classic cross-compile failure)
+      # --- cURL cross-compile fix (no perl/heredoc) ---
       - name: Patch curl.mk for MinGW (avoid AC_RUN; prefer WinSSL)
         run: |
           set -e
           f=depends/packages/curl.mk
           if [ -f "$f" ]; then
-            perl -0777 -pe '
-              s/(\$\(package\)_set_vars\s*\n)/$1# mingw cross-friendly opts\n$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp\n$(package)_config_opts_mingw32 += --with-winssl\n$(package)_config_opts_mingw64 += --with-winssl\n$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no\n/ or die $_' -i "$f" || true
+            if ! grep -q 'config_opts_mingw64.*with-winssl' "$f"; then
+              {
+                echo ''
+                echo '# MinGW cross-friendly opts (added by CI)'
+                echo '$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp'
+                echo '$(package)_config_opts_mingw32 += --with-winssl'
+                echo '$(package)_config_opts_mingw64 += --with-winssl'
+                echo '$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no'
+              } >> "$f"
+            fi
           fi
 
+      # --- Qt 5.9.8 fix: add <limits> include via proper patch, register in qt.mk ---
       - name: Patch Qt 5.9.8 for modern GCC (add <limits>)
         run: |
-        set -e
-        mkdir -p depends/patches/qt
-        PATCHFILE=depends/patches/qt/0001-qbytearraymatcher-include-limits.patch
+          set -e
+          mkdir -p depends/patches/qt
+          PATCHFILE=depends/patches/qt/0001-qbytearraymatcher-include-limits.patch
 
-    # Write the patch safely (no heredoc)
-        printf '%s\n' \
-        '--- a/qtbase/src/corelib/tools/qbytearraymatcher.h' \
-        '+++ b/qtbase/src/corelib/tools/qbytearraymatcher.h' \
-        '@@ -40,6 +40,7 @@' \
-        '#include <QtCore/qbytearray.h>' \
-        '#include <QtCore/qstring.h>' \
-        '#include <QtCore/qvarlengtharray.h>' \
-        '+#include <limits>' \
-        '' \
-        'QT_BEGIN_NAMESPACE' \
-        > "$PATCHFILE"
+          # Write the patch safely (no heredoc)
+          printf '%s\n' \
+'--- a/qtbase/src/corelib/tools/qbytearraymatcher.h' \
+'+++ b/qtbase/src/corelib/tools/qbytearraymatcher.h' \
+'@@ -40,6 +40,7 @@' \
+'#include <QtCore/qbytearray.h>' \
+'#include <QtCore/qstring.h>' \
+'#include <QtCore/qvarlengtharray.h>' \
+'+#include <limits>' \
+'' \
+'QT_BEGIN_NAMESPACE' \
+> "$PATCHFILE"
 
-    # Register the patch in qt.mk if not present
-        f=depends/packages/qt.mk
-        if [ -f "$f" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$f"; then
-          printf '\n$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$f"
-        fi
+          # Register the patch in qt.mk if not already present
+          qtmk=depends/packages/qt.mk
+          if [ -f "$qtmk" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$qtmk"; then
+            printf '\n$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$qtmk"
+          fi
 
-    # Ensure a fresh Qt extract so the patch is applied
-        rm -rf depends/work/build/*/qt/
+          # Ensure a fresh Qt extract so the patch will apply (cache may hold preprocessed tree)
+          rm -rf depends/work/build/*/qt/
 
-    # Quick visibility for debugging
-        echo "Wrote patch to $PATCHFILE:"
-        sed -n '1,20p' "$PATCHFILE"
-  
-            
+          # Debug visibility
+          echo "Registered patch in $qtmk (grep check):"
+          grep -n 'qbytearraymatcher-include-limits.patch' "$qtmk" || true
+          echo "Patch file preview:"
+          sed -n '1,20p' "$PATCHFILE"
+
       - name: Build depends (Win64)
         run: |
           set -e
-          # Make sure OpenSSL (and friends) find the prefixed resource compiler
           export RC=${HOST_TRIPLET}-windres
           export WINDRES=${HOST_TRIPLET}-windres
 
-          # Optionally build one package first to iterate faster (e.g., curl)
-          if [ -n "${{ inputs.depends_target }}" ]; then
-            echo "Priming depends target: ${{ inputs.depends_target }}"
-            make -C depends HOST=${HOST_TRIPLET} ${{ inputs.depends_target }} -j"$(nproc || echo 2)" RC="$RC" WINDRES="$WINDRES"
-          fi
-
-          # Full depends build
-          make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)" RC="$RC" WINDRES="$WINDRES" || {
-            echo "---- tail curl config.log ----"
-            find depends/work/build -path "*/curl/*/config.log" -exec sh -c 'echo "==> {}"; tail -n 200 "{}"' \;
-            echo "---- tail any config.log ----"
-            find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
-            exit 1
-          }
-
-      - name: Configure (Win64)
-        run: |
-          ./autogen.sh
-          export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
-          set -o pipefail
-          ./configure \
-            --host=${HOST_TRIPLET} \
-            --prefix="$(pwd)/depends/${HOST_TRIPLET}" \
-            --disable-bench --disable-tests \
-            --enable-reduce-exports \
-            --disable-shared --enable-static \
-          || { echo "=== config.log (tail) ==="; tail -n 200 config.log || true; exit 1; }
-
-      - name: Build (Win64)
-        run: |
-          if [ "${{ inputs.verbose_make }}" = "true" ]; then
-            make -j"$(nproc || echo 2)" V=1
-          else
-            make -j"$(nproc || echo 2)"
-          fi
-
-      - name: Package + checksums (Win64)
-        run: |
-          set -euo pipefail
-          V=$(git describe --tags --dirty --always || echo untagged)
-          PKG="verium-${V}-${HOST_TRIPLET}.zip"
-          mkdir -p out
-          cp -f src/*.exe out/ 2>/dev/null || true
-          cp -f src/qt/*.exe out/ 2>/dev/null || true
-          [ -n "$(ls -A out)" ] || { echo "No Windows EXEs in out/"; exit 2; }
-          (cd out && zip -r "../$PKG" .)
-          sha256sum "$PKG" > "${PKG}.SHA256SUMS"
-          echo "ART_MAIN=$PKG" >> $GITHUB_ENV
-          echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
-
-      - name: Upload artifacts (binaries + checksums)
-        uses: actions/upload-artifact@v4
-        with:
-          name: win64-${{ env.HOST_TRIPLET }}
-          path: |
-            ${{ env.ART_MAIN }}
-            ${{ env.ART_SUMS }}
-
-      - name: Upload build logs (for debugging)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: win64-dep-logs
-          path: |
-            depends/work/build/**/config.log
-            depends/work/build/**/config.status
-          if-no-files-found: ignore
+          # Opt
+::contentReference[oaicite:0]{index=0}
