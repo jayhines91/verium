@@ -54,7 +54,6 @@ jobs:
           restore-keys: |
             win-${{ env.HOST_TRIPLET }}-
 
-      # --- cURL cross-compile fix (no perl/heredoc) ---
       - name: Patch curl.mk for MinGW (avoid AC_RUN; prefer WinSSL)
         run: |
           set -e
@@ -72,7 +71,6 @@ jobs:
             fi
           fi
 
-      # --- Qt 5.9.8 fix: add <limits> include via proper patch, register in qt.mk ---
       - name: Patch Qt 5.9.8 for modern GCC (add <limits>)
         run: |
           set -e
@@ -98,14 +96,8 @@ jobs:
             printf '\n$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$qtmk"
           fi
 
-          # Ensure a fresh Qt extract so the patch will apply (cache may hold preprocessed tree)
+          # Ensure a fresh Qt extract so the patch will apply
           rm -rf depends/work/build/*/qt/
-
-          # Debug visibility
-          echo "Registered patch in $qtmk (grep check):"
-          grep -n 'qbytearraymatcher-include-limits.patch' "$qtmk" || true
-          echo "Patch file preview:"
-          sed -n '1,20p' "$PATCHFILE"
 
       - name: Build depends (Win64)
         run: |
@@ -113,5 +105,70 @@ jobs:
           export RC=${HOST_TRIPLET}-windres
           export WINDRES=${HOST_TRIPLET}-windres
 
-          # Opt
-::contentReference[oaicite:0]{index=0}
+          # Optionally build one package first (faster iteration)
+          if [ -n "${{ inputs.depends_target }}" ]; then
+            echo "Priming depends target: ${{ inputs.depends_target }}"
+            make -C depends HOST=${HOST_TRIPLET} ${{ inputs.depends_target }} -j"$(nproc || echo 2)" RC="$RC" WINDRES="$WINDRES"
+          fi
+
+          # Full depends build
+          make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)" RC="$RC" WINDRES="$WINDRES" || {
+            echo "---- tail curl config.log ----"
+            find depends/work/build -path "*/curl/*/config.log" -exec sh -c 'echo "==> {}"; tail -n 200 "{}"' \;
+            echo "---- tail any config.log ----"
+            find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
+            exit 1
+          }
+
+      - name: Configure (Win64)
+        run: |
+          ./autogen.sh
+          export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
+          set -o pipefail
+          ./configure \
+            --host=${HOST_TRIPLET} \
+            --prefix="$(pwd)/depends/${HOST_TRIPLET}" \
+            --disable-bench --disable-tests \
+            --enable-reduce-exports \
+            --disable-shared --enable-static \
+          || { echo "=== config.log (tail) ==="; tail -n 200 config.log || true; exit 1; }
+
+      - name: Build (Win64)
+        run: |
+          if [ "${{ inputs.verbose_make }}" = "true" ]; then
+            make -j"$(nproc || echo 2)" V=1
+          else
+            make -j"$(nproc || echo 2)"
+          fi
+
+      - name: Package + checksums (Win64)
+        run: |
+          set -euo pipefail
+          V=$(git describe --tags --dirty --always || echo untagged)
+          PKG="verium-${V}-${HOST_TRIPLET}.zip"
+          mkdir -p out
+          cp -f src/*.exe out/ 2>/dev/null || true
+          cp -f src/qt/*.exe out/ 2>/dev/null || true
+          [ -n "$(ls -A out)" ] || { echo "No Windows EXEs in out/"; exit 2; }
+          (cd out && zip -r "../$PKG" .)
+          sha256sum "$PKG" > "${PKG}.SHA256SUMS"
+          echo "ART_MAIN=$PKG" >> $GITHUB_ENV
+          echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
+
+      - name: Upload artifacts (binaries + checksums)
+        uses: actions/upload-artifact@v4
+        with:
+          name: win64-${{ env.HOST_TRIPLET }}
+          path: |
+            ${{ env.ART_MAIN }}
+            ${{ env.ART_SUMS }}
+
+      - name: Upload build logs (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: win64-dep-logs
+          path: |
+            depends/work/build/**/config.log
+            depends/work/build/**/config.status
+          if-no-files-found: ignore
