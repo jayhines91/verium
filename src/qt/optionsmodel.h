@@ -14,7 +14,7 @@ class Node;
 }
 
 QT_BEGIN_NAMESPACE
-class QNetworkProxy;
+#include <QNetworkProxy>
 QT_END_NAMESPACE
 
 extern const char *DEFAULT_GUI_PROXY_HOST;
