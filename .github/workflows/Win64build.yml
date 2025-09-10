@@ -50,8 +50,6 @@ jobs:
           echo "Using depends/ from master:"
           git log -1 --format='%h %ci %s' -- depends    
 
-      - run: rm -rf depends/work depends/built
-
       - name: Base deps + MinGW toolchain
         run: |
           sudo apt-get update
@@ -178,6 +176,21 @@ jobs:
           perl -0777 -pe 's/vSeeds\.push_back\(\s*CDNSSeedData\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)\s*\)/vSeeds.push_back("$1")/g' -i "$f"
           echo "Patch diff:"
           git --no-pager diff -- "$f" || true
+
+      - name: Shim gmtime_r for Windows (use gmtime_s)
+        run: |
+          set -e
+          f=src/util/time.cpp
+          # Only patch once
+          if [ -f "$f" ] && ! grep -q 'gmtime_r_compat' "$f"; then
+            # Insert at top of the file
+            sed -i '1i \
+#ifdef _WIN32\n\
+#include <time.h>\n\
+static inline struct tm* gmtime_r_compat(const time_t* t, struct tm* res){ return gmtime_s(res,t)==0 ? res : NULL; }\n\
+#define gmtime_r(t,r) gmtime_r_compat((t),(r))\n\
+#endif\n' "$f"
+          fi    
           
       - name: Configure (Win64)
         run: |
