@@ -44,6 +44,17 @@ jobs:
             g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 \
             curl zip unzip ccache
 
+      - name: Install GCC 9 (host) and select it
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y gcc-9 g++-9
+          # make gcc-9/g++-9 the default host compilers
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
+          gcc --version
+          g++ --version
+
       - name: Cache depends (sources + built)
         uses: actions/cache@v4
         with:
