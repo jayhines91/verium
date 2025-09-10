@@ -82,6 +82,36 @@ jobs:
             fi
           fi
 
+      - name: Force MinGW POSIX threading model (safer std::thread/pthread)
+        run: |
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+
+      - name: Hotfix headers (std::mutex / std::condition_variable)
+        run: |
+          set -e
+          # Add <mutex> + <condition_variable> after <thread> in src/sync.h
+          if [ -f src/sync.h ] && ! grep -q '<mutex>' src/sync.h; then
+            awk '{
+              print;
+              if ($0 ~ /#include[[:space:]]*<thread>/) {
+                print "#include <mutex>";
+                print "#include <condition_variable>";
+              }
+            }' src/sync.h > src/sync.h.new && mv src/sync.h.new src/sync.h
+          fi
+
+          # Add <mutex> after <tinyformat.h> in src/logging.h
+          if [ -f src/logging.h ] && ! grep -q '<mutex>' src/logging.h; then
+            awk '{
+              print;
+              if ($0 ~ /#include[[:space:]]*<tinyformat\.h>/) {
+                print "#include <mutex>";
+              }
+            }' src/logging.h > src/logging.h.new && mv src/logging.h.new src/logging.h
+          fi
+
+
       - name: Build depends (Win64)
         run: |
           set -e
