@@ -79,16 +79,16 @@ jobs:
 
           # Write the patch safely (no heredoc)
           printf '%s\n' \
-'--- a/qtbase/src/corelib/tools/qbytearraymatcher.h' \
-'+++ b/qtbase/src/corelib/tools/qbytearraymatcher.h' \
-'@@ -40,6 +40,7 @@' \
-'#include <QtCore/qbytearray.h>' \
-'#include <QtCore/qstring.h>' \
-'#include <QtCore/qvarlengtharray.h>' \
-'+#include <limits>' \
-'' \
-'QT_BEGIN_NAMESPACE' \
-> "$PATCHFILE"
+            '--- a/qtbase/src/corelib/tools/qbytearraymatcher.h' \
+            '+++ b/qtbase/src/corelib/tools/qbytearraymatcher.h' \
+            '@@ -40,6 +40,7 @@' \
+            '#include <QtCore/qbytearray.h>' \
+            '#include <QtCore/qstring.h>' \
+            '#include <QtCore/qvarlengtharray.h>' \
+            '+#include <limits>' \
+            '' \
+            'QT_BEGIN_NAMESPACE' \
+          > "$PATCHFILE"
 
           # Register the patch in qt.mk if not already present
           qtmk=depends/packages/qt.mk
