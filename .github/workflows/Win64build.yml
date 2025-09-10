@@ -71,34 +71,6 @@ jobs:
             fi
           fi
 
-      - name: Patch Qt 5.9.8 for modern GCC (add <limits>)
-        run: |
-          set -e
-          mkdir -p depends/patches/qt
-          PATCHFILE=depends/patches/qt/0001-qbytearraymatcher-include-limits.patch
-
-          # Write the patch safely (no heredoc)
-          printf '%s\n' \
-            '--- a/qtbase/src/corelib/tools/qbytearraymatcher.h' \
-            '+++ b/qtbase/src/corelib/tools/qbytearraymatcher.h' \
-            '@@ -40,6 +40,7 @@' \
-            '#include <QtCore/qbytearray.h>' \
-            '#include <QtCore/qstring.h>' \
-            '#include <QtCore/qvarlengtharray.h>' \
-            '+#include <limits>' \
-            '' \
-            'QT_BEGIN_NAMESPACE' \
-          > "$PATCHFILE"
-
-          # Register the patch in qt.mk if not already present
-          qtmk=depends/packages/qt.mk
-          if [ -f "$qtmk" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$qtmk"; then
-            printf '\n$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$qtmk"
-          fi
-
-          # Ensure a fresh Qt extract so the patch will apply
-          rm -rf depends/work/build/*/qt/
-
       - name: Build depends (Win64)
         run: |
           set -e
