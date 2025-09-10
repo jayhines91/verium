@@ -41,6 +41,18 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Overwrite depends/ with master version (CI-only)
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin master
+          rm -rf depends
+          git checkout origin/master -- depends
+          echo "Using depends/ from master:"
+          git log -1 --format='%h %ci %s' -- depends    
+          key: win-${{ env.HOST_TRIPLET }}-dependsFromMaster-${{ hashFiles('depends/**') }}
+
+      - run: rm -rf depends/work depends/built
+
       - name: Base deps + MinGW toolchain
         run: |
           sudo apt-get update
