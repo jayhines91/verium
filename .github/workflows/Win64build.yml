@@ -73,6 +73,40 @@ jobs:
             perl -0777 -pe '
               s/(\$\(package\)_set_vars\s*\n)/$1# mingw cross-friendly opts\n$$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp\n$$(package)_config_opts_mingw32 += --with-winssl\n$$(package)_config_opts_mingw64 += --with-winssl\n$$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no\n/ or die $_' -i "$f" || true
           fi
+  - name: Patch Qt 5.9.8 for modern GCC (add <limits>)
+  run: |
+    set -e
+    # 1) Create the patch file
+    mkdir -p depends/patches/qt
+    cat > depends/patches/qt/0001-qbytearraymatcher-include-limits.patch <<'PATCH'
+    --- a/qtbase/src/corelib/tools/qbytearraymatcher.h
+    +++ b/qtbase/src/corelib/tools/qbytearraymatcher.h
+    @@ -40,6 +40,7 @@
+     #include <QtCore/qbytearray.h>
+     #include <QtCore/qstring.h>
+     #include <QtCore/qvarlengtharray.h>
+    +#include <limits>
+     
+     QT_BEGIN_NAMESPACE
+    PATCH
+
+    f=depends/packages/qt.mk
+
+    # 2) Register the patch (if qt.mk honors $(package)_patches, this will apply it)
+    if [ -f "$f" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$f"; then
+      printf '\n$$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$f"
+    fi
+
+    # 3) Belt & suspenders: also inject a preprocess sed that adds the include
+    #    (works even if the patch list isn't picked up for this package)
+    if [ -f "$f" ] && ! grep -q 'qbytearraymatcher.h.*limits' "$f"; then
+      cat >> "$f" <<'EOF'
+
+# Inject <limits> include (MinGW/GCC11+ fix)
+$(package)_preprocess_cmds += sed -i '/qvarlengtharray.h/a #include <limits>' qtbase/src/corelib/tools/qbytearraymatcher.h
+EOF
+    fi
+
 
       - name: Build depends (Win64)
         run: |
