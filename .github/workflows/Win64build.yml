@@ -3,7 +3,7 @@ name: Build Verium (Windows x86_64 • old-style)
 on:
   workflow_dispatch:
     inputs:
-    target_ref:
+      target_ref:
         description: "Branch/Tag/SHA to build"
         required: true
         default: "master"
