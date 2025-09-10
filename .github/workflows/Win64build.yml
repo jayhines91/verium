@@ -1,4 +1,4 @@
-name: Build Verium (Windows x86_64 via Ubuntu • old-style)
+name: Build Verium (Windows x86_64 • old-style)
 
 on:
   workflow_dispatch:
@@ -7,6 +7,14 @@ on:
         description: "Branch or tag to build"
         required: true
         default: "verium-1.3.5"
+      depends_target:
+        description: "Optional: build only this depends pkg first (e.g., curl, openssl). Leave empty for full depends."
+        required: false
+        default: ""
+      verbose_make:
+        description: "Verbose make output (V=1)"
+        required: false
+        default: "false"
 
 concurrency:
   group: verium-global
@@ -26,13 +34,14 @@ jobs:
   win64:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout target ref
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_ref }}
           submodules: recursive
           fetch-depth: 0
 
-      - name: Base deps + MinGW
+      - name: Base deps + MinGW toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -40,15 +49,16 @@ jobs:
             g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 \
             curl zip unzip ccache
 
-      # Optional: preseed depends sources
+      # Optional: preseed tarballs you’ve uploaded somewhere (leave commented if not used)
       # - name: Preseed depends sources
       #   run: |
       #     mkdir -p depends/sources
       #     gh release download deps-sources-v1 --pattern 'depends-sources-*.zip' --dir .
       #     unzip -o depends-sources-*.zip -d depends/sources
-      #   env: { GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+      #   env:
+      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cache depends
+      - name: Cache depends (sources + built)
         uses: actions/cache@v4
         with:
           path: |
@@ -58,21 +68,33 @@ jobs:
           restore-keys: |
             win-${{ env.HOST_TRIPLET }}-
 
+      # Prevent cURL configure from trying to run tests (classic cross-compile failure)
       - name: Patch curl.mk for MinGW (avoid AC_RUN; prefer WinSSL)
         run: |
           set -e
           f=depends/packages/curl.mk
           if [ -f "$f" ]; then
             perl -0777 -pe '
-              s/(\$\(package\)_set_vars\s*\n)/$1# mingw cross-friendly opts\n$$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp\n$$(package)_config_opts_mingw32 += --with-winssl\n$$(package)_config_opts_mingw64 += --with-winssl\n$$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no\n/ or die $_' -i "$f"
+              s/(\$\(package\)_set_vars\s*\n)/$1# mingw cross-friendly opts\n$$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp\n$$(package)_config_opts_mingw32 += --with-winssl\n$$(package)_config_opts_mingw64 += --with-winssl\n$$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no\n/ or die $_' -i "$f" || true
           fi
 
-      - name: Build depends (Win64)  # pass RC/WINDRES so OpenSSL finds windres
+      - name: Build depends (Win64)
         run: |
           set -e
-          make -C depends HOST=${HOST_TRIPLET} \
-               RC=${HOST_TRIPLET}-windres WINDRES=${HOST_TRIPLET}-windres \
-               -j"$(nproc || echo 2)" || {
+          # Make sure OpenSSL (and friends) find the prefixed resource compiler
+          export RC=${HOST_TRIPLET}-windres
+          export WINDRES=${HOST_TRIPLET}-windres
+
+          # Optionally build one package first to iterate faster (e.g., curl)
+          if [ -n "${{ inputs.depends_target }}" ]; then
+            echo "Priming depends target: ${{ inputs.depends_target }}"
+            make -C depends HOST=${HOST_TRIPLET} ${{
+              inputs.depends_target
+            }} -j"$(nproc || echo 2)" RC="$RC" WINDRES="$WINDRES"
+          fi
+
+          # Full depends build
+          make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)" RC="$RC" WINDRES="$WINDRES" || {
             echo "---- tail curl config.log ----"
             find depends/work/build -path "*/curl/*/config.log" -exec sh -c 'echo "==> {}"; tail -n 200 "{}"' \;
             echo "---- tail any config.log ----"
@@ -94,9 +116,14 @@ jobs:
           || { echo "=== config.log (tail) ==="; tail -n 200 config.log || true; exit 1; }
 
       - name: Build (Win64)
-        run: make -j"$(nproc || echo 2)" V=1
+        run: |
+          if [ "${{ inputs.verbose_make }}" = "true" ]; then
+            make -j"$(nproc || echo 2)" V=1
+          else
+            make -j"$(nproc || echo 2)"
+          fi
 
-      - name: Package + checksums
+      - name: Package + checksums (Win64)
         run: |
           set -euo pipefail
           V=$(git describe --tags --dirty --always || echo untagged)
@@ -110,9 +137,20 @@ jobs:
           echo "ART_MAIN=$PKG" >> $GITHUB_ENV
           echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifacts (binaries + checksums)
+        uses: actions/upload-artifact@v4
         with:
           name: win64-${{ env.HOST_TRIPLET }}
           path: |
             ${{ env.ART_MAIN }}
             ${{ env.ART_SUMS }}
+
+      - name: Upload build logs (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: win64-dep-logs
+          path: |
+            depends/work/build/**/config.log
+            depends/work/build/**/config.status
+          if-no-files-found: ignore
