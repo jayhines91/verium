@@ -3,6 +3,10 @@ name: Build Verium (Windows x86_64 • old-style)
 on:
   workflow_dispatch:
     inputs:
+    target_ref:
+        description: "Branch/Tag/SHA to build"
+        required: true
+        default: "master"
       depends_target:
         description: "Optional: build only this depends pkg first (e.g., curl, openssl). Leave empty for full depends."
         required: false
@@ -30,9 +34,10 @@ jobs:
   win64:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout (master)
+      - name: Checkout target ref
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.target_ref }} 
           submodules: recursive
           fetch-depth: 0
 
