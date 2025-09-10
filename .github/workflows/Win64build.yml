@@ -185,11 +185,11 @@ jobs:
           if [ -f "$f" ] && ! grep -q 'gmtime_r_compat' "$f"; then
             # Insert at top of the file
             sed -i '1i \
-#ifdef _WIN32\n\
-#include <time.h>\n\
-static inline struct tm* gmtime_r_compat(const time_t* t, struct tm* res){ return gmtime_s(res,t)==0 ? res : NULL; }\n\
-#define gmtime_r(t,r) gmtime_r_compat((t),(r))\n\
-#endif\n' "$f"
+          #ifdef _WIN32\n\
+          #include <time.h>\n\
+          static inline struct tm* gmtime_r_compat(const time_t* t, struct tm* res){ return gmtime_s(res,t)==0 ? res : NULL; }\n\
+          #define gmtime_r(t,r) gmtime_r_compat((t),(r))\n\
+          #endif\n' "$f"
           fi    
           
       - name: Configure (Win64)
