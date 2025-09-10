@@ -104,7 +104,7 @@ jobs:
       cat >> "$f" <<'EOF'
 
 # Inject <limits> include (MinGW/GCC11+ fix)
-$(package)_preprocess_cmds += sed -i '/qvarlengtharray.h/a #include <limits>' qtbase/src/corelib/tools/qbytearraymatcher.h
+    $(package)_preprocess_cmds += sed -i '/qvarlengtharray.h/a #include <limits>' qtbase/src/corelib/tools/qbytearraymatcher.h
 EOF
     fi
 
