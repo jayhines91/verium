@@ -66,30 +66,37 @@ jobs:
 
       - name: Patch Qt 5.9.8 for modern GCC (add <limits>)
         run: |
-          set -e
-          # 1) Create the patch file
-          mkdir -p depends/patches/qt
-          cat > depends/patches/qt/0001-qbytearraymatcher-include-limits.patch <<'PATCH'
---- a/qtbase/src/corelib/tools/qbytearraymatcher.h
-+++ b/qtbase/src/corelib/tools/qbytearraymatcher.h
-@@ -40,6 +40,7 @@
- #include <QtCore/qbytearray.h>
- #include <QtCore/qstring.h>
- #include <QtCore/qvarlengtharray.h>
-+#include <limits>
+        set -e
+        mkdir -p depends/patches/qt
+        PATCHFILE=depends/patches/qt/0001-qbytearraymatcher-include-limits.patch
 
- QT_BEGIN_NAMESPACE
-PATCH
+    # Write the patch safely (no heredoc)
+        printf '%s\n' \
+        '--- a/qtbase/src/corelib/tools/qbytearraymatcher.h' \
+        '+++ b/qtbase/src/corelib/tools/qbytearraymatcher.h' \
+        '@@ -40,6 +40,7 @@' \
+        '#include <QtCore/qbytearray.h>' \
+        '#include <QtCore/qstring.h>' \
+        '#include <QtCore/qvarlengtharray.h>' \
+        '+#include <limits>' \
+        '' \
+        'QT_BEGIN_NAMESPACE' \
+        > "$PATCHFILE"
 
-          # 2) Register the patch so depends applies it during preprocess
-          f=depends/packages/qt.mk
-          if [ -f "$f" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$f"; then
-            printf '\n$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$f"
-          fi
+    # Register the patch in qt.mk if not present
+        f=depends/packages/qt.mk
+        if [ -f "$f" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$f"; then
+          printf '\n$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$f"
+        fi
 
-          # 3) Ensure we don’t reuse a previously preprocessed Qt tree
-          rm -rf depends/work/build/*/qt/
+    # Ensure a fresh Qt extract so the patch is applied
+        rm -rf depends/work/build/*/qt/
 
+    # Quick visibility for debugging
+        echo "Wrote patch to $PATCHFILE:"
+        sed -n '1,20p' "$PATCHFILE"
+  
+            
       - name: Build depends (Win64)
         run: |
           set -e
