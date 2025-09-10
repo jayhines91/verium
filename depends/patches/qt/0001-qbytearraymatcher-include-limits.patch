@@ -1,0 +1,7 @@
+--- a/qtbase/src/corelib/tools/qbytearraymatcher.h
++++ b/qtbase/src/corelib/tools/qbytearraymatcher.h
+@@ -40,6 +40,7 @@
+ #include <QtCore/qbytearray.h>
+ #include <QtCore/qglobal.h>
+ #include <string.h>
++#include <limits>
