@@ -104,7 +104,7 @@ jobs:
             echo "---- tail any config.log ----"
             find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
             exit 1
-        }
+          }
 
       - name: Configure (Win64)
         run: |
