@@ -8,14 +8,13 @@
 #include <amount.h>
 
 #include <QAbstractListModel>
-
+#include <QNetworkProxy>
 namespace interfaces {
 class Node;
 }
 
-QT_BEGIN_NAMESPACE
-#include <QNetworkProxy>
-QT_END_NAMESPACE
+
+
 
 extern const char *DEFAULT_GUI_PROXY_HOST;
 static constexpr unsigned short DEFAULT_GUI_PROXY_PORT = 9050;
