@@ -116,6 +116,19 @@ jobs:
             }' src/logging.h > src/logging.h.new && mv src/logging.h.new src/logging.h
           fi
 
+       - name: Force curl (7.62.0) to cross-compile cleanly on MinGW
+        run: |
+          set -euo pipefail
+          f=depends/packages/curl.mk
+          test -f "$f" || { echo "depends/packages/curl.mk not found"; exit 1; }
+
+          # Teach curl.mk sane defaults for Windows cross builds
+          perl -0777 -pe '
+            s/(\$\(\s*package\s*\)_set_vars\s*\n)/$1# Cross-compile friendly opts for Windows\n$$(package)_config_opts += --disable-shared --enable-static --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp\n$$(package)_config_opts_mingw32 += --with-winssl\n$$(package)_config_opts_mingw64 += --with-winssl\n$$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no\n/;
+          ' -i "$f"
+
+          # Start fresh for curl so the new options take effect
+          rm -rf depends/work/build/*/curl/
 
       - name: Build depends (Win64)
         run: |
