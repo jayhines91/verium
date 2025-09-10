@@ -81,7 +81,7 @@ jobs:
           +#include <limits>
      
          QT_BEGIN_NAMESPACE
-        PATCH
+          PATCH
 
         # 2) Register the patch so depends applies it during preprocess
         f=depends/packages/qt.mk
