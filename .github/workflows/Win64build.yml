@@ -166,18 +166,34 @@ jobs:
             exit 1
           }
 
+      - name: Patch chainparams seeds to old style
+        run: |
+          set -e
+          f=src/chainparams.cpp
+          test -f "$f" || { echo "$f not found"; exit 1; }
+          cp "$f" "$f.bak"
+          # Replace 3-arg and 2-arg forms with a single host string
+          perl -0777 -pe 's/vSeeds\.emplace_back\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)/vSeeds.push_back("$1")/g' -i "$f"
+          # Optional: also handle initializer-list style if present
+          perl -0777 -pe 's/vSeeds\.push_back\(\s*CDNSSeedData\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)\s*\)/vSeeds.push_back("$1")/g' -i "$f"
+          echo "Patch diff:"
+          git --no-pager diff -- "$f" || true
+          
       - name: Configure (Win64)
         run: |
           ./autogen.sh
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
-          set -o pipefail
+          DEP="$(pwd)/depends/${HOST_TRIPLET}"
           ./configure \
             --host=${HOST_TRIPLET} \
-            --prefix="$(pwd)/depends/${HOST_TRIPLET}" \
+            --prefix="$DEP" \
+            --with-gui=qt5 \
+            --with-qt-bindir="$DEP/native/bin" \
+            --with-qt-incdir="$DEP/include" \
+            --with-qt-libdir="$DEP/lib" \
             --disable-bench --disable-tests \
             --enable-reduce-exports \
-            --disable-shared --enable-static \
-          || { echo "=== config.log (tail) ==="; tail -n 200 config.log || true; exit 1; }
+            --disable-shared --enable-static}
 
       - name: Build (Win64)
         run: |
