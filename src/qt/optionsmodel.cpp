@@ -8,7 +8,6 @@
 
 
 #include <qt/optionsmodel.h>
-#include <QtNetwork/QNetworkProxy>
 #include <QtNetwork>
 
 #include <qt/bitcoinunits.h>
