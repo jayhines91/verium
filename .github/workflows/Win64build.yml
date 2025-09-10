@@ -3,6 +3,10 @@ name: Build Verium (Windows x86_64 • old-style)
 on:
   workflow_dispatch:
     inputs:
+      target_ref:
+        description: "Branch or tag to build"
+        required: true
+        default: "verium-1.3.5"
       depends_target:
         description: "Optional: build only this depends pkg first (e.g., curl, openssl). Leave empty for full depends."
         required: false
@@ -45,15 +49,6 @@ jobs:
             g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 \
             curl zip unzip ccache
 
-      # Optional: preseed tarballs you’ve uploaded somewhere (leave commented if not used)
-      # - name: Preseed depends sources
-      #   run: |
-      #     mkdir -p depends/sources
-      #     gh release download deps-sources-v1 --pattern 'depends-sources-*.zip' --dir .
-      #     unzip -o depends-sources-*.zip -d depends/sources
-      #   env:
-      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Cache depends (sources + built)
         uses: actions/cache@v4
         with:
@@ -73,40 +68,39 @@ jobs:
             perl -0777 -pe '
               s/(\$\(package\)_set_vars\s*\n)/$1# mingw cross-friendly opts\n$$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp\n$$(package)_config_opts_mingw32 += --with-winssl\n$$(package)_config_opts_mingw64 += --with-winssl\n$$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no\n/ or die $_' -i "$f" || true
           fi
-  - name: Patch Qt 5.9.8 for modern GCC (add <limits>)
-  run: |
-    set -e
-    # 1) Create the patch file
-    mkdir -p depends/patches/qt
-    cat > depends/patches/qt/0001-qbytearraymatcher-include-limits.patch <<'PATCH'
-    --- a/qtbase/src/corelib/tools/qbytearraymatcher.h
-    +++ b/qtbase/src/corelib/tools/qbytearraymatcher.h
-    @@ -40,6 +40,7 @@
-     #include <QtCore/qbytearray.h>
-     #include <QtCore/qstring.h>
-     #include <QtCore/qvarlengtharray.h>
-    +#include <limits>
-     
-     QT_BEGIN_NAMESPACE
-    PATCH
 
-    f=depends/packages/qt.mk
+      - name: Patch Qt 5.9.8 for modern GCC (add <limits>)
+        run: |
+          set -e
+          # 1) Create the patch file
+          mkdir -p depends/patches/qt
+          cat > depends/patches/qt/0001-qbytearraymatcher-include-limits.patch <<'PATCH'
+          --- a/qtbase/src/corelib/tools/qbytearraymatcher.h
+          +++ b/qtbase/src/corelib/tools/qbytearraymatcher.h
+          @@ -40,6 +40,7 @@
+           #include <QtCore/qbytearray.h>
+           #include <QtCore/qstring.h>
+           #include <QtCore/qvarlengtharray.h>
+          +#include <limits>
+           
+           QT_BEGIN_NAMESPACE
+          PATCH
 
-    # 2) Register the patch (if qt.mk honors $(package)_patches, this will apply it)
-    if [ -f "$f" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$f"; then
-      printf '\n$$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$f"
-    fi
+          f=depends/packages/qt.mk
 
-    # 3) Belt & suspenders: also inject a preprocess sed that adds the include
-    #    (works even if the patch list isn't picked up for this package)
-    if [ -f "$f" ] && ! grep -q 'qbytearraymatcher.h.*limits' "$f"; then
-      cat >> "$f" <<'EOF'
+          # 2) Register the patch
+          if [ -f "$f" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$f"; then
+            printf '\n$$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$f"
+          fi
 
-# Inject <limits> include (MinGW/GCC11+ fix)
-$(package)_preprocess_cmds += sed -i '/qvarlengtharray.h/a #include <limits>' qtbase/src/corelib/tools/qbytearraymatcher.h
-EOF
-    fi
+          # 3) Also inject a preprocess sed (works even if patches list is skipped)
+          if [ -f "$f" ] && ! grep -q 'qbytearraymatcher.h.*limits' "$f"; then
+            cat >> "$f" <<'EOF'
 
+          # Inject <limits> include (MinGW/GCC11+ fix)
+          $(package)_preprocess_cmds += sed -i '/qvarlengtharray.h/a #include <limits>' qtbase/src/corelib/tools/qbytearraymatcher.h
+          EOF
+          fi
 
       - name: Build depends (Win64)
         run: |
@@ -118,9 +112,7 @@ EOF
           # Optionally build one package first to iterate faster (e.g., curl)
           if [ -n "${{ inputs.depends_target }}" ]; then
             echo "Priming depends target: ${{ inputs.depends_target }}"
-            make -C depends HOST=${HOST_TRIPLET} ${{
-              inputs.depends_target
-            }} -j"$(nproc || echo 2)" RC="$RC" WINDRES="$WINDRES"
+            make -C depends HOST=${HOST_TRIPLET} ${{ inputs.depends_target }} -j"$(nproc || echo 2)" RC="$RC" WINDRES="$WINDRES"
           fi
 
           # Full depends build
