@@ -49,7 +49,6 @@ jobs:
           git checkout origin/master -- depends
           echo "Using depends/ from master:"
           git log -1 --format='%h %ci %s' -- depends    
-          key: win-${{ env.HOST_TRIPLET }}-dependsFromMaster-${{ hashFiles('depends/**') }}
 
       - run: rm -rf depends/work depends/built
 
