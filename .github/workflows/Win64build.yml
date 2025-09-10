@@ -191,7 +191,17 @@ jobs:
           #define gmtime_r(t,r) gmtime_r_compat((t),(r))\n\
           #endif\n' "$f"
           fi    
-          
+
+
+      - name: Fix missing QNetworkProxy include
+        run: |
+          set -e
+          f=src/qt/optionsmodel.cpp
+          if [ -f "$f" ] && ! grep -q 'QNetworkProxy>' "$f"; then
+            # Put the include at the very top so it’s definitely visible
+            sed -i '1i #include <QtNetwork/QNetworkProxy>' "$f"
+          fi
+                     
       - name: Configure (Win64)
         run: |
           ./autogen.sh
