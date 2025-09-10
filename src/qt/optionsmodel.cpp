@@ -6,7 +6,7 @@
 #include <config/bitcoin-config.h>
 #endif
 
-#include <QtNetwork/QNetworkProxy>
+#include <QtNetwork>
 #include <qt/optionsmodel.h>
 
 #include <qt/bitcoinunits.h>
