@@ -84,10 +84,10 @@ jobs:
           PATCH
 
         # 2) Register the patch so depends applies it during preprocess
-        f=depends/packages/qt.mk
-        if [ -f "$f" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$f"; then
-          printf '\n$$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$f"
-        fi
+          f=depends/packages/qt.mk
+          if [ -f "$f" ] && ! grep -q '0001-qbytearraymatcher-include-limits.patch' "$f"; then
+            printf '\n$$(package)_patches += 0001-qbytearraymatcher-include-limits.patch\n' >> "$f"
+          fi
 
         # 3) Ensure we don’t reuse a previously preprocessed Qt tree
         rm -rf depends/work/build/*/qt/
