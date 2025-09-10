@@ -94,9 +94,9 @@ jobs:
           CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 \
           ${{ inputs.depends_target }} -j"$(nproc || echo 2)" \
           RC="$RC" WINDRES="$WINDRES"
-        fi
+          fi
 
-        make -C depends HOST=${HOST_TRIPLET} \
+          make -C depends HOST=${HOST_TRIPLET} \
           CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 \
           -j"$(nproc || echo 2)" RC="$RC" WINDRES="$WINDRES" || {
             echo "---- tail curl config.log ----"
