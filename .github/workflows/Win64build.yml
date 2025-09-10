@@ -71,16 +71,17 @@ jobs:
           gcc --version
           g++ --version
 
-      - name: Cache depends (sources + built)
+      - name: Cache depends sources only
         uses: actions/cache@v4
         with:
-          path: |
-            depends/sources
-            depends/built
-          key: win-${{ env.HOST_TRIPLET }}-${{ hashFiles('depends/packages/*.mk') }}
-          restore-keys: |
-            win-${{ env.HOST_TRIPLET }}-
+          path: depends/sources
+          key: win-${{ env.HOST_TRIPLET }}-${{ github.ref_name }}-${{ hashFiles('depends/packages/*.mk') }}
 
+      - name: Hard clean depends & ccache
+      run: |
+        rm -rf depends/work depends/built depends/sdk
+        ccache -C || true
+    
       - name: Patch curl.mk for MinGW (avoid AC_RUN; prefer WinSSL)
         run: |
           set -e
