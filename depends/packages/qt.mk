@@ -1,4 +1,4 @@
-PACKAGE=qt
+package=qt
 $(package)_version=5.9.8
 $(package)_download_path=https://download.qt.io/archive/qt/5.9/$($(package)_version)/submodules
 $(package)_suffix=opensource-src-$($(package)_version).tar.xz
