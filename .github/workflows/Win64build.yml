@@ -201,7 +201,27 @@ jobs:
             # Put the include at the very top so it’s definitely visible
             sed -i '1i #include <QtNetwork/QNetworkProxy>' "$f"
           fi
-                     
+
+      - name: Fix missing QNetworkProxy include (hot patch)
+        run: |
+          set -e
+          f=src/qt/optionsmodel.cpp
+          if [ -f "$f" ] && ! grep -q 'QNetworkProxy' "$f"; then
+            sed -i '/^#include "optionsmodel.h"/a #include <QNetworkProxy>' "$f"
+            echo "Injected #include <QNetworkProxy> into $f"
+          else
+            echo "No change needed."
+          fi
+
+      - name: Ensure QtNetwork gets linked
+        run: |
+          set -e
+          inc=src/Makefile.qt.include
+          if [ -f "$inc" ] && ! grep -q 'QT_LIBS_NETWORK' "$inc"; then
+            printf '\nLIBBITCOINQT_LIBS += $(QT_LIBS_NETWORK)\n' >> "$inc"
+            echo "Appended QtNetwork libs to $inc"
+          fi    
+                  
       - name: Configure (Win64)
         run: |
           ./autogen.sh
