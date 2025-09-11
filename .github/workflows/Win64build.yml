@@ -69,11 +69,11 @@ jobs:
           gcc --version
           g++ --version
 
-      - name: Cache depends sources only
-        uses: actions/cache@v4
-        with:
-          path: depends/sources
-          key: win-${{ env.HOST_TRIPLET }}-${{ github.ref_name }}-${{ hashFiles('depends/packages/*.mk') }}
+     # - name: Cache depends sources only
+     #   uses: actions/cache@v4
+     #   with:
+     #     path: depends/sources
+     #     key: win-${{ env.HOST_TRIPLET }}-${{ github.ref_name }}-${{ hashFiles('depends/packages/*.mk') }}
 
       - name: Hard clean depends & ccache
         run: |
@@ -139,6 +139,17 @@ jobs:
 
           # Start fresh for curl so the new options take effect
           rm -rf depends/work/build/*/curl/
+          
+      - name: Display optionsmodel.h before build
+        run: cat src/qt/optionsmodel.h
+
+      - name: Build (Win64)
+        run: |
+          if [ "${{ inputs.verbose_make }}" = "true" ]; then
+            make -j"$(nproc || echo 2)" V=1
+          else
+            make -j"$(nproc || echo 2)"
+          fi
 
       - name: Build depends (Win64)
         run: |
@@ -192,15 +203,6 @@ jobs:
           #endif\n' "$f"
           fi    
   
-
-      - name: Ensure QtNetwork gets linked
-        run: |
-          set -e
-          inc=src/Makefile.qt.include
-          if [ -f "$inc" ] && ! grep -q 'QT_LIBS_NETWORK' "$inc"; then
-            printf '\nLIBBITCOINQT_LIBS += $(QT_LIBS_NETWORK)\n' >> "$inc"
-            echo "Appended QtNetwork libs to $inc"
-          fi    
 
       - name: Initialize Qt automake vars (fix += error)
         run: |
