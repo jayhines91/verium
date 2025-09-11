@@ -61,7 +61,7 @@ jobs:
           g++ --version
 
       - name: Cache compiled depends
-        id: cache-depends2
+        id: cache-depends
         uses: actions/cache@v4
         with:
           path: depends/built
@@ -96,37 +96,23 @@ jobs:
               }
             }' src/logging.h > src/logging.h.new && mv src/logging.h.new src/logging.h
           fi
-
-      - name: Force Fix for Curl Cross-Compilation
+                
+      - name: Force curl (7.62.0) to cross-compile cleanly on MinGW
         run: |
           set -euo pipefail
-          CURL_MK_FILE=depends/packages/curl.mk
-          
-          if [ ! -f "$CURL_MK_FILE" ]; then
-            echo "ERROR: curl.mk not found at $CURL_MK_FILE"
-            exit 1
-          fi
+          f=depends/packages/curl.mk
+          test -f "$f" || { echo "depends/packages/curl.mk not found"; exit 1; }
 
-          # This patch forces the configure script to skip its failing runtime checks
-          # by pre-supplying the answers it needs for a Windows build.
-          # It also forces the use of native Windows SSL (SChannel).
-          cat <<EOF >> "$CURL_MK_FILE"
+          # Teach curl.mk sane defaults for Windows cross builds
+          perl -0777 -pe '
+            s/(\$\(\s*package\s*\)_set_vars\s*\n)/$1# Cross-compile friendly opts for Windows\n$$(package)_config_opts += --disable-shared --enable-static --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp\n$$(package)_config_opts_mingw32 += --with-winssl\n$$(package)_config_opts_mingw64 += --with-winssl\n$$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no\n/;
+          ' -i "$f"
 
-          # --- START CI CROSS-COMPILE HOTFIX ---
-          $(package)_config_opts += --with-winssl --disable-tests
-          $(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no
-          # --- END CI CROSS-COMPILE HOTFIX ---
-          EOF
-
-          echo "--- Verifying patch was applied to curl.mk ---"
-          cat "$CURL_MK_FILE"
-          echo "----------------------------------------------"
-          
-      - name: Display optionsmodel.h before build
-        run: cat src/qt/optionsmodel.h
+          # Start fresh for curl so the new options take effect
+          rm -rf depends/work/build/*/curl/
       
       - name: Build depends (Win64)
-        if: steps.cache-depends2.outputs.cache-hit != 'true'
+        if: steps.cache-depends.outputs.cache-hit != 'true'
         run: |
           set -e
           export RC=${HOST_TRIPLET}-windres
