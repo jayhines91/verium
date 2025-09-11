@@ -29,6 +29,10 @@ defaults:
 
 env:
   HOST_TRIPLET: x86_64-pc-linux-gnu
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_COMPRESS: "1"
+  CCACHE_MAXSIZE: "2G"
+  MAKEJOBS: ${{ vars.MAKEJOBS || 0 }}
 
 jobs:
   linux64:
@@ -41,6 +45,7 @@ jobs:
           ref: ${{ inputs.target_ref }}
           submodules: recursive
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Overwrite depends/ with master version (CI-only)
         run: |
@@ -58,7 +63,6 @@ jobs:
           sudo apt-get install -y \
             build-essential automake libtool pkg-config python3 \
             curl zip unzip ccache bison gperf \
-            # X11/xcb/xkbcommon dev headers needed when Qt probes
             libx11-dev libxext-dev libxfixes-dev libxi-dev libxrender-dev \
             libxrandr-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-render-util0-dev \
@@ -66,6 +70,14 @@ jobs:
             libxcb-sync-dev libxcb-xfixes0-dev libxcb-randr0-dev \
             libxcb-shm0-dev libxcb-shape0-dev libxcb-xinerama0-dev \
             libfontconfig1-dev libfreetype6-dev
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-linux-${{ env.HOST_TRIPLET }}-${{ hashFiles('**/*.cpp', '**/*.h', 'configure.ac', 'src/Makefile.am') }}
+          restore-keys: |
+            ccache-linux-${{ env.HOST_TRIPLET }}-
 
       - name: Cache depends sources
         uses: actions/cache@v4
@@ -76,7 +88,6 @@ jobs:
             linux-src-
 
       - name: Cache compiled depends prefix
-        id: cache-depends-prefix
         uses: actions/cache@v4
         with:
           path: depends/${{ env.HOST_TRIPLET }}
@@ -88,7 +99,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: depends/built
-          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-1${{ hashFiles('depends/packages/*.mk') }}
+          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-1-${{ hashFiles('depends/packages/*.mk') }}
           restore-keys: |
             depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-
 
@@ -113,15 +124,19 @@ jobs:
           perl -0777 -pe 's/vSeeds\.push_back\(\s*CDNSSeedData\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)\s*\)/vSeeds.push_back("$1")/g' -i "$f"
           git --no-pager diff -- "$f" || true
 
-      - name: Build depends (Linux)
+      - name: Prime and build depends (Linux)
         run: |
           set -e
+          export PATH="/usr/lib/ccache:$PATH"
+          jobs=${MAKEJOBS}
+          if [ "$jobs" -eq 0 ] 2>/dev/null; then jobs="$(nproc || echo 2)"; fi
+
           if [ -n "${{ inputs.depends_target }}" ]; then
             echo "Priming depends target: ${{ inputs.depends_target }}"
-            make -C depends HOST=${HOST_TRIPLET} ${{ inputs.depends_target }} -j"$(nproc || echo 2)"
+            make -C depends HOST=${HOST_TRIPLET} ${{ inputs.depends_target }} -j"${jobs}"
           fi
 
-          make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)" || {
+          make -C depends HOST=${HOST_TRIPLET} -j"${jobs}" || {
             echo "---- tail any config.log ----"
             find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
             exit 1
@@ -130,6 +145,9 @@ jobs:
       - name: Configure (Linux)
         run: |
           set -e
+          export PATH="/usr/lib/ccache:$PATH"
+          export CC="ccache gcc"
+          export CXX="ccache g++"
           ./autogen.sh
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
           DEP="$(pwd)/depends/${HOST_TRIPLET}"
@@ -142,14 +160,21 @@ jobs:
             --with-qt-libdir="$DEP/lib" \
             --disable-bench --disable-tests \
             --enable-reduce-exports \
-            --disable-shared --enable-static
+            --disable-shared --enable-static || {
+              echo "---- configure failed; show Qt probe lines from config.log ----"
+              (grep -nE 'Qt|qt|Q[A-Z]+' config.log | tail -n 120) || true
+              exit 1
+            }
 
       - name: Build (Linux)
         run: |
+          export PATH="/usr/lib/ccache:$PATH"
+          jobs=${MAKEJOBS}
+          if [ "$jobs" -eq 0 ] 2>/dev/null; then jobs="$(nproc || echo 2)"; fi
           if [ "${{ inputs.verbose_make }}" = "true" ]; then
-            make -j"$(nproc || echo 2)" V=1
+            make -j"${jobs}" V=1
           else
-            make -j"$(nproc || echo 2)"
+            make -j"${jobs}"
           fi
 
       - name: Package + checksums (Linux)
@@ -164,8 +189,13 @@ jobs:
           cp -f src/verium-tx out/ 2>/dev/null || true
           cp -f src/verium-wallet out/ 2>/dev/null || true
           cp -f src/qt/verium-qt out/ 2>/dev/null || true
+
           [ -n "$(ls -A out)" ] || { echo "No Linux binaries in out/"; exit 2; }
-          (cd out && tar -czf "../$PKG" .)
+
+          # Strip to shrink artifacts (optional; harmless if already stripped)
+          find out -type f -maxdepth 1 -exec file {} \; | awk -F: '/ELF/ {print $1}' | xargs -r strip || true
+
+          (cd out && ls -l > ../BUILD_MANIFEST.txt && tar -czf "../$PKG" .)
           sha256sum "$PKG" > "${PKG}.SHA256SUMS"
           echo "ART_MAIN=$PKG" >> $GITHUB_ENV
           echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
@@ -177,6 +207,7 @@ jobs:
           path: |
             ${{ env.ART_MAIN }}
             ${{ env.ART_SUMS }}
+            BUILD_MANIFEST.txt
 
       - name: Upload build logs (for debugging)
         if: always()
@@ -187,4 +218,3 @@ jobs:
             depends/work/build/**/config.log
             depends/work/build/**/config.status
           if-no-files-found: ignore
-
