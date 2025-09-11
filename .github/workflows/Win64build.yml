@@ -41,15 +41,6 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Overwrite depends/ with master version (CI-only)
-        run: |
-          set -euo pipefail
-          git fetch --depth=1 origin master
-          rm -rf depends
-          git checkout origin/master -- depends
-          echo "Using depends/ from master:"
-          git log -1 --format='%h %ci %s' -- depends    
-
       - name: Base deps + MinGW toolchain
         run: |
           sudo apt-get update
@@ -70,7 +61,7 @@ jobs:
           g++ --version
 
       - name: Cache compiled depends
-        id: cache-depends
+        id: cache-depends1
         uses: actions/cache@v4
         with:
           path: depends/built
@@ -141,7 +132,7 @@ jobs:
         run: cat src/qt/optionsmodel.h
       
       - name: Build depends (Win64)
-        if: steps.cache-depends.outputs.cache-hit != 'true'
+        if: steps.cache-depends1.outputs.cache-hit != 'true'
         run: |
           set -e
           export RC=${HOST_TRIPLET}-windres
