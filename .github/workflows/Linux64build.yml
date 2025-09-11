@@ -62,7 +62,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential automake libtool pkg-config python3 \
-            curl zip unzip ccache bison gperf \
+            curl ca-certificates zip unzip ccache bison gperf \
             libx11-dev libxext-dev libxfixes-dev libxi-dev libxrender-dev \
             libxrandr-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-render-util0-dev \
@@ -70,6 +70,7 @@ jobs:
             libxcb-sync-dev libxcb-xfixes0-dev libxcb-randr0-dev \
             libxcb-shm0-dev libxcb-shape0-dev libxcb-xinerama0-dev \
             libfontconfig1-dev libfreetype6-dev
+
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -140,40 +141,44 @@ jobs:
           echo "::group::depends build (first attempt)"
           if make -C depends HOST=${HOST_TRIPLET} -j"${jobs}"; then
             echo "::endgroup::"
-          else
-            echo "::endgroup::"
-            echo "First depends build failed. Checking for Boost predef header…"
-
-            # Try to locate the exact Boost work dir hash folder (1_70_0-*)
-            BOOST_WORK_DIR="$(ls -d depends/work/build/${HOST_TRIPLET}/boost/1_70_0-* 2>/dev/null | head -n1 || true)"
-            PREDEF_H="${BOOST_WORK_DIR}/libs/predef/include/boost/predef.h"
-
-            if [ -n "${BOOST_WORK_DIR}" ] && [ ! -f "${PREDEF_H}" ]; then
-              echo "Missing ${PREDEF_H}. Forcing clean re-download/re-extract of Boost and retrying…"
-
-              # Nuke boost work + any cached bad source tarball so it re-downloads
-              rm -rf "depends/work/build/${HOST_TRIPLET}/boost" || true
-              rm -rf "depends/work/staging/${HOST_TRIPLET}/boost" || true
-              rm -f depends/sources/boost_1_70_0.tar.* || true
-
-              echo "::group::rebuild boost only"
-              # Rebuild just boost first (serial to avoid rare race conditions)
-              make -C depends HOST=${HOST_TRIPLET} boost -j1 V=1
-              echo "::endgroup::"
-
-              echo "::group::verify predef header"
-              ls -l "${PREDEF_H}" || { echo "Still missing ${PREDEF_H}"; exit 1; }
-              echo "::endgroup::"
-
-              echo "::group::depends build (second attempt)"
-              make -C depends HOST=${HOST_TRIPLET} -j"${jobs}"
-              echo "::endgroup::"
-            else
-              echo "Boost predef header exists or Boost dir not found; surfacing logs and failing."
-              find depends/work/build -name config.log -exec sh -c 'echo \"==> {}\"; tail -n 200 \"{}\"' \;
-              exit 1
-            fi
+            exit 0
           fi
+          echo "::endgroup::"
+          echo "First depends build failed. Checking Boost state…"
+
+          BOOST_WORK_DIR="$(ls -d depends/work/build/${HOST_TRIPLET}/boost/1_70_0-* 2>/dev/null | head -n1 || true)"
+          PREDEF_H="${BOOST_WORK_DIR}/libs/predef/include/boost/predef.h"
+          BOOST_TARBALL="depends/sources/boost_1_70_0.tar.bz2"
+
+          # If predef.h is missing, clean Boost work dirs (but do NOT delete sources tarball)
+          if [ -n "${BOOST_WORK_DIR}" ] && [ ! -f "${PREDEF_H}" ]; then
+            echo "Missing ${PREDEF_H}. Cleaning Boost work dirs and verifying tarball…"
+            rm -rf "depends/work/build/${HOST_TRIPLET}/boost" || true
+            rm -rf "depends/work/staging/${HOST_TRIPLET}/boost" || true
+
+            # If the tarball is missing, explicitly download it via depends
+            if [ ! -f "${BOOST_TARBALL}" ]; then
+              echo "Tarball ${BOOST_TARBALL} not found. Running download-boost (fallback to download)…"
+              make -C depends HOST=${HOST_TRIPLET} download-boost || make -C depends HOST=${HOST_TRIPLET} download
+            fi
+
+            echo "::group::rebuild boost only (serial)"
+            make -C depends HOST=${HOST_TRIPLET} boost -j1 V=1
+            echo "::endgroup::"
+
+            echo "::group::verify predef header"
+            ls -l "${PREDEF_H}" || { echo "Still missing ${PREDEF_H}"; exit 1; }
+            echo "::endgroup::"
+
+            echo "::group::depends build (second attempt)"
+            make -C depends HOST=${HOST_TRIPLET} -j"${jobs}"
+            echo "::endgroup::"
+          else
+            echo "Boost predef header present or Boost work dir not found; surfacing logs and failing."
+            find depends/work/build -name config.log -exec sh -c 'echo \"==> {}\"; tail -n 200 \"{}\"' \;
+            exit 1
+          fi
+
 
 
       - name: Configure (Linux)
