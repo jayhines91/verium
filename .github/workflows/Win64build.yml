@@ -69,17 +69,14 @@ jobs:
           gcc --version
           g++ --version
 
-     # - name: Cache depends sources only
-     #   uses: actions/cache@v4
-     #   with:
-     #     path: depends/sources
-     #     key: win-${{ env.HOST_TRIPLET }}-${{ github.ref_name }}-${{ hashFiles('depends/packages/*.mk') }}
-
-      - name: Hard clean depends & ccache
-        run: |
-          rm -rf depends/work depends/built depends/sdk
-          ccache -C || true
-    
+      - name: Cache compiled depends
+        id: cache-depends
+        uses: actions/cache@v4
+        with:
+          path: depends/built
+          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-${{ hashFiles('depends/packages/*.mk') }}
+     
+         
       - name: Patch curl.mk for MinGW (avoid AC_RUN; prefer WinSSL)
         run: |
           set -e
@@ -144,6 +141,7 @@ jobs:
         run: cat src/qt/optionsmodel.h
       
       - name: Build depends (Win64)
+        if: steps.cache-depends.outputs.cache-hit != 'true'
         run: |
           set -e
           export RC=${HOST_TRIPLET}-windres
