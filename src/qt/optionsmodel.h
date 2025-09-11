@@ -9,7 +9,7 @@
 #include <qt/guiconstants.h>
 
 #include <QAbstractListModel>
-
+#include <QNetworkProxy>
 namespace interfaces {
 class Node;
 }
