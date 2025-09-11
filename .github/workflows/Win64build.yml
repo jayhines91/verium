@@ -142,15 +142,7 @@ jobs:
           
       - name: Display optionsmodel.h before build
         run: cat src/qt/optionsmodel.h
-
-      - name: Build (Win64)
-        run: |
-          if [ "${{ inputs.verbose_make }}" = "true" ]; then
-            make -j"$(nproc || echo 2)" V=1
-          else
-            make -j"$(nproc || echo 2)"
-          fi
-
+      
       - name: Build depends (Win64)
         run: |
           set -e
