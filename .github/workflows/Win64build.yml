@@ -191,27 +191,7 @@ jobs:
           #define gmtime_r(t,r) gmtime_r_compat((t),(r))\n\
           #endif\n' "$f"
           fi    
-
-
-      - name: Fix missing QNetworkProxy include
-        run: |
-          set -e
-          f=src/qt/optionsmodel.cpp
-          if [ -f "$f" ] && ! grep -q 'QNetworkProxy>' "$f"; then
-            # Put the include at the very top so it’s definitely visible
-            sed -i '1i #include <QtNetwork/QNetworkProxy>' "$f"
-          fi
-
-      - name: Fix missing QNetworkProxy include (hot patch)
-        run: |
-          set -e
-          f=src/qt/optionsmodel.cpp
-          if [ -f "$f" ] && ! grep -q 'QNetworkProxy' "$f"; then
-            sed -i '/^#include "optionsmodel.h"/a #include <QNetworkProxy>' "$f"
-            echo "Injected #include <QNetworkProxy> into $f"
-          else
-            echo "No change needed."
-          fi
+  
 
       - name: Ensure QtNetwork gets linked
         run: |
@@ -253,25 +233,7 @@ jobs:
             --disable-bench --disable-tests \
             --enable-reduce-exports \
             --disable-shared --enable-static
-
-      - name: Ensure QNetworkProxy includes are present where used
-        run: |
-          set -euo pipefail
-          # Scan for QNetworkProxy references in src/qt
-          files=$(git grep -l 'QNetworkProxy' -- 'src/qt/**/*.cpp' 'src/qt/**/*.h' || true)
-          for f in $files; do
-            # If file references QNetworkProxy but lacks its header, add it
-            if ! grep -qE '#include\s*<QNetworkProxy>|#include\s*<QtNetwork/QNetworkProxy>' "$f"; then
-              # Insert after the first local include if possible; else prepend
-              if grep -n '^#include' "$f" >/dev/null; then
-                awk 'NR==1,/#include/{print} NR==1 && !done && /#include/ {print "#include <QNetworkProxy>"; done=1; next} NR>1 {print}' "$f" > "$f.new" && mv "$f.new" "$f"
-              else
-                sed -i '1i #include <QNetworkProxy>' "$f"
-              fi
-            fi
-          done
-      
-
+            
       - name: Build (Win64)
         run: |
           if [ "${{ inputs.verbose_make }}" = "true" ]; then
