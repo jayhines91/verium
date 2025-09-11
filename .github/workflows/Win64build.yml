@@ -116,7 +116,7 @@ jobs:
           $(package)_config_opts += --with-winssl --disable-tests
           $(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no
           # --- END CI CROSS-COMPILE HOTFIX ---
-        EOF
+          EOF
 
           echo "--- Verifying patch was applied to curl.mk ---"
           cat "$CURL_MK_FILE"
