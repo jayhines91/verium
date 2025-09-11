@@ -41,6 +41,15 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Overwrite depends/ with master version (CI-only)
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin master
+          rm -rf depends
+          git checkout origin/master -- depends
+          echo "Using depends/ from master:"
+          git log -1 --format='%h %ci %s' -- depends    
+
       - name: Base deps + MinGW toolchain
         run: |
           sudo apt-get update
@@ -61,11 +70,11 @@ jobs:
           g++ --version
 
       - name: Cache compiled depends
-        id: cache-depends1
+        id: cache-depends
         uses: actions/cache@v4
         with:
           path: depends/built
-          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-12${{ hashFiles('depends/packages/*.mk') }}
+          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-1${{ hashFiles('depends/packages/*.mk') }}
               
       
       - name: Force MinGW POSIX threading model (safer std::thread/pthread)
@@ -114,22 +123,9 @@ jobs:
           rm -rf depends/work/build/*/curl/
           echo "==== tail of updated curl.mk ===="
           tail -n 50 "$f"
-
-      - name: Seed Autoconf cache for cross builds (config.site)
-        run: |
-          mkdir -p ci
-          cat > ci/config.site <<'SITE'
-          ac_cv_func_strerror_r=no
-          ac_cv_strerror_r_char_p=no
-          ac_cv_have_decl_strerror_r=yes
-          ac_cv_func_clock_gettime=no
-          ac_cv_header_dlfcn_h=no
-          SITE
-
-
-      
+          
       - name: Build depends (Win64)
-        if: steps.cache-depends1.outputs.cache-hit != 'true'
+        if: steps.cache-depends.outputs.cache-hit != 'true'
         run: |
           set -e
           export RC=${HOST_TRIPLET}-windres
