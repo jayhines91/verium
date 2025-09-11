@@ -1,1 +1,190 @@
+name: Build Verium (Linux x86_64 • old-style)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: "Branch/Tag/SHA to build"
+        required: true
+        default: "master"
+      depends_target:
+        description: "Optional: build only this depends pkg first (e.g., qt, openssl). Leave empty for full depends."
+        required: false
+        default: ""
+      verbose_make:
+        description: "Verbose make output (V=1)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: verium-global
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  HOST_TRIPLET: x86_64-pc-linux-gnu
+
+jobs:
+  linux64:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout target ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Overwrite depends/ with master version (CI-only)
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin master
+          rm -rf depends
+          git checkout origin/master -- depends
+          echo "Using depends/ from master:"
+          git log -1 --format='%h %ci %s' -- depends
+
+      - name: Base build deps (toolchain + X11 headers for Qt)
+        env: { DEBIAN_FRONTEND: noninteractive }
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential automake libtool pkg-config python3 \
+            curl zip unzip ccache bison gperf \
+            # X11/xcb/xkbcommon dev headers needed when Qt probes
+            libx11-dev libxext-dev libxfixes-dev libxi-dev libxrender-dev \
+            libxrandr-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-render-util0-dev \
+            libxcb-image0-dev libxcb-keysyms1-dev libxcb-icccm4-dev \
+            libxcb-sync-dev libxcb-xfixes0-dev libxcb-randr0-dev \
+            libxcb-shm0-dev libxcb-shape0-dev libxcb-xinerama0-dev \
+            libfontconfig1-dev libfreetype6-dev
+
+      - name: Cache depends sources
+        uses: actions/cache@v4
+        with:
+          path: depends/sources
+          key: linux-src-${{ hashFiles('depends/packages/*.mk') }}
+          restore-keys: |
+            linux-src-
+
+      - name: Cache compiled depends prefix
+        id: cache-depends-prefix
+        uses: actions/cache@v4
+        with:
+          path: depends/${{ env.HOST_TRIPLET }}
+          key: linux-depends-${{ env.HOST_TRIPLET }}-${{ hashFiles('depends/Makefile', 'depends/packages/*.mk') }}
+          restore-keys: |
+            linux-depends-${{ env.HOST_TRIPLET }}-
+
+      - name: Cache depends/built stamps (fast no-op if already built)
+        uses: actions/cache@v4
+        with:
+          path: depends/built
+          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-1${{ hashFiles('depends/packages/*.mk') }}
+          restore-keys: |
+            depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-
+
+      - name: Initialize Qt automake vars (fix += error)
+        run: |
+          set -e
+          f=src/Makefile.qt.include
+          if [ -f "$f" ]; then
+            grep -q '^[[:space:]]*LIBBITCOINQT_LIBS[[:space:]]*=' "$f" || \
+              sed -i '1i LIBBITCOINQT_LIBS =\nLIBBITCOINQT_INCLUDES =' "$f"
+            echo "Patched $f:"
+            head -n 8 "$f"
+          fi
+
+      - name: Patch chainparams seeds to old style
+        run: |
+          set -e
+          f=src/chainparams.cpp
+          test -f "$f" || { echo "$f not found"; exit 1; }
+          cp "$f" "$f.bak"
+          perl -0777 -pe 's/vSeeds\.emplace_back\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)/vSeeds.push_back("$1")/g' -i "$f"
+          perl -0777 -pe 's/vSeeds\.push_back\(\s*CDNSSeedData\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)\s*\)/vSeeds.push_back("$1")/g' -i "$f"
+          git --no-pager diff -- "$f" || true
+
+      - name: Build depends (Linux)
+        run: |
+          set -e
+          if [ -n "${{ inputs.depends_target }}" ]; then
+            echo "Priming depends target: ${{ inputs.depends_target }}"
+            make -C depends HOST=${HOST_TRIPLET} ${{ inputs.depends_target }} -j"$(nproc || echo 2)"
+          fi
+
+          make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)" || {
+            echo "---- tail any config.log ----"
+            find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
+            exit 1
+          }
+
+      - name: Configure (Linux)
+        run: |
+          set -e
+          ./autogen.sh
+          export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
+          DEP="$(pwd)/depends/${HOST_TRIPLET}"
+          ./configure \
+            --host=${HOST_TRIPLET} \
+            --prefix="$DEP" \
+            --with-gui=qt5 \
+            --with-qt-bindir="$DEP/native/bin" \
+            --with-qt-incdir="$DEP/include" \
+            --with-qt-libdir="$DEP/lib" \
+            --disable-bench --disable-tests \
+            --enable-reduce-exports \
+            --disable-shared --enable-static
+
+      - name: Build (Linux)
+        run: |
+          if [ "${{ inputs.verbose_make }}" = "true" ]; then
+            make -j"$(nproc || echo 2)" V=1
+          else
+            make -j"$(nproc || echo 2)"
+          fi
+
+      - name: Package + checksums (Linux)
+        run: |
+          set -euo pipefail
+          V=$(git describe --tags --dirty --always || echo untagged)
+          PKG="verium-${V}-${HOST_TRIPLET}.tar.gz"
+          mkdir -p out
+          # collect whatever was built
+          cp -f src/veriumd out/ 2>/dev/null || true
+          cp -f src/verium-cli out/ 2>/dev/null || true
+          cp -f src/verium-tx out/ 2>/dev/null || true
+          cp -f src/verium-wallet out/ 2>/dev/null || true
+          cp -f src/qt/verium-qt out/ 2>/dev/null || true
+          [ -n "$(ls -A out)" ] || { echo "No Linux binaries in out/"; exit 2; }
+          (cd out && tar -czf "../$PKG" .)
+          sha256sum "$PKG" > "${PKG}.SHA256SUMS"
+          echo "ART_MAIN=$PKG" >> $GITHUB_ENV
+          echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
+
+      - name: Upload artifacts (binaries + checksums)
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux64-${{ env.HOST_TRIPLET }}
+          path: |
+            ${{ env.ART_MAIN }}
+            ${{ env.ART_SUMS }}
+
+      - name: Upload build logs (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux64-dep-logs
+          path: |
+            depends/work/build/**/config.log
+            depends/work/build/**/config.status
+          if-no-files-found: ignore
 
