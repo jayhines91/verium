@@ -97,20 +97,30 @@ jobs:
             }' src/logging.h > src/logging.h.new && mv src/logging.h.new src/logging.h
           fi
 
-      - name: Patch curl.mk for Windows Cross-Compile
+      - name: Force Fix for Curl Cross-Compilation
         run: |
           set -euo pipefail
           CURL_MK_FILE=depends/packages/curl.mk
-          if [ -f "$CURL_MK_FILE" ]; then
-            # This patch prevents configure from trying to run test executables
-            # and forces it to use the native Windows SSL library.
-            printf '\n# CI CROSS-COMPILE FIX\n' >> "$CURL_MK_FILE"
-            printf '$(package)_config_opts += --with-winssl --disable-ldap --disable-ldaps\n' >> "$CURL_MK_FILE"
-            printf '$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no\n' >> "$CURL_MK_FILE"
-            echo "Applied robust patch to curl.mk"
-          else
-            echo "curl.mk not found, skipping patch."
+          
+          if [ ! -f "$CURL_MK_FILE" ]; then
+            echo "ERROR: curl.mk not found at $CURL_MK_FILE"
+            exit 1
           fi
+
+          # This patch forces the configure script to skip its failing runtime checks
+          # by pre-supplying the answers it needs for a Windows build.
+          # It also forces the use of native Windows SSL (SChannel).
+          cat <<EOF >> "$CURL_MK_FILE"
+
+          # --- START CI CROSS-COMPILE HOTFIX ---
+          $(package)_config_opts += --with-winssl --disable-tests
+          $(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no
+          # --- END CI CROSS-COMPILE HOTFIX ---
+        EOF
+
+          echo "--- Verifying patch was applied to curl.mk ---"
+          cat "$CURL_MK_FILE"
+          echo "----------------------------------------------"
           
       - name: Display optionsmodel.h before build
         run: cat src/qt/optionsmodel.h
