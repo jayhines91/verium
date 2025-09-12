@@ -41,6 +41,40 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Boost 1.70 pthread guard hotfix
+        run: |
+          set -euo pipefail
+          f=depends/packages/boost.mk
+          test -f "$f"
+
+          # 1) Teach depends/boost to patch the header right after unpack
+          #    Guard PTHREAD_STACK_MIN usage to avoid preprocessing error.
+          awk '
+            BEGIN{added=0}
+            {print}
+            /^(#|\s)*define\s*\$\(package\)_preprocess_cmds/ { }
+            END{
+              print "";
+              print "# Injected by CI: guard PTHREAD_STACK_MIN in Boost 1.70 (Linux/GCC9)";
+              print "$$(package)_preprocess_cmds += \\";
+              print "  sed -i '"'"'s/^#if PTHREAD_STACK_MIN > 0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN > 0)/'"'"' \\";
+              print "  $($(package)_srcdir)/boost/thread/pthread/thread_data.hpp";
+            }
+          ' "$f" > "$f.new" && mv "$f.new" "$f"
+
+          # 2) Make Boost build clearly target pthreads + GNU extensions,
+          #    and add a conservative fallback for PTHREAD_STACK_MIN.
+          {
+            echo ''
+            echo '# Injected by CI: robust pthread build flags for Boost'
+            echo '$$(package)_cxxflags += -D_GNU_SOURCE -DBOOST_THREAD_USES_PTHREAD -DPTHREAD_STACK_MIN=16384'
+          } >> "$f"
+
+      - name: Show boost.mk tail (verify patch)
+        run: |
+          tail -n 60 depends/packages/boost.mk
+
+
       - name: Base build deps (native Linux)
         run: |
           set -e
