@@ -41,14 +41,14 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Overwrite depends/ with master version (CI-only)
-        run: |
-          set -euo pipefail
-          git fetch --depth=1 origin master
-          rm -rf depends
-          git checkout origin/master -- depends
-          echo "Using depends/ from master:"
-          git log -1 --format='%h %ci %s' -- depends    
+    #  - name: Overwrite depends/ with master version (CI-only)
+    #    run: |
+    #      set -euo pipefail
+    #      git fetch --depth=1 origin master
+    #      rm -rf depends
+    #      git checkout origin/master -- depends
+    #      echo "Using depends/ from master:"
+    #      git log -1 --format='%h %ci %s' -- depends    
 
       - name: Base deps + MinGW toolchain
         run: |
