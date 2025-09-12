@@ -41,38 +41,46 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Boost 1.70 pthread guard hotfix
+      - name: Force Boost b2 to define PTHREAD_STACK_MIN (and pthread flags)
         run: |
           set -euo pipefail
           f=depends/packages/boost.mk
           test -f "$f"
 
-          # 1) Teach depends/boost to patch the header right after unpack
-          #    Guard PTHREAD_STACK_MIN usage to avoid preprocessing error.
+          # Ensure Boost gets our flags via b2 (this is what b2 actually reads)
+          {
+            echo ''
+            echo '# CI inject: robust pthread flags for Boost on Linux (GCC 9)'
+            echo '$$(package)_build_opts += cxxflags="-D_GNU_SOURCE -DBOOST_THREAD_USES_PTHREAD -DPTHREAD_STACK_MIN=16384"'
+            echo '$$(package)_build_opts += cflags="-D_GNU_SOURCE -DPTHREAD_STACK_MIN=16384"'
+          } >> "$f"
+
+      - name: Guard PTHREAD_STACK_MIN in Boost header + clear old Boost workdir
+        run: |
+          set -euo pipefail
+          srcdir="depends/work/build/x86_64-pc-linux-gnu/boost"
+          # If a previous attempt has already unpacked Boost, patch in-place too.
+          if compgen -G "$srcdir" >/dev/null 2>&1; then
+            find "$srcdir" -type f -name thread_data.hpp -path "*/boost/*" -print0 | \
+              xargs -0 -r sed -i 's/^#if PTHREAD_STACK_MIN > 0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN > 0)/'
+          fi
+
+          # Also patch at unpack time by teaching boost.mk to run sed after extract.
+          f=depends/packages/boost.mk
           awk '
             BEGIN{added=0}
             {print}
-            /^(#|\s)*define\s*\$\(package\)_preprocess_cmds/ { }
             END{
               print "";
-              print "# Injected by CI: guard PTHREAD_STACK_MIN in Boost 1.70 (Linux/GCC9)";
+              print "# CI inject: guard PTHREAD_STACK_MIN in Boost 1.70 header at preprocess step'";
               print "$$(package)_preprocess_cmds += \\";
               print "  sed -i '"'"'s/^#if PTHREAD_STACK_MIN > 0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN > 0)/'"'"' \\";
               print "  $($(package)_srcdir)/boost/thread/pthread/thread_data.hpp";
             }
           ' "$f" > "$f.new" && mv "$f.new" "$f"
 
-          # 2) Make Boost build clearly target pthreads + GNU extensions,
-          #    and add a conservative fallback for PTHREAD_STACK_MIN.
-          {
-            echo ''
-            echo '# Injected by CI: robust pthread build flags for Boost'
-            echo '$$(package)_cxxflags += -D_GNU_SOURCE -DBOOST_THREAD_USES_PTHREAD -DPTHREAD_STACK_MIN=16384'
-          } >> "$f"
-
-      - name: Show boost.mk tail (verify patch)
-        run: |
-          tail -n 60 depends/packages/boost.mk
+          # Wipe any previous Boost build to avoid stale objects missing our flags
+          rm -rf depends/work/build/*/boost/
 
 
       - name: Base build deps (native Linux)
