@@ -1,4 +1,4 @@
-name: Build Verium (Linux x86_64 • old-style)
+name: Build Verium (Linux x86_64 • old-style • GCC 9)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
         required: true
         default: "master"
       depends_target:
-        description: "Optional: build only this depends pkg first (e.g., qt, openssl). Leave empty for full depends."
+        description: "Optional: build only this depends pkg first (e.g., curl, openssl). Leave empty for full depends."
         required: false
         default: ""
       verbose_make:
@@ -29,15 +29,10 @@ defaults:
 
 env:
   HOST_TRIPLET: x86_64-pc-linux-gnu
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
-  CCACHE_COMPRESS: "1"
-  CCACHE_MAXSIZE: "2G"
-  MAKEJOBS: ${{ vars.MAKEJOBS || 0 }}
 
 jobs:
   linux64:
     runs-on: ubuntu-22.04
-
     steps:
       - name: Checkout target ref
         uses: actions/checkout@v4
@@ -45,66 +40,37 @@ jobs:
           ref: ${{ inputs.target_ref }}
           submodules: recursive
           fetch-depth: 0
-          fetch-tags: true
 
-      - name: Overwrite depends/ with master version (CI-only)
+      - name: Base build deps (native Linux)
         run: |
-          set -euo pipefail
-          git fetch --depth=1 origin master
-          rm -rf depends
-          git checkout origin/master -- depends
-          echo "Using depends/ from master:"
-          git log -1 --format='%h %ci %s' -- depends
-
-      - name: Base build deps (toolchain + X11 headers for Qt)
-        env: { DEBIAN_FRONTEND: noninteractive }
-        run: |
+          set -e
           sudo apt-get update
           sudo apt-get install -y \
             build-essential automake libtool pkg-config python3 \
-            curl ca-certificates zip unzip ccache bison gperf \
-            libx11-dev libxext-dev libxfixes-dev libxi-dev libxrender-dev \
-            libxrandr-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-render-util0-dev \
-            libxcb-image0-dev libxcb-keysyms1-dev libxcb-icccm4-dev \
-            libxcb-sync-dev libxcb-xfixes0-dev libxcb-randr0-dev \
-            libxcb-shm0-dev libxcb-shape0-dev libxcb-xinerama0-dev \
-            libfontconfig1-dev libfreetype6-dev
+            curl zip unzip ccache bison flex
 
+      - name: Install GCC 9 (host) and select it
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y gcc-9 g++-9
+          # Make gcc-9/g++-9 the system default to avoid surprises
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
+          gcc --version
+          g++ --version
 
-      - name: Cache ccache
+      - name: Cache compiled depends
+        id: cache-depends
         uses: actions/cache@v4
         with:
-          path: .ccache
-          key: ccache-linux-${{ env.HOST_TRIPLET }}-${{ hashFiles('**/*.cpp', '**/*.h', 'configure.ac', 'src/Makefile.am') }}
-          restore-keys: |
-            ccache-linux-${{ env.HOST_TRIPLET }}-
+          path: |
+            depends/built
+            depends/${{ env.HOST_TRIPLET }}
+          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-1${{ hashFiles('depends/packages/*.mk') }}
 
-      - name: Cache depends sources
-        uses: actions/cache@v4
-        with:
-          path: depends/sources
-          key: linux-src-${{ hashFiles('depends/packages/*.mk') }}
-          restore-keys: |
-            linux-src-
-
-      - name: Cache compiled depends prefix
-        uses: actions/cache@v4
-        with:
-          path: depends/${{ env.HOST_TRIPLET }}
-          key: linux-depends-${{ env.HOST_TRIPLET }}-${{ hashFiles('depends/Makefile', 'depends/packages/*.mk') }}
-          restore-keys: |
-            linux-depends-${{ env.HOST_TRIPLET }}-
-
-      - name: Cache depends/built stamps (fast no-op if already built)
-        uses: actions/cache@v4
-        with:
-          path: depends/built
-          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-1-${{ hashFiles('depends/packages/*.mk') }}
-          restore-keys: |
-            depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-
-
-      - name: Initialize Qt automake vars (fix += error)
+      # (Optional) Initialize Qt automake vars if older trees rely on '+='
+      - name: Initialize Qt automake vars (fix '+=' error)
         run: |
           set -e
           f=src/Makefile.qt.include
@@ -112,84 +78,39 @@ jobs:
             grep -q '^[[:space:]]*LIBBITCOINQT_LIBS[[:space:]]*=' "$f" || \
               sed -i '1i LIBBITCOINQT_LIBS =\nLIBBITCOINQT_INCLUDES =' "$f"
             echo "Patched $f:"
-            head -n 8 "$f"
+            head -n 8 "$f" || true
+          else
+            echo "NOTE: $f not found (skipping)."
           fi
 
-      - name: Patch chainparams seeds to old style
+      - name: Build depends (Linux, GCC 9)
+        if: steps.cache-depends.outputs.cache-hit != 'true'
+        env:
+          CC_FOR_BUILD: gcc-9
+          CXX_FOR_BUILD: g++-9
         run: |
           set -e
-          f=src/chainparams.cpp
-          test -f "$f" || { echo "$f not found"; exit 1; }
-          cp "$f" "$f.bak"
-          perl -0777 -pe 's/vSeeds\.emplace_back\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)/vSeeds.push_back("$1")/g' -i "$f"
-          perl -0777 -pe 's/vSeeds\.push_back\(\s*CDNSSeedData\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)\s*\)/vSeeds.push_back("$1")/g' -i "$f"
-          git --no-pager diff -- "$f" || true
-
-      - name: Prime and build depends (Linux)
-        run: |
-          set -euo pipefail
-          export PATH="/usr/lib/ccache:$PATH"
-
-          jobs=${MAKEJOBS:-0}
-          if [ "$jobs" -eq 0 ] 2>/dev/null; then jobs="$(nproc || echo 2)"; fi
-
           if [ -n "${{ inputs.depends_target }}" ]; then
             echo "Priming depends target: ${{ inputs.depends_target }}"
-            make -C depends HOST=${HOST_TRIPLET} ${{ inputs.depends_target }} -j"${jobs}"
+            make -C depends HOST=${HOST_TRIPLET} ${{ inputs.depends_target }} -j"$(nproc || echo 2)"
           fi
 
-          echo "::group::depends build (first attempt)"
-          if make -C depends HOST=${HOST_TRIPLET} -j"${jobs}"; then
-            echo "::endgroup::"
-            exit 0
-          fi
-          echo "::endgroup::"
-          echo "First depends build failed. Checking Boost state…"
-
-          BOOST_WORK_DIR="$(ls -d depends/work/build/${HOST_TRIPLET}/boost/1_70_0-* 2>/dev/null | head -n1 || true)"
-          PREDEF_H="${BOOST_WORK_DIR}/libs/predef/include/boost/predef.h"
-          BOOST_TARBALL="depends/sources/boost_1_70_0.tar.bz2"
-
-          # If predef.h is missing, clean Boost work dirs (but do NOT delete sources tarball)
-          if [ -n "${BOOST_WORK_DIR}" ] && [ ! -f "${PREDEF_H}" ]; then
-            echo "Missing ${PREDEF_H}. Cleaning Boost work dirs and verifying tarball…"
-            rm -rf "depends/work/build/${HOST_TRIPLET}/boost" || true
-            rm -rf "depends/work/staging/${HOST_TRIPLET}/boost" || true
-
-            # If the tarball is missing, explicitly download it via depends
-            if [ ! -f "${BOOST_TARBALL}" ]; then
-              echo "Tarball ${BOOST_TARBALL} not found. Running download-boost (fallback to download)…"
-              make -C depends HOST=${HOST_TRIPLET} download-boost || make -C depends HOST=${HOST_TRIPLET} download
-            fi
-
-            echo "::group::rebuild boost only (serial)"
-            make -C depends HOST=${HOST_TRIPLET} boost -j1 V=1
-            echo "::endgroup::"
-
-            echo "::group::verify predef header"
-            ls -l "${PREDEF_H}" || { echo "Still missing ${PREDEF_H}"; exit 1; }
-            echo "::endgroup::"
-
-            echo "::group::depends build (second attempt)"
-            make -C depends HOST=${HOST_TRIPLET} -j"${jobs}"
-            echo "::endgroup::"
-          else
-            echo "Boost predef header present or Boost work dir not found; surfacing logs and failing."
-            find depends/work/build -name config.log -exec sh -c 'echo \"==> {}\"; tail -n 200 \"{}\"' \;
+          make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)" || {
+            echo "---- tail any config.log ----"
+            find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
             exit 1
-          fi
+          }
 
-
-
-      - name: Configure (Linux)
+      - name: Autogen & Configure (Linux, GCC 9)
+        env:
+          CC: gcc-9
+          CXX: g++-9
         run: |
           set -e
-          export PATH="/usr/lib/ccache:$PATH"
-          export CC="ccache gcc"
-          export CXX="ccache g++"
           ./autogen.sh
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
           DEP="$(pwd)/depends/${HOST_TRIPLET}"
+
           ./configure \
             --host=${HOST_TRIPLET} \
             --prefix="$DEP" \
@@ -199,42 +120,42 @@ jobs:
             --with-qt-libdir="$DEP/lib" \
             --disable-bench --disable-tests \
             --enable-reduce-exports \
-            --disable-shared --enable-static || {
-              echo "---- configure failed; show Qt probe lines from config.log ----"
-              (grep -nE 'Qt|qt|Q[A-Z]+' config.log | tail -n 120) || true
-              exit 1
-            }
+            --disable-shared --enable-static
 
-      - name: Build (Linux)
+      - name: Build (Linux, GCC 9)
+        env:
+          CC: gcc-9
+          CXX: g++-9
         run: |
-          export PATH="/usr/lib/ccache:$PATH"
-          jobs=${MAKEJOBS}
-          if [ "$jobs" -eq 0 ] 2>/dev/null; then jobs="$(nproc || echo 2)"; fi
+          set -e
           if [ "${{ inputs.verbose_make }}" = "true" ]; then
-            make -j"${jobs}" V=1
+            make -j"$(nproc || echo 2)" V=1
           else
-            make -j"${jobs}"
+            make -j"$(nproc || echo 2)"
           fi
+
+      - name: Collect & strip binaries
+        run: |
+          set -e
+          mkdir -p out
+          cp -f src/veriumd out/ 2>/dev/null || true
+          cp -f src/verium-cli out/ 2>/dev/null || true
+          cp -f src/qt/verium-qt out/ 2>/dev/null || true
+
+          if [ -z "$(ls -A out)" ]; then
+            echo "No Linux binaries found in expected locations."
+            find src -maxdepth 2 -type f -perm -111 -printf '%P\n' || true
+            exit 2
+          fi
+
+          strip --strip-unneeded out/* || true
 
       - name: Package + checksums (Linux)
         run: |
           set -euo pipefail
           V=$(git describe --tags --dirty --always || echo untagged)
           PKG="verium-${V}-${HOST_TRIPLET}.tar.gz"
-          mkdir -p out
-          # collect whatever was built
-          cp -f src/veriumd out/ 2>/dev/null || true
-          cp -f src/verium-cli out/ 2>/dev/null || true
-          cp -f src/verium-tx out/ 2>/dev/null || true
-          cp -f src/verium-wallet out/ 2>/dev/null || true
-          cp -f src/qt/verium-qt out/ 2>/dev/null || true
-
-          [ -n "$(ls -A out)" ] || { echo "No Linux binaries in out/"; exit 2; }
-
-          # Strip to shrink artifacts (optional; harmless if already stripped)
-          find out -type f -maxdepth 1 -exec file {} \; | awk -F: '/ELF/ {print $1}' | xargs -r strip || true
-
-          (cd out && ls -l > ../BUILD_MANIFEST.txt && tar -czf "../$PKG" .)
+          tar -C out -czf "$PKG" .
           sha256sum "$PKG" > "${PKG}.SHA256SUMS"
           echo "ART_MAIN=$PKG" >> $GITHUB_ENV
           echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
@@ -242,11 +163,10 @@ jobs:
       - name: Upload artifacts (binaries + checksums)
         uses: actions/upload-artifact@v4
         with:
-          name: linux64-${{ env.HOST_TRIPLET }}
+          name: linux64-${{ env.HOST_TRIPLET }}-gcc9
           path: |
             ${{ env.ART_MAIN }}
             ${{ env.ART_SUMS }}
-            BUILD_MANIFEST.txt
 
       - name: Upload build logs (for debugging)
         if: always()
