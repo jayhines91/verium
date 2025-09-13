@@ -42,6 +42,28 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Boost: generate headers before building
+        run: |
+          set -euo pipefail
+          f=depends/packages/boost.mk
+          test -f "$f"
+
+          # Ensure Boost headers are generated before the library build to satisfy predef/config checks
+          # We hook it into the configure_cmds so it runs right after bootstrap.
+          if ! grep -q 'b2 headers' "$f"; then
+            printf '\n# CI inject: run b2 headers so predef/config checks can find <boost/...>\n' >> "$f"
+            echo '$$(package)_configure_cmds += ./b2 headers' >> "$f"
+          fi
+
+          # Also ensure we only build the libs we need (optional, but keeps noise down)
+          # If your boost.mk already sets with-libraries, skip this.
+          if ! grep -q -- '--with-libraries=' "$f"; then
+            echo '$$(package)_build_opts += --with-libraries=chrono,filesystem,system,thread,test' >> "$f"
+          fi
+
+          tail -n 40 "$f"
+    
+
       - name: Base build deps (host)
         run: |
           set -euo pipefail
