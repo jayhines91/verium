@@ -41,46 +41,46 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Force Boost b2 to define PTHREAD_STACK_MIN (and pthread flags)
+      - name: Ensure clean boost.mk (reset any prior injections)
+        run: |
+          set -euo pipefail
+          if git ls-files --error-unmatch depends/packages/boost.mk >/dev/null 2>&1; then
+            git checkout -- depends/packages/boost.mk
+          fi
+
+      - name: Inject Boost pthread fixes (b2 flags + header guard)
         run: |
           set -euo pipefail
           f=depends/packages/boost.mk
           test -f "$f"
 
-          # Ensure Boost gets our flags via b2 (this is what b2 actually reads)
+          # 1) Make b2 compile everything with robust pthread flags and a safe fallback PTHREAD_STACK_MIN
           {
             echo ''
-            echo '# CI inject: robust pthread flags for Boost on Linux (GCC 9)'
+            echo '# CI inject: robust pthread flags for Boost 1.70 on Linux (GCC 9)'
             echo '$$(package)_build_opts += cxxflags="-D_GNU_SOURCE -DBOOST_THREAD_USES_PTHREAD -DPTHREAD_STACK_MIN=16384"'
             echo '$$(package)_build_opts += cflags="-D_GNU_SOURCE -DPTHREAD_STACK_MIN=16384"'
           } >> "$f"
 
-      - name: Guard PTHREAD_STACK_MIN in Boost header + clear old Boost workdir
-        run: |
-          set -euo pipefail
-          srcdir="depends/work/build/x86_64-pc-linux-gnu/boost"
-          # If a previous attempt has already unpacked Boost, patch in-place too.
-          if compgen -G "$srcdir" >/dev/null 2>&1; then
-            find "$srcdir" -type f -name thread_data.hpp -path "*/boost/*" -print0 | \
-              xargs -0 -r sed -i 's/^#if PTHREAD_STACK_MIN > 0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN > 0)/'
-          fi
-
-          # Also patch at unpack time by teaching boost.mk to run sed after extract.
-          f=depends/packages/boost.mk
+          # 2) Guard PTHREAD_STACK_MIN in the Boost header at preprocess time (applies after unpack)
           awk '
-            BEGIN{added=0}
             {print}
             END{
               print "";
-              print "# CI inject: guard PTHREAD_STACK_MIN in Boost 1.70 header at preprocess step'";
+              print "# CI inject: guard PTHREAD_STACK_MIN use in Boost 1.70 pthread header";
               print "$$(package)_preprocess_cmds += \\";
               print "  sed -i '"'"'s/^#if PTHREAD_STACK_MIN > 0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN > 0)/'"'"' \\";
               print "  $($(package)_srcdir)/boost/thread/pthread/thread_data.hpp";
             }
           ' "$f" > "$f.new" && mv "$f.new" "$f"
 
-          # Wipe any previous Boost build to avoid stale objects missing our flags
+          tail -n 60 "$f"
+
+      - name: Purge stale Boost workdir (force rebuild with new flags)
+        run: |
+          set -euo pipefail
           rm -rf depends/work/build/*/boost/
+
 
 
       - name: Base build deps (native Linux)
@@ -109,7 +109,7 @@ jobs:
           path: |
             depends/built
             depends/${{ env.HOST_TRIPLET }}
-          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-1${{ hashFiles('depends/packages/*.mk') }}
+          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-1-1${{ hashFiles('depends/packages/*.mk') }}
 
       # (Optional) Initialize Qt automake vars if older trees rely on '+='
       - name: Initialize Qt automake vars (fix '+=' error)
