@@ -63,53 +63,7 @@ jobs:
           path: depends/built
           key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-${{ hashFiles('depends/packages/*.mk') }}
 
-      # ─────────────────────────────────────────────────────────────────────────
-      # Boost 1.70 + glibc 2.34+ fix:
-      # The classic failure is in boost/thread/pthread/thread_data.hpp at
-      #   #if PTHREAD_STACK_MIN > 0
-      # which breaks when PTHREAD_STACK_MIN is not a compile-time constant on newer glibc.
-      # Patch turns this into a runtime check guarded by #ifdef, matching upstream fixes.
-      # (Background: boostorg/thread issues show this exact problem and its fix.) :contentReference[oaicite:0]{index=0}
-      # ─────────────────────────────────────────────────────────────────────────
-      - name: Inject Boost pthread_stack_min fix (applied by depends)
-        run: |
-          set -euo pipefail
-          mkdir -p depends/patches/boost
-          cat > depends/patches/boost/pthread-stack-min-fix.patch <<'PATCH'
-          diff --git a/boost/thread/pthread/thread_data.hpp b/boost/thread/pthread/thread_data.hpp
-          index 3b7f4a1..0000000 100644
-          --- a/boost/thread/pthread/thread_data.hpp
-          +++ b/boost/thread/pthread/thread_data.hpp
-          @@ -57,9 +57,17 @@ namespace boost
-             std::size_t page_size = ::sysconf( _SC_PAGESIZE);
-         #endif
--#if PTHREAD_STACK_MIN > 0
--            if (size<static_cast<std::size_t>(PTHREAD_STACK_MIN)) size=PTHREAD_STACK_MIN;
--#endif
-+#ifdef PTHREAD_STACK_MIN
-+            {
-+              // On glibc 2.34+ PTHREAD_STACK_MIN may be a function-like sysconf value,
-+              // not a preprocessor-time constant. Avoid #if on it; check at runtime.
-+              std::size_t psm = static_cast<std::size_t>(PTHREAD_STACK_MIN);
-+              if (psm > 0 && size < psm)
-+                size = psm;
-+            }
-+#endif
-             size = ((size+page_size-1)/page_size)*page_size;
-             int res = pthread_attr_setstacksize(&val_, size);
-             BOOST_VERIFY(!res && "pthread_attr_setstacksize failed");
-PATCH
-
-          # Append patch to boost.mk so depends applies it (bitcoin-style depends recognizes $(package)_patches)
-          f=depends/packages/boost.mk
-          if [ -f "$f" ] && ! grep -q 'pthread-stack-min-fix.patch' "$f"; then
-            echo '' >> "$f"
-            echo '$(package)_patches += pthread-stack-min-fix.patch' >> "$f"
-            echo 'Injected pthread-stack-min-fix.patch into depends/packages/boost.mk'
-          else
-            echo "NOTE: $f not found or patch already listed; continuing."
-          fi
-
+ 
       - name: Build depends (Linux)
         if: steps.cache-depends.outputs.cache-hit != 'true'
         run: |
