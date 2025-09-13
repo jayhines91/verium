@@ -76,13 +76,13 @@ jobs:
           set -euo pipefail
           mkdir -p depends/patches/boost
           cat > depends/patches/boost/pthread-stack-min-fix.patch <<'PATCH'
-diff --git a/boost/thread/pthread/thread_data.hpp b/boost/thread/pthread/thread_data.hpp
-index 3b7f4a1..0000000 100644
---- a/boost/thread/pthread/thread_data.hpp
-+++ b/boost/thread/pthread/thread_data.hpp
-@@ -57,9 +57,17 @@ namespace boost
+          diff --git a/boost/thread/pthread/thread_data.hpp b/boost/thread/pthread/thread_data.hpp
+          index 3b7f4a1..0000000 100644
+          --- a/boost/thread/pthread/thread_data.hpp
+          +++ b/boost/thread/pthread/thread_data.hpp
+          @@ -57,9 +57,17 @@ namespace boost
              std::size_t page_size = ::sysconf( _SC_PAGESIZE);
- #endif
+         #endif
 -#if PTHREAD_STACK_MIN > 0
 -            if (size<static_cast<std::size_t>(PTHREAD_STACK_MIN)) size=PTHREAD_STACK_MIN;
 -#endif
