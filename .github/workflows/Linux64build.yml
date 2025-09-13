@@ -42,7 +42,7 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Boost: generate headers before building
+      - name: Boost generate headers before building
         run: |
           set -euo pipefail
           f=depends/packages/boost.mk
