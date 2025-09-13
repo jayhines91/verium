@@ -1,14 +1,17 @@
 diff --git a/boost/thread/pthread/thread_data.hpp b/boost/thread/pthread/thread_data.hpp
-index 1234567..89abcdef 100644
 --- a/boost/thread/pthread/thread_data.hpp
 +++ b/boost/thread/pthread/thread_data.hpp
-@@
--#if defined(PTHREAD_STACK_MIN) && PTHREAD_STACK_MIN > 0
--        if (size < PTHREAD_STACK_MIN)
--            size = PTHREAD_STACK_MIN;
--#endif
+@@ -57,7 +57,13 @@
+ //  Some libcs don’t define PTHREAD_STACK_MIN or do it via a function-like macro.
+ //  Use a defensive check so the #if never errors out on Linux/glibc variants.
+-#if PTHREAD_STACK_MIN > 0
 +#if defined(PTHREAD_STACK_MIN)
-+        if (size < static_cast<std::size_t>(PTHREAD_STACK_MIN))
-+            size = static_cast<std::size_t>(PTHREAD_STACK_MIN);
++#  if (PTHREAD_STACK_MIN+0) > 0
++#    define BOOST_THREAD_HAVE_PTHREAD_STACK_MIN 1
++#  endif
 +#endif
-
++
++#if defined(BOOST_THREAD_HAVE_PTHREAD_STACK_MIN)
+   enum { min_thread_stack_size = PTHREAD_STACK_MIN };
+ #else
+   enum { min_thread_stack_size = 0 };
