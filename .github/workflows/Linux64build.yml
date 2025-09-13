@@ -41,45 +41,72 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Ensure clean boost.mk (reset any prior injections)
+      - name: Reset boost.mk (remove any prior injections)
         run: |
           set -euo pipefail
           if git ls-files --error-unmatch depends/packages/boost.mk >/dev/null 2>&1; then
             git checkout -- depends/packages/boost.mk
           fi
 
-      - name: Inject Boost pthread fixes (b2 flags + header guard)
+      - name: Add Boost pthread patch + b2 flags (single source of truth)
         run: |
           set -euo pipefail
+
+          # 1) Create a proper patch that guards PTHREAD_STACK_MIN in Boost 1.70
+          mkdir -p depends/patches/boost
+          cat > depends/patches/boost/boost-1_70-pthread-stack-min-guard.patch << 'PATCH'
+          *** a/boost/thread/pthread/thread_data.hpp
+          --- b/boost/thread/pthread/thread_data.hpp
+          ***************
+          *** 57,66 ****
+            //  make_pthread_mutex() if BOOST_THREAD_PROVIDES_GENERIC_SHARED_MUTEX_ON_WIN is defined.
+            //  For other compilers/platforms we don't know a way to get it, so we use
+            //  a default value: 1MiB.
+            //  Note: PTHREAD_STACK_MIN is an optional feature and may be undefined.
+            //  See: https://pubs.opengroup.org/onlinepubs/9699919799/
+          ! #if PTHREAD_STACK_MIN > 0
+          ! #define BOOST_THREAD_PTHREAD_STACK_MIN PTHREAD_STACK_MIN
+          ! #else
+          ! #define BOOST_THREAD_PTHREAD_STACK_MIN (1024*1024)
+          ! #endif
+          --- 57,68 ----
+            //  make_pthread_mutex() if BOOST_THREAD_PROVIDES_GENERIC_SHARED_MUTEX_ON_WIN is defined.
+            //  For other compilers/platforms we don't know a way to get it, so we use
+            //  a default value: 1MiB.
+            //  Note: PTHREAD_STACK_MIN is an optional feature and may be undefined.
+            //  See: https://pubs.opengroup.org/onlinepubs/9699919799/
+          + #if defined(PTHREAD_STACK_MIN) && (PTHREAD_STACK_MIN > 0)
+          + #define BOOST_THREAD_PTHREAD_STACK_MIN PTHREAD_STACK_MIN
+          + #else
+          + #define BOOST_THREAD_PTHREAD_STACK_MIN (1024*1024)
+          + #endif
+          PATCH
+
+          # 2) Teach depends/boost to apply the patch and inject GCC cxxflags into Boost's project-config.jam
           f=depends/packages/boost.mk
           test -f "$f"
 
-          # 1) Make b2 compile everything with robust pthread flags and a safe fallback PTHREAD_STACK_MIN
-          {
-            echo ''
-            echo '# CI inject: robust pthread flags for Boost 1.70 on Linux (GCC 9)'
-            echo '$$(package)_build_opts += cxxflags="-D_GNU_SOURCE -DBOOST_THREAD_USES_PTHREAD -DPTHREAD_STACK_MIN=16384"'
-            echo '$$(package)_build_opts += cflags="-D_GNU_SOURCE -DPTHREAD_STACK_MIN=16384"'
-          } >> "$f"
+          # Append our patch reference in the canonical way
+          echo '' >> "$f"
+          echo '# CI inject: guard PTHREAD_STACK_MIN in Boost 1.70 pthread header' >> "$f"
+          echo '$$(package)_patches += boost-1_70-pthread-stack-min-guard.patch' >> "$f"
 
-          # 2) Guard PTHREAD_STACK_MIN in the Boost header at preprocess time (applies after unpack)
-          awk '
-            {print}
-            END{
-              print "";
-              print "# CI inject: guard PTHREAD_STACK_MIN use in Boost 1.70 pthread header";
-              print "$$(package)_preprocess_cmds += \\";
-              print "  sed -i '"'"'s/^#if PTHREAD_STACK_MIN > 0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN > 0)/'"'"' \\";
-              print "  $($(package)_srcdir)/boost/thread/pthread/thread_data.hpp";
-            }
-          ' "$f" > "$f.new" && mv "$f.new" "$f"
+          # After bootstrap generates project-config.jam, append a "using gcc" line
+          # that adds robust pthread/gnu flags and a safe default for PTHREAD_STACK_MIN.
+          # This is the knob Boost.Build actually reads for all compilations.
+          cat >> "$f" << 'EOF'
+          # CI inject: add global cxxflags for gcc in project-config.jam
+          $$(package)_configure_cmds += echo 'using gcc : : g++ : <cxxflags>-D_GNU_SOURCE -DBOOST_THREAD_USES_PTHREAD -DPTHREAD_STACK_MIN=16384 ;' >> $($$(package)_build_subdir)/project-config.jam
+          EOF
 
-          tail -n 60 "$f"
+          echo "==== tail of boost.mk (verification) ===="
+          tail -n 80 "$f"
 
-      - name: Purge stale Boost workdir (force rebuild with new flags)
+      - name: Purge Boost workdir (force rebuild with new patch/flags)
         run: |
           set -euo pipefail
           rm -rf depends/work/build/*/boost/
+
 
 
 
@@ -109,7 +136,7 @@ jobs:
           path: |
             depends/built
             depends/${{ env.HOST_TRIPLET }}
-          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-1-1${{ hashFiles('depends/packages/*.mk') }}
+          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-1-2${{ hashFiles('depends/packages/*.mk') }}
 
       # (Optional) Initialize Qt automake vars if older trees rely on '+='
       - name: Initialize Qt automake vars (fix '+=' error)
