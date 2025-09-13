@@ -40,76 +40,7 @@ jobs:
           ref: ${{ inputs.target_ref }}
           submodules: recursive
           fetch-depth: 0
-
-      - name: Reset boost.mk (remove any prior injections)
-        run: |
-          set -euo pipefail
-          if git ls-files --error-unmatch depends/packages/boost.mk >/dev/null 2>&1; then
-            git checkout -- depends/packages/boost.mk
-          fi
-
-      - name: Add Boost pthread patch + b2 flags (single source of truth)
-        run: |
-          set -euo pipefail
-
-          # 1) Create a proper patch that guards PTHREAD_STACK_MIN in Boost 1.70
-          mkdir -p depends/patches/boost
-          cat > depends/patches/boost/boost-1_70-pthread-stack-min-guard.patch << 'PATCH'
-          *** a/boost/thread/pthread/thread_data.hpp
-          --- b/boost/thread/pthread/thread_data.hpp
-          ***************
-          *** 57,66 ****
-            //  make_pthread_mutex() if BOOST_THREAD_PROVIDES_GENERIC_SHARED_MUTEX_ON_WIN is defined.
-            //  For other compilers/platforms we don't know a way to get it, so we use
-            //  a default value: 1MiB.
-            //  Note: PTHREAD_STACK_MIN is an optional feature and may be undefined.
-            //  See: https://pubs.opengroup.org/onlinepubs/9699919799/
-          ! #if PTHREAD_STACK_MIN > 0
-          ! #define BOOST_THREAD_PTHREAD_STACK_MIN PTHREAD_STACK_MIN
-          ! #else
-          ! #define BOOST_THREAD_PTHREAD_STACK_MIN (1024*1024)
-          ! #endif
-          --- 57,68 ----
-            //  make_pthread_mutex() if BOOST_THREAD_PROVIDES_GENERIC_SHARED_MUTEX_ON_WIN is defined.
-            //  For other compilers/platforms we don't know a way to get it, so we use
-            //  a default value: 1MiB.
-            //  Note: PTHREAD_STACK_MIN is an optional feature and may be undefined.
-            //  See: https://pubs.opengroup.org/onlinepubs/9699919799/
-          + #if defined(PTHREAD_STACK_MIN) && (PTHREAD_STACK_MIN > 0)
-          + #define BOOST_THREAD_PTHREAD_STACK_MIN PTHREAD_STACK_MIN
-          + #else
-          + #define BOOST_THREAD_PTHREAD_STACK_MIN (1024*1024)
-          + #endif
-          PATCH
-
-          # 2) Teach depends/boost to apply the patch and inject GCC cxxflags into Boost's project-config.jam
-          f=depends/packages/boost.mk
-          test -f "$f"
-
-          # Append our patch reference in the canonical way
-          echo '' >> "$f"
-          echo '# CI inject: guard PTHREAD_STACK_MIN in Boost 1.70 pthread header' >> "$f"
-          echo '$$(package)_patches += boost-1_70-pthread-stack-min-guard.patch' >> "$f"
-
-          # After bootstrap generates project-config.jam, append a "using gcc" line
-          # that adds robust pthread/gnu flags and a safe default for PTHREAD_STACK_MIN.
-          # This is the knob Boost.Build actually reads for all compilations.
-          cat >> "$f" << 'EOF'
-          # CI inject: add global cxxflags for gcc in project-config.jam
-          $$(package)_configure_cmds += echo 'using gcc : : g++ : <cxxflags>-D_GNU_SOURCE -DBOOST_THREAD_USES_PTHREAD -DPTHREAD_STACK_MIN=16384 ;' >> $($$(package)_build_subdir)/project-config.jam
-          EOF
-
-          echo "==== tail of boost.mk (verification) ===="
-          tail -n 80 "$f"
-
-      - name: Purge Boost workdir (force rebuild with new patch/flags)
-        run: |
-          set -euo pipefail
-          rm -rf depends/work/build/*/boost/
-
-
-
-
+     
       - name: Base build deps (native Linux)
         run: |
           set -e
@@ -118,16 +49,16 @@ jobs:
             build-essential automake libtool pkg-config python3 \
             curl zip unzip ccache bison flex
 
-      - name: Install GCC 9 (host) and select it
-        run: |
-          set -e
-          sudo apt-get update
-          sudo apt-get install -y gcc-9 g++-9
+    #  - name: Install GCC 9 (host) and select it
+    #    run: |
+    #      set -e
+    #      sudo apt-get update
+    #      sudo apt-get install -y gcc-9 g++-9
           # Make gcc-9/g++-9 the system default to avoid surprises
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
-          gcc --version
-          g++ --version
+    #      sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100
+    #      sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
+    #      gcc --version
+    #      g++ --version
 
       - name: Cache compiled depends
         id: cache-depends
