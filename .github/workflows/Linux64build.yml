@@ -42,6 +42,9 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Purge Boost workdir
+        run: rm -rf depends/work/build/*/boost/
+
       - name: Boost generate headers before building
         run: |
           set -euo pipefail
@@ -88,7 +91,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: depends/built
-          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-${{ hashFiles('depends/packages/*.mk') }}
+          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-boost-predefskip-v1-${{ hashFiles('depends/packages/*.mk','depends/patches/boost/*.patch') }}
+
 
  
       - name: Build depends (Linux)
