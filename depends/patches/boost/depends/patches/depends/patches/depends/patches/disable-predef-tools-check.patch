@@ -1,0 +1,15 @@
+diff --git a/libs/predef/tools/check/Jamfile.v2 b/libs/predef/tools/check/Jamfile.v2
+--- a/libs/predef/tools/check/Jamfile.v2
++++ b/libs/predef/tools/check/Jamfile.v2
+@@ -1,6 +1,11 @@
++# CI NOTE: These are diagnostic tools, unnecessary for building the libs Verium needs.
++explicit ;
++return ;
++
+ #  See the accompanying file LICENSE_1_0.txt or copy at
+ #  http://www.boost.org/LICENSE_1_0.txt)
+-
+ import os ;
+ import path ;
+ import modules ;
+PATCH
