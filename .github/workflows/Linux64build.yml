@@ -1,4 +1,4 @@
-name: Build Verium (Linux x86_64 • old-style • GCC 9)
+name: Build Verium (Linux x86_64 • depends)
 
 on:
   workflow_dispatch:
@@ -6,9 +6,9 @@ on:
       target_ref:
         description: "Branch/Tag/SHA to build"
         required: true
-        default: "master"
+        default: "Verium-1.3.5"
       depends_target:
-        description: "Optional: build only this depends pkg first (e.g., curl, openssl). Leave empty for full depends."
+        description: "Optional: build only this depends pkg first (e.g., boost, openssl). Leave empty for full depends."
         required: false
         default: ""
       verbose_make:
@@ -17,7 +17,7 @@ on:
         default: "false"
 
 concurrency:
-  group: verium-global
+  group: verium-linux
   cancel-in-progress: true
 
 permissions:
@@ -33,6 +33,7 @@ env:
 jobs:
   linux64:
     runs-on: ubuntu-22.04
+
     steps:
       - name: Checkout target ref
         uses: actions/checkout@v4
@@ -40,74 +41,98 @@ jobs:
           ref: ${{ inputs.target_ref }}
           submodules: recursive
           fetch-depth: 0
-     
-      - name: Base build deps (native Linux)
+
+      - name: Base build deps (host)
         run: |
-          set -e
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             build-essential automake libtool pkg-config python3 \
-            curl zip unzip ccache bison flex
+            gcc-9 g++-9 \
+            curl zip unzip ccache
 
-    #  - name: Install GCC 9 (host) and select it
-    #    run: |
-    #      set -e
-    #      sudo apt-get update
-    #      sudo apt-get install -y gcc-9 g++-9
-          # Make gcc-9/g++-9 the system default to avoid surprises
-    #      sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100
-    #      sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
-    #      gcc --version
-    #      g++ --version
+          # Make gcc-9/g++-9 the system default for this job
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
+          gcc --version; g++ --version
 
       - name: Cache compiled depends
         id: cache-depends
         uses: actions/cache@v4
         with:
-          path: |
-            depends/built
-            depends/${{ env.HOST_TRIPLET }}
-          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-1-2${{ hashFiles('depends/packages/*.mk') }}
+          path: depends/built
+          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-${{ hashFiles('depends/packages/*.mk') }}
 
-      # (Optional) Initialize Qt automake vars if older trees rely on '+='
-      - name: Initialize Qt automake vars (fix '+=' error)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Boost 1.70 + glibc 2.34+ fix:
+      # The classic failure is in boost/thread/pthread/thread_data.hpp at
+      #   #if PTHREAD_STACK_MIN > 0
+      # which breaks when PTHREAD_STACK_MIN is not a compile-time constant on newer glibc.
+      # Patch turns this into a runtime check guarded by #ifdef, matching upstream fixes.
+      # (Background: boostorg/thread issues show this exact problem and its fix.) :contentReference[oaicite:0]{index=0}
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Inject Boost pthread_stack_min fix (applied by depends)
         run: |
-          set -e
-          f=src/Makefile.qt.include
-          if [ -f "$f" ]; then
-            grep -q '^[[:space:]]*LIBBITCOINQT_LIBS[[:space:]]*=' "$f" || \
-              sed -i '1i LIBBITCOINQT_LIBS =\nLIBBITCOINQT_INCLUDES =' "$f"
-            echo "Patched $f:"
-            head -n 8 "$f" || true
+          set -euo pipefail
+          mkdir -p depends/patches/boost
+          cat > depends/patches/boost/pthread-stack-min-fix.patch <<'PATCH'
+diff --git a/boost/thread/pthread/thread_data.hpp b/boost/thread/pthread/thread_data.hpp
+index 3b7f4a1..0000000 100644
+--- a/boost/thread/pthread/thread_data.hpp
++++ b/boost/thread/pthread/thread_data.hpp
+@@ -57,9 +57,17 @@ namespace boost
+             std::size_t page_size = ::sysconf( _SC_PAGESIZE);
+ #endif
+-#if PTHREAD_STACK_MIN > 0
+-            if (size<static_cast<std::size_t>(PTHREAD_STACK_MIN)) size=PTHREAD_STACK_MIN;
+-#endif
++#ifdef PTHREAD_STACK_MIN
++            {
++              // On glibc 2.34+ PTHREAD_STACK_MIN may be a function-like sysconf value,
++              // not a preprocessor-time constant. Avoid #if on it; check at runtime.
++              std::size_t psm = static_cast<std::size_t>(PTHREAD_STACK_MIN);
++              if (psm > 0 && size < psm)
++                size = psm;
++            }
++#endif
+             size = ((size+page_size-1)/page_size)*page_size;
+             int res = pthread_attr_setstacksize(&val_, size);
+             BOOST_VERIFY(!res && "pthread_attr_setstacksize failed");
+PATCH
+
+          # Append patch to boost.mk so depends applies it (bitcoin-style depends recognizes $(package)_patches)
+          f=depends/packages/boost.mk
+          if [ -f "$f" ] && ! grep -q 'pthread-stack-min-fix.patch' "$f"; then
+            echo '' >> "$f"
+            echo '$(package)_patches += pthread-stack-min-fix.patch' >> "$f"
+            echo 'Injected pthread-stack-min-fix.patch into depends/packages/boost.mk'
           else
-            echo "NOTE: $f not found (skipping)."
+            echo "NOTE: $f not found or patch already listed; continuing."
           fi
 
-      - name: Build depends (Linux, GCC 9)
+      - name: Build depends (Linux)
         if: steps.cache-depends.outputs.cache-hit != 'true'
-        env:
-          CC_FOR_BUILD: gcc-9
-          CXX_FOR_BUILD: g++-9
         run: |
           set -e
+          export CC=gcc-9 CXX=g++-9
           if [ -n "${{ inputs.depends_target }}" ]; then
             echo "Priming depends target: ${{ inputs.depends_target }}"
-            make -C depends HOST=${HOST_TRIPLET} ${{ inputs.depends_target }} -j"$(nproc || echo 2)"
+            make -C depends HOST=${HOST_TRIPLET} CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 \
+              ${{ inputs.depends_target }} -j"$(nproc || echo 2)"
           fi
 
-          make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)" || {
-            echo "---- tail any config.log ----"
-            find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
-            exit 1
-          }
+          make -C depends HOST=${HOST_TRIPLET} CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 \
+            -j"$(nproc || echo 2)" || {
+              echo "---- tail any config.log ----"
+              find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
+              exit 1
+            }
 
-      - name: Autogen & Configure (Linux, GCC 9)
-        env:
-          CC: gcc-9
-          CXX: g++-9
+      - name: Configure (Linux)
         run: |
           set -e
           ./autogen.sh
+          export CC=gcc-9 CXX=g++-9
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
           DEP="$(pwd)/depends/${HOST_TRIPLET}"
 
@@ -122,10 +147,7 @@ jobs:
             --enable-reduce-exports \
             --disable-shared --enable-static
 
-      - name: Build (Linux, GCC 9)
-        env:
-          CC: gcc-9
-          CXX: g++-9
+      - name: Build (Linux)
         run: |
           set -e
           if [ "${{ inputs.verbose_make }}" = "true" ]; then
@@ -134,28 +156,25 @@ jobs:
             make -j"$(nproc || echo 2)"
           fi
 
-      - name: Collect & strip binaries
-        run: |
-          set -e
-          mkdir -p out
-          cp -f src/veriumd out/ 2>/dev/null || true
-          cp -f src/verium-cli out/ 2>/dev/null || true
-          cp -f src/qt/verium-qt out/ 2>/dev/null || true
-
-          if [ -z "$(ls -A out)" ]; then
-            echo "No Linux binaries found in expected locations."
-            find src -maxdepth 2 -type f -perm -111 -printf '%P\n' || true
-            exit 2
-          fi
-
-          strip --strip-unneeded out/* || true
-
       - name: Package + checksums (Linux)
         run: |
           set -euo pipefail
           V=$(git describe --tags --dirty --always || echo untagged)
+          OUTDIR="out-linux"
+          mkdir -p "$OUTDIR"
+
+          # Collect typical outputs (daemon/CLI/qt). Adjust names if the repo differs.
+          cp -f src/verium* "$OUTDIR/" 2>/dev/null || true
+          cp -f src/qt/verium* "$OUTDIR/" 2>/dev/null || true
+
+          # Make sure we actually have ELF binaries
+          if [ -z "$(ls -A "$OUTDIR" 2>/dev/null)" ]; then
+            echo "No Linux binaries found in $OUTDIR; exiting."
+            exit 2
+          fi
+
           PKG="verium-${V}-${HOST_TRIPLET}.tar.gz"
-          tar -C out -czf "$PKG" .
+          tar -C "$OUTDIR" -czf "$PKG" .
           sha256sum "$PKG" > "${PKG}.SHA256SUMS"
           echo "ART_MAIN=$PKG" >> $GITHUB_ENV
           echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
@@ -163,7 +182,7 @@ jobs:
       - name: Upload artifacts (binaries + checksums)
         uses: actions/upload-artifact@v4
         with:
-          name: linux64-${{ env.HOST_TRIPLET }}-gcc9
+          name: linux64-${{ env.HOST_TRIPLET }}
           path: |
             ${{ env.ART_MAIN }}
             ${{ env.ART_SUMS }}
@@ -172,7 +191,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: linux64-dep-logs
+          name: linux-dep-logs
           path: |
             depends/work/build/**/config.log
             depends/work/build/**/config.status
