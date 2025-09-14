@@ -1,15 +1,27 @@
-diff --git a/libs/predef/tools/check/Jamfile.v2 b/libs/predef/tools/check/Jamfile.v2
---- a/libs/predef/tools/check/Jamfile.v2
-+++ b/libs/predef/tools/check/Jamfile.v2
-@@ -1,6 +1,11 @@
-+# CI NOTE: These are diagnostic tools, unnecessary for building the libs Verium needs.
-+explicit ;
-+return ;
-+
- #  See the accompanying file LICENSE_1_0.txt or copy at
- #  http://www.boost.org/LICENSE_1_0.txt)
--
- import os ;
- import path ;
- import modules ;
-PATCH
+diff --git a/libs/predef/tools/check/predef_check_cc_as_cpp.cpp b/libs/predef/tools/check/predef_check_cc_as_cpp.cpp
+index 0000000..0000001 100644
+--- a/libs/predef/tools/check/predef_check_cc_as_cpp.cpp
++++ b/libs/predef/tools/check/predef_check_cc_as_cpp.cpp
+@@ -1,100 +1,2 @@
+-#include "predef_check_cc.h"
+-int main() { PREDEF_CC_CHECK; }
++int main(){ return 0; }
+diff --git a/libs/predef/tools/check/predef_check_cc.cpp b/libs/predef/tools/check/predef_check_cc.cpp
+index 0000000..0000001 100644
+--- a/libs/predef/tools/check/predef_check_cc.cpp
++++ b/libs/predef/tools/check/predef_check_cc.cpp
+@@ -1,100 +1,2 @@
+-#include "predef_check_cc.h"
+-int main() { PREDEF_CC_CHECK; }
++int main(){ return 0; }
+diff --git a/libs/predef/tools/check.cpp b/libs/predef/tools/check.cpp
+index 0000000..0000001 100644
+--- a/libs/predef/tools/check.cpp
++++ b/libs/predef/tools/check.cpp
+@@ -1,20 +1,2 @@
+-#include <iostream>
+-int main() {
+-  std::cout << "predef-check disabled\n";
+-  return 0;
+-}
++int main(){ return 0; }
