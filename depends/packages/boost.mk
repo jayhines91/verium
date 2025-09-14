@@ -4,7 +4,7 @@ $(package)_download_path=https://dl.bintray.com/boostorg/release/1.70.0/source/
 $(package)_file_name=$(package)_$($(package)_version).tar.bz2
 $(package)_sha256_hash=430ae8354789de4fd19ee52f3b1f739e1fba576f0aded0897c3c2bc00fb38778
 $(package)_patches=fix_pthread_stack_min.patch
-$(package)_patches=
+$(package)_patches=disable-predef-tools-check.patch
 
 define $(package)_set_vars
 $(package)_config_opts_release=variant=release
