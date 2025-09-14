@@ -41,13 +41,7 @@ jobs:
           ref: ${{ inputs.target_ref }}
           submodules: recursive
           fetch-depth: 0
-
-      - name: Purge Boost workdir + sources
-        run: |
-          rm -rf depends/work/build/*/boost*
-          rm -f  depends/sources/boost_*.tar.*  # force refetch if prior cache was bad
-         
-
+          
       - name: Base build deps (host)
         run: |
           set -euo pipefail
@@ -62,12 +56,12 @@ jobs:
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
           gcc --version; g++ --version
 
-      - name: Cache compiled depends
-        id: cache-depends
-        uses: actions/cache@v4
-        with:
-          path: depends/built
-          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-boost-predefskip-v1-${{ hashFiles('depends/packages/*.mk','depends/patches/boost/*.patch') }}
+     # - name: Cache compiled depends
+     #   id: cache-depends
+     #   uses: actions/cache@v4
+     #   with:
+     #     path: depends/built
+     #     key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-boost-predefskip-v1-${{ hashFiles('depends/packages/*.mk','depends/patches/boost/*.patch') }}
        
       - name: Build depends (Linux)
         if: steps.cache-depends.outputs.cache-hit != 'true'
