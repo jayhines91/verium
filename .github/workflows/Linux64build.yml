@@ -106,13 +106,6 @@ jobs:
             find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
             exit 1
           }
-
-      - name: Build Boost (Linux)
-        run: |
-          set -e
-          make -C depends HOST=${HOST_TRIPLET} boost -j"$(nproc || echo 2)"
-          echo "Verifying boost libs in depends/${HOST_TRIPLET}/lib ..."
-          ls -l "depends/${HOST_TRIPLET}/lib"/libboost_*.a
       
       - name: Configure (Linux)
         run: |
