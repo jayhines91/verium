@@ -38,10 +38,8 @@ jobs:
       # NEW: force toolchain to GCC 9 everywhere
       CC: gcc-9
       CXX: g++-9
-      AR: gcc-ar-9
-      RANLIB: gcc-ranlib-9
-      NM: gcc-nm-9
-
+          
+      
     steps:
       - name: Checkout target ref
         uses: actions/checkout@v4
@@ -67,11 +65,11 @@ jobs:
           if [ -n "${{ inputs.depends_target }}" ]; then
             echo "Priming depends target: ${{ inputs.depends_target }}"
             make -C depends HOST=${HOST_TRIPLET} \
-              CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" NM="$NM" \
+              CC="$CC" CXX="$CXX" \
               ${{ inputs.depends_target }} -j"$(nproc || echo 2)"
           fi
           make -C depends HOST=${HOST_TRIPLET} \
-            CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" NM="$NM" \
+            CC="$CC" CXX="$CXX" \
             -j"$(nproc || echo 2)" || {
               echo "---- tail any config.log ----"
               find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
