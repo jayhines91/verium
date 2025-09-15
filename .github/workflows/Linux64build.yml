@@ -113,6 +113,15 @@ jobs:
           ./autogen.sh
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
           DEP="$(pwd)/depends/${HOST_TRIPLET}"
+          
+          BOOST_SUFFIX="$(basename "$(ls "$DEP/lib"/libboost_system*.a | head -n1)")"
+          BOOST_SUFFIX="${BOOST_SUFFIX#libboost_system}"
+          BOOST_SUFFIX="${BOOST_SUFFIX%.a}"
+          export BOOST_LIB_SUFFIX="$BOOST_SUFFIX"
+          echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
+
+          export LIBS="$LIBS -pthread -lrt"
+          
           # NEW: pass CC/CXX explicitly to configure
           CC="$CC" CXX="$CXX" ./configure \
             --host=${HOST_TRIPLET} \
