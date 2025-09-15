@@ -14,6 +14,9 @@ $(package)_config_opts=--layout=tagged --build-type=complete --user-config=user-
 $(package)_config_opts+=threading=multi link=static -sNO_BZIP2=1 -sNO_ZLIB=1
 # keep b2 from touching Boost.Test anywhere, belt & suspenders
 $(package)_config_opts+=--without-test
+$(package)_cxxflags+=-DBOOST_STACKTRACE_USE_WINDBG=0 -DBOOST_STACKTRACE_USE_WINDBG_CACHED=0
+$(package)_config_opts+=--without-stacktrace
+
 
 $(package)_config_opts_linux=target-os=linux threadapi=pthread runtime-link=shared
 $(package)_config_opts_darwin=target-os=darwin runtime-link=shared
