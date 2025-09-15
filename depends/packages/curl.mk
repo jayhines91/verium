@@ -17,6 +17,13 @@ $(package)_config_opts+=--enable-symbol-hiding
 $(package)_config_opts+=--without-librtmp
 $(package)_config_opts+=--disable-rtsp
 $(package)_config_opts+=--disable-alt-svc
+$(package)_config_opts+=--disable-shared --enable-static
+$(package)_config_opts +=--without-libpsl --without-libidn2 --without-nghttp2 --without-ngtcp2
+$(package)_config_opts +=--without-brotli --without-zstd --without-gsasl
+$(package)_config_opts +=--disable-ldap --disable-ldaps --disable-rtsp
+$(package)_config_opts+=--host=$(host) --prefix=$(host_prefix)
+$(package)_config_opts+=--with-ssl=$(host_prefix) --with-zlib=$(host_prefix)
+
 $(package)_config_opts_mingw32=--enable-sspi --without-ssl --with-nss --with-schannel
 $(package)_config_opts_darwin=--enable-sspi --without-ssl --with-secure-transport
 $(package)_config_opts_linux=--with-ssl
