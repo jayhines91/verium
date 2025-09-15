@@ -48,7 +48,6 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-
       - name: Select GCC 9 toolchain (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -65,6 +64,16 @@ jobs:
           gcc --version
           g++ --version    
 
+      - name: Export GCC 9 env (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "CC=gcc" >> $GITHUB_ENV
+          echo "CXX=g++" >> $GITHUB_ENV
+          echo "CPP=gcc -E" >> $GITHUB_ENV
+          echo "AR=ar" >> $GITHUB_ENV
+          echo "RANLIB=ranlib" >> $GITHUB_ENV
+          echo "NM=nm" >> $GITHUB_ENV
+  
       - name: Base build deps (host)
         run: |
           set -euo pipefail
