@@ -12,25 +12,29 @@ $(package)_config_opts+=threading=multi link=static -sNO_BZIP2=1 -sNO_ZLIB=1
 $(package)_config_opts_linux=target-os=linux threadapi=pthread runtime-link=shared
 $(package)_config_opts_darwin=target-os=darwin runtime-link=shared
 $(package)_config_opts_mingw32=target-os=windows binary-format=pe threadapi=win32 runtime-link=static
+
 $(package)_config_opts_x86_64=architecture=x86 address-model=64
 $(package)_config_opts_i686=architecture=x86 address-model=32
 $(package)_config_opts_aarch64=address-model=64
 $(package)_config_opts_armv7a=address-model=32
+
 ifneq (,$(findstring clang,$($(package)_cxx)))
-$(package)_toolset_$(host_os)=clang
+  $(package)_toolset_$(host_os)=clang
 else
-$(package)_toolset_$(host_os)=gcc
+  $(package)_toolset_$(host_os)=gcc
 endif
-# Build only what we need
+
 $(package)_config_libraries=filesystem,system,thread
-$(package)_cxxflags=-std=c++17 -fvisibility=hidden
+
+$(package)_cxxflags=-std=c++17 -fvisibility=hidden -D_GNU_SOURCE -DPTHREAD_STACK_MIN=16384
 $(package)_cxxflags_linux=-fPIC
 $(package)_cxxflags_android=-fPIC
-$(package)_cxxflags_x86_64_darwin=-fcf-protection=full
 endef
 
 define $(package)_preprocess_cmds
-  echo "using $($(package)_toolset_$(host_os)) : : $($(package)_cxx) : <cflags>\"$($(package)_cflags)\" <cxxflags>\"$($(package)_cxxflags)\" <compileflags>\"$($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$($(package)_ar)\" <striper>\"$(host_STRIP)\"  <ranlib>\"$(host_RANLIB)\" <rc>\"$(host_WINDRES)\" : ;" > user-config.jam
+  sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN+0) > 0/' \
+    boost/thread/pthread/thread_data.hpp libs/thread/src/pthread/thread.cpp && \
+  echo "using $($(package)_toolset_$(host_os)) : : $($(package)_cxx) : <cflags>\"$($(package)_cflags)\" <cxxflags>\"$($(package)_cxxflags) $($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$($(package)_ar)\" <striper>\"$(host_STRIP)\" <ranlib>\"$(host_RANLIB)\" <rc>\"$(host_WINDRES)\" : ;" > user-config.jam
 endef
 
 define $(package)_config_cmds
@@ -38,9 +42,11 @@ define $(package)_config_cmds
 endef
 
 define $(package)_build_cmds
-  ./b2 -d2 -j2 -d1 --prefix=$($(package)_staging_prefix_dir) $($(package)_config_opts) toolset=$($(package)_toolset_$(host_os)) stage
+  ./b2 -d2 -j2 -d1 --prefix=$($(package)_staging_prefix_dir) \
+    $($(package)_config_opts) toolset=$($(package)_toolset_$(host_os)) stage
 endef
 
 define $(package)_stage_cmds
-  ./b2 -d0 -j4 --prefix=$($(package)_staging_prefix_dir) $($(package)_config_opts) toolset=$($(package)_toolset_$(host_os)) install
+  ./b2 -d0 -j4 --prefix=$($(package)_staging_prefix_dir) \
+    $($(package)_config_opts) toolset=$($(package)_toolset_$(host_os)) install
 endef
