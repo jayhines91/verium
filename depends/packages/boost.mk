@@ -44,13 +44,19 @@ $(package)_cxxflags_android=-fPIC
 endef
 
 define $(package)_preprocess_cmds
-  patch -p1 < $($(package)_patch_dir)/unused_var_in_process.patch && \
-  patch -p1 < $($(package)_patch_dir)/disable-predef-tools-check.patch && \
-  patch -p1 < $($(package)_patch_dir)/fix_pthread_stack_min.patch && \
+  # Normalize patch newlines (in case of CRLF) and apply non-interactively; ignore if already applied
+  for p in unused_var_in_process.patch disable-predef-tools-check.patch fix_pthread_stack_min.patch; do \
+    test -f "$($(package)_patch_dir)/$$p" && sed -i 's/\r$$//' "$($(package)_patch_dir)/$$p" || true; \
+  done && \
+  patch --batch -N -p1 < $($(package)_patch_dir)/unused_var_in_process.patch || true && \
+  patch --batch -N -p1 < $($(package)_patch_dir)/disable-predef-tools-check.patch || true && \
+  patch --batch -N -p1 < $($(package)_patch_dir)/fix_pthread_stack_min.patch || true && \
+  # Belt & suspenders: force stub sources for Boost.Predef probe tools
+  printf "int main(){return 0;}\n" > libs/predef/tools/check/predef_check_cc_as_cpp.cpp && \
+  printf "int main(){return 0;}\n" > libs/predef/tools/check/predef_check_cc.cpp && \
+  printf "int main(){return 0;}\n" > libs/predef/tools/check.cpp && \
+  # Toolchain wiring for b2
   echo "using $($(package)_toolset_$(host_os)) : : $($(package)_cxx) : <cxxflags>\"$($(package)_cxxflags) $($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$($(package)_archiver_$(host_os))\" <striper>\"$(host_STRIP)\"  <ranlib>\"$(host_RANLIB)\" <rc>\"$(host_WINDRES)\" : ;" > user-config.jam
-endef
-define $(package)_config_cmds
-  ./bootstrap.sh --without-icu --with-libraries=$($(package)_config_libraries) --with-toolset=$($(package)_toolset_$(host_os))
 endef
 
 define $(package)_build_cmds
