@@ -33,6 +33,14 @@ env:
 jobs:
   linux64:
     runs-on: ubuntu-22.04
+    env:
+      HOST_TRIPLET: x86_64-pc-linux-gnu
+      # NEW: force toolchain to GCC 9 everywhere
+      CC: gcc-9
+      CXX: g++-9
+      AR: gcc-ar-9
+      RANLIB: gcc-ranlib-9
+      NM: gcc-nm-9
 
     steps:
       - name: Checkout target ref
@@ -41,33 +49,29 @@ jobs:
           ref: ${{ inputs.target_ref }}
           submodules: recursive
           fetch-depth: 0
-          
+
       - name: Base build deps (host)
         run: |
           set -euo pipefail
           sudo apt-get update
+          # NEW: install gcc-9/g++-9
           sudo apt-get install -y \
             build-essential automake libtool pkg-config python3 \
-            curl zip unzip ccache
-          gcc --version; g++ --version
+            curl zip unzip ccache \
+            gcc-9 g++-9
+          "$CC" --version; "$CXX" --version
 
-     # - name: Cache compiled depends
-     #   id: cache-depends
-     #   uses: actions/cache@v4
-     #   with:
-     #     path: depends/built
-     #     key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-boost-predefskip-v1-${{ hashFiles('depends/packages/*.mk','depends/patches/boost/*.patch') }}
-             
       - name: Build depends (Linux)
-        if: steps.cache-depends.outputs.cache-hit != 'true'
         run: |
           set -e
           if [ -n "${{ inputs.depends_target }}" ]; then
             echo "Priming depends target: ${{ inputs.depends_target }}"
             make -C depends HOST=${HOST_TRIPLET} \
+              CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" NM="$NM" \
               ${{ inputs.depends_target }} -j"$(nproc || echo 2)"
           fi
           make -C depends HOST=${HOST_TRIPLET} \
+            CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" NM="$NM" \
             -j"$(nproc || echo 2)" || {
               echo "---- tail any config.log ----"
               find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
@@ -80,7 +84,8 @@ jobs:
           ./autogen.sh
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
           DEP="$(pwd)/depends/${HOST_TRIPLET}"
-          ./configure \
+          # NEW: pass CC/CXX explicitly to configure
+          CC="$CC" CXX="$CXX" ./configure \
             --host=${HOST_TRIPLET} \
             --prefix="$DEP" \
             --with-gui=qt5 \
@@ -95,9 +100,9 @@ jobs:
         run: |
           set -e
           if [ "${{ inputs.verbose_make }}" = "true" ]; then
-            make -j"$(nproc || echo 2)" V=1
+            make CC="$CC" CXX="$CXX" -j"$(nproc || echo 2)" V=1
           else
-            make -j"$(nproc || echo 2)"
+            make CC="$CC" CXX="$CXX" -j"$(nproc || echo 2)"
           fi
 
       - name: Package + checksums (Linux)
@@ -106,10 +111,8 @@ jobs:
           V=$(git describe --tags --dirty --always || echo untagged)
           OUTDIR="out-linux"
           mkdir -p "$OUTDIR"
-          # Collect typical outputs (daemon/CLI/qt). Adjust names if the repo differs.
           cp -f src/verium* "$OUTDIR/" 2>/dev/null || true
           cp -f src/qt/verium* "$OUTDIR/" 2>/dev/null || true
-          # Make sure we actually have ELF binaries
           if [ -z "$(ls -A "$OUTDIR" 2>/dev/null)" ]; then
             echo "No Linux binaries found in $OUTDIR; exiting."
             exit 2
@@ -137,4 +140,3 @@ jobs:
             depends/work/build/**/config.log
             depends/work/build/**/config.status
           if-no-files-found: ignore
-
