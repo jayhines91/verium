@@ -48,6 +48,23 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+
+      - name: Select GCC 9 toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc-9 g++-9
+          # Make gcc/g++ point to version 9 everywhere (covers scripts that hardcode 'gcc')
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100 \
+            --slave /usr/bin/g++ g++ /usr/bin/g++-9 \
+            --slave /usr/bin/gcov gcov /usr/bin/gcov-9 \
+            --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-9 \
+            --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-9 \
+            --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-9
+          gcc --version
+          g++ --version    
+
       - name: Base build deps (host)
         run: |
           set -euo pipefail
