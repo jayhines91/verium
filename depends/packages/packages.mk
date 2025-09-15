@@ -1,4 +1,4 @@
-packages:=boost openssl libevent curl minizip
+packages:=native_b2 boost openssl libevent curl minizip
 
 protobuf_native_packages = native_protobuf
 protobuf_packages = protobuf
