@@ -5,7 +5,7 @@ $(package)_file_name=boost_$($(package)_version).tar.bz2
 $(package)_sha256_hash=430ae8354789de4fd19ee52f3b1f739e1fba576f0aded0897c3c2bc00fb38778
 
 # IMPORTANT: define all patches on ONE line (or use +=). Using '=' multiple times overwrote previous ones.
-$(package)_patches=unused_var_in_process.patch disable-predef-tools-check.patch fix_pthread_stack_min.patch
+$(package)_patches=unused_var_in_process.patch 
 
 define $(package)_set_vars
 $(package)_config_opts_release=variant=release
@@ -50,6 +50,17 @@ define $(package)_preprocess_cmds
   printf 'int main(){return 0;}\n' > libs/predef/tools/check/predef_check_cc.cpp && \
   printf 'int main(){return 0;}\n' > libs/predef/tools/check.cpp && \
   echo "using $($(package)_toolset_$(host_os)) : : $($(package)_cxx) : <cxxflags>\"$($(package)_cxxflags) $($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$($(package)_archiver_$(host_os))\" <striper>\"$(host_STRIP)\"  <ranlib>\"$(host_RANLIB)\" <rc>\"$(host_WINDRES)\" : ;" > user-config.jam
+endef
+
+
+define $(package)_config_cmds
+  ./bootstrap.sh --without-icu --with-libraries=$($(package)_config_libraries) --with-toolset=$($(package)_toolset_$(host_os)) && \
+  ( test -x ./b2 || { \
+      cd tools/build/src/engine && ./build.sh $($(package)_toolset_$(host_os)) && cd - >/dev/null && \
+      (cp -f tools/build/src/engine/b2 ./b2 2>/dev/null || \
+       cp -f tools/build/src/engine/bin.*/*/b2 ./b2 2>/dev/null || \
+       cp -f tools/build/src/engine/bin.*/* ./b2 2>/dev/null); \
+    } )
 endef
 
 define $(package)_build_cmds
