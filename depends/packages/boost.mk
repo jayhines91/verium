@@ -44,11 +44,18 @@ $(package)_cxxflags_android=-fPIC
 endef
 
 define $(package)_preprocess_cmds
+  # Keep the existing small upstream patch
   patch --batch -N -p1 < $($(package)_patch_dir)/unused_var_in_process.patch || true && \
-  sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN+0) > 0/' boost/thread/pthread/thread_data.hpp && \
+
+  # ---- Fix 1: kill Boost.Predef probe programs so they never include <boost/predef.h>
   printf 'int main(){return 0;}\n' > libs/predef/tools/check/predef_check_cc_as_cpp.cpp && \
   printf 'int main(){return 0;}\n' > libs/predef/tools/check/predef_check_cc.cpp && \
   printf 'int main(){return 0;}\n' > libs/predef/tools/check.cpp && \
+
+  # ---- Fix 2: make the PTHREAD_STACK_MIN test preprocess-safe on glibc
+  sed -i -E 's/^[[:space:]]*#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN+0) > 0/' boost/thread/pthread/thread_data.hpp && \
+
+  # Toolchain hint for b2
   echo "using $($(package)_toolset_$(host_os)) : : $($(package)_cxx) : <cxxflags>\"$($(package)_cxxflags) $($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$($(package)_archiver_$(host_os))\" <striper>\"$(host_STRIP)\"  <ranlib>\"$(host_RANLIB)\" <rc>\"$(host_WINDRES)\" : ;" > user-config.jam
 endef
 
