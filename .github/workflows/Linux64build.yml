@@ -88,19 +88,24 @@ jobs:
       - name: Build depends (Linux)
         run: |
           set -e
+          # If user asked to prime a single depends target, do it first (with GCC 9)
           if [ -n "${{ inputs.depends_target }}" ]; then
             echo "Priming depends target: ${{ inputs.depends_target }}"
-            make -C depends HOST=${HOST_TRIPLET} \
-              CC="$CC" CXX="$CXX" \
+            CC=gcc-9 CXX=g++-9 make -C depends HOST=${HOST_TRIPLET} \
               ${{ inputs.depends_target }} -j"$(nproc || echo 2)"
           fi
-          make -C depends HOST=${HOST_TRIPLET} \
-            CC="$CC" CXX="$CXX" \
-            -j"$(nproc || echo 2)" || {
-              echo "---- tail any config.log ----"
-              find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
-              exit 1
-            }
+
+          # Always pre-build FreeType with GCC 11 (it’s a C lib; ABI-safe)
+          echo "Priming FreeType with GCC 11"
+          make -C depends HOST=${HOST_TRIPLET} CC=gcc-11 CXX=g++-11 freetype -j"$(nproc || echo 2)"
+
+          # Build everything else with GCC 9
+          export CC=gcc-9 CXX=g++-9
+          make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)" || {
+            echo "---- tail any config.log ----"
+            find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
+            exit 1
+          }
 
       - name: Configure (Linux)
         run: |
