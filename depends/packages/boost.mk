@@ -33,7 +33,9 @@ endef
 
 define $(package)_preprocess_cmds
   sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN+0) > 0/' \
-    boost/thread/pthread/thread_data.hpp libs/thread/src/pthread/thread.cpp && \
+    boost/thread/pthread/thread_data.hpp \
+    boost/thread/pthread/attributes.hpp \
+    libs/thread/src/pthread/thread.cpp && \
   echo "using $($(package)_toolset_$(host_os)) : : $($(package)_cxx) : <cflags>\"$($(package)_cflags)\" <cxxflags>\"$($(package)_cxxflags) $($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$($(package)_ar)\" <striper>\"$(host_STRIP)\" <ranlib>\"$(host_RANLIB)\" <rc>\"$(host_WINDRES)\" : ;" > user-config.jam
 endef
 
