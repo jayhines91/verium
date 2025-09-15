@@ -7,7 +7,7 @@ $(package)_sha256_hash=d73a8da01e8bf8c7eda40b4c84915071a8c8a0df4a6734537ddde4a85
 define $(package)_set_vars
 $(package)_config_opts_release=variant=release
 $(package)_config_opts_debug=variant=debug
-$(package)_config_opts=--layout=system --build-type=complete --user-config=user-config.jam
+$(package)_config_opts=--layout=tagged --build-type=complete --user-config=user-config.jam
 $(package)_config_opts+=threading=multi link=static -sNO_BZIP2=1 -sNO_ZLIB=1
 $(package)_config_opts_linux=target-os=linux threadapi=pthread runtime-link=shared
 $(package)_config_opts_darwin=target-os=darwin runtime-link=shared
