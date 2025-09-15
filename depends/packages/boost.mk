@@ -43,16 +43,12 @@ $(package)_cxxflags_linux=-fPIC
 $(package)_cxxflags_android=-fPIC
 endef
 
-# Actually apply all patches, then write user-config.jam
 define $(package)_preprocess_cmds
-  set -e; \
-  for p in $($(package)_patches); do \
-    echo "Applying $$p"; \
-    patch -p1 -N -r- -i "$($(package)_patch_dir)/$$p"; \
-  done; \
-  echo "using $(boost_toolset_$(host_os)) : : $($(package)_cxx) : <cxxflags>\"$($(package)_cxxflags) $($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$(boost_archiver_$(host_os))\" <striper>\"$(host_STRIP)\"  <ranlib>\"$(host_RANLIB)\" <rc>\"$(host_WINDRES)\" : ;" > user-config.jam
+  patch -p1 < $($(package)_patch_dir)/unused_var_in_process.patch && \
+  patch -p1 < $($(package)_patch_dir)/disable-predef-tools-check.patch && \
+  patch -p1 < $($(package)_patch_dir)/fix_pthread_stack_min.patch && \
+  echo "using $($(package)_toolset_$(host_os)) : : $($(package)_cxx) : <cxxflags>\"$($(package)_cxxflags) $($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$($(package)_archiver_$(host_os))\" <striper>\"$(host_STRIP)\"  <ranlib>\"$(host_RANLIB)\" <rc>\"$(host_WINDRES)\" : ;" > user-config.jam
 endef
-
 define $(package)_config_cmds
   ./bootstrap.sh --without-icu --with-libraries=$($(package)_config_libraries) --with-toolset=$($(package)_toolset_$(host_os))
 endef
