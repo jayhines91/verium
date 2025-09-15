@@ -48,12 +48,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential automake libtool pkg-config python3 \
-            gcc-9 g++-9 \
             curl zip unzip ccache
-
-          # Make gcc-9/g++-9 the system default for this job
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
           gcc --version; g++ --version
 
      # - name: Cache compiled depends
@@ -68,7 +63,6 @@ jobs:
           set -euo pipefail
           f=depends/packages/boost.mk
           test -f "$f"
-
           # 1) Kill ALL predef probe programs regardless of patch application.
           #    These run in Boost's "tools/check" and drag in <boost/predef.h>.
           awk '1; END{
@@ -78,17 +72,14 @@ jobs:
             print "$$(package)_preprocess_cmds += echo \"int main(){return 0;}\" > libs/predef/tools/check/predef_check_cc.cpp";
             print "$$(package)_preprocess_cmds += echo \"int main(){return 0;}\" > libs/predef/tools/check.cpp";
           }' "$f" > "$f.new" && mv "$f.new" "$f"
-
           # 2) Restrict libraries at CONFIG stage (not only build), so Boost.Test never builds.
           grep -q -- '--with-libraries=' "$f" || echo '$$(package)_config_opts += --with-libraries=chrono,filesystem,system,thread' >> "$f"
           # Also ensure we never build test (belt & suspenders)
           grep -q '\$$(package)_build_opts .*=.*--without-test' "$f" || echo '$$(package)_build_opts += --without-test' >> "$f"
-
           # 3) Make PTHREAD_STACK_MIN a numeric constant and enable GNU extensions if needed.
           #    This avoids the preprocessor error on glibc where PTHREAD_STACK_MIN can be an expression.
           grep -q '\$$(package)_cxxflags .*=.*PTHREAD_STACK_MIN' "$f" || echo '$$(package)_cxxflags += -DPTHREAD_STACK_MIN=16384' >> "$f"
           grep -q '\$$(package)_cxxflags .*=.*_GNU_SOURCE' "$f" || echo '$$(package)_cxxflags += -D_GNU_SOURCE' >> "$f"
-
           echo "==== tail of boost.mk ===="
           tail -n 150 "$f"
        
@@ -96,14 +87,12 @@ jobs:
         if: steps.cache-depends.outputs.cache-hit != 'true'
         run: |
           set -e
-          export CC=gcc-9 CXX=g++-9
           if [ -n "${{ inputs.depends_target }}" ]; then
             echo "Priming depends target: ${{ inputs.depends_target }}"
-            make -C depends HOST=${HOST_TRIPLET} CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 \
+            make -C depends HOST=${HOST_TRIPLET} \
               ${{ inputs.depends_target }} -j"$(nproc || echo 2)"
           fi
-
-          make -C depends HOST=${HOST_TRIPLET} CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 \
+          make -C depends HOST=${HOST_TRIPLET} \
             -j"$(nproc || echo 2)" || {
               echo "---- tail any config.log ----"
               find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
@@ -114,10 +103,8 @@ jobs:
         run: |
           set -e
           ./autogen.sh
-          export CC=gcc-9 CXX=g++-9
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
           DEP="$(pwd)/depends/${HOST_TRIPLET}"
-
           ./configure \
             --host=${HOST_TRIPLET} \
             --prefix="$DEP" \
@@ -144,17 +131,14 @@ jobs:
           V=$(git describe --tags --dirty --always || echo untagged)
           OUTDIR="out-linux"
           mkdir -p "$OUTDIR"
-
           # Collect typical outputs (daemon/CLI/qt). Adjust names if the repo differs.
           cp -f src/verium* "$OUTDIR/" 2>/dev/null || true
           cp -f src/qt/verium* "$OUTDIR/" 2>/dev/null || true
-
           # Make sure we actually have ELF binaries
           if [ -z "$(ls -A "$OUTDIR" 2>/dev/null)" ]; then
             echo "No Linux binaries found in $OUTDIR; exiting."
             exit 2
           fi
-
           PKG="verium-${V}-${HOST_TRIPLET}.tar.gz"
           tar -C "$OUTDIR" -czf "$PKG" .
           sha256sum "$PKG" > "${PKG}.SHA256SUMS"
@@ -178,3 +162,4 @@ jobs:
             depends/work/build/**/config.log
             depends/work/build/**/config.status
           if-no-files-found: ignore
+
