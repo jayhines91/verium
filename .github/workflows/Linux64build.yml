@@ -107,49 +107,49 @@ jobs:
             exit 1
           }
 
-    - name: Configure (Linux)
-      run: |
-        set -e
-        ./autogen.sh
+      - name: Configure (Linux)
+        run: |
+          set -e
+          ./autogen.sh
 
-        export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
-        DEP="$(pwd)/depends/${HOST_TRIPLET}"
+          export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
+          DEP="$(pwd)/depends/${HOST_TRIPLET}"
 
-        # Make configure search depends first
-        export BOOST_CPPFLAGS="-I$DEP/include"
-        export BOOST_LDFLAGS="-L$DEP/lib"
-        export CPPFLAGS="$BOOST_CPPFLAGS ${CPPFLAGS:-}"
-        export LDFLAGS="$BOOST_LDFLAGS ${LDFLAGS:-}"
+          # Make configure search depends first
+          export BOOST_CPPFLAGS="-I$DEP/include"
+          export BOOST_LDFLAGS="-L$DEP/lib"
+          export CPPFLAGS="$BOOST_CPPFLAGS ${CPPFLAGS:-}"
+          export LDFLAGS="$BOOST_LDFLAGS ${LDFLAGS:-}"
 
-        # Detect the exact Boost suffix produced by depends (e.g. -mt-x64)
-        bs="$(ls "$DEP/lib"/libboost_system*.a | head -n1 || true)"
-        if [ -z "$bs" ]; then
-          echo "ERROR: No libboost_system*.a found in $DEP/lib (did depends/boost build?)."
-          ls -l "$DEP/lib" || true
-          exit 1
-        fi
-        suf="${bs##*/}"; suf="${suf#libboost_system}"; suf="${suf%.a}"
-        export BOOST_LIB_SUFFIX="$suf"
-        export BOOST_THREAD_LIB_SUFFIX="$suf"   # some macros still read this
-        echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
+          # Detect the exact Boost suffix produced by depends (e.g. -mt-x64)
+          bs="$(ls "$DEP/lib"/libboost_system*.a | head -n1 || true)"
+          if [ -z "$bs" ]; then
+            echo "ERROR: No libboost_system*.a found in $DEP/lib (did depends/boost build?)."
+            ls -l "$DEP/lib" || true
+            exit 1
+          fi
+          suf="${bs##*/}"; suf="${suf#libboost_system}"; suf="${suf%.a}"
+          export BOOST_LIB_SUFFIX="$suf"
+          export BOOST_THREAD_LIB_SUFFIX="$suf"   # some macros still read this
+          echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
 
-        # Helpful when linking statically
-        export LIBS="${LIBS:-} -pthread -lrt"
+          # Helpful when linking statically
+          export LIBS="${LIBS:-} -pthread -lrt"
 
-        # Pass CC/CXX explicitly; also hint where Boost lives
-        CC="${CC:-gcc-9}" CXX="${CXX:-g++-9}" \
-        ./configure \
-        --host=${HOST_TRIPLET} \
-        --prefix="$DEP" \
-        --with-gui=qt5 \
-        --with-qt-bindir="$DEP/native/bin" \
-        --with-qt-incdir="$DEP/include" \
-        --with-qt-libdir="$DEP/lib" \
-        --with-boost="$DEP" \
-        --with-boost-libdir="$DEP/lib" \
-        --disable-bench --disable-tests \
-        --enable-reduce-exports \
-        --disable-shared --enable-static
+          # Pass CC/CXX explicitly; also hint where Boost lives
+          CC="${CC:-gcc-9}" CXX="${CXX:-g++-9}" \
+          ./configure \
+            --host=${HOST_TRIPLET} \
+            --prefix="$DEP" \
+            --with-gui=qt5 \
+            --with-qt-bindir="$DEP/native/bin" \
+            --with-qt-incdir="$DEP/include" \
+            --with-qt-libdir="$DEP/lib" \
+            --with-boost="$DEP" \
+            --with-boost-libdir="$DEP/lib" \
+            --disable-bench --disable-tests \
+            --enable-reduce-exports \
+            --disable-shared --enable-static
 
 
       - name: Build (Linux)
