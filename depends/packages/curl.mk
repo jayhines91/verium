@@ -7,6 +7,7 @@ $(package)_dependencies=openssl zlib
 
 define $(package)_set_vars
 $(package)_config_opts=--disable-shared --with-ca-fallback
+$(package)_config_opts+= --disable-ldap --disable-ldaps
 $(package)_config_opts+=--disable-cookies
 $(package)_config_opts+=--disable-manual
 $(package)_config_opts+=--disable-unix-sockets
@@ -19,7 +20,7 @@ $(package)_config_opts+=--disable-alt-svc
 $(package)_config_opts_mingw32=--enable-sspi --without-ssl --with-nss --with-schannel
 $(package)_config_opts_darwin=--enable-sspi --without-ssl --with-secure-transport
 $(package)_config_opts_linux=--with-ssl
-$(package)_cflags=-DCURL_STATICLIB
+$(package)_cppflags+=-DCURL_STATICLIB
 $(package)_cxxflags=-std=c++11
 endef
 
