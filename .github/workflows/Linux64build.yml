@@ -63,34 +63,34 @@ jobs:
      #     path: depends/built
      #     key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-gcc9-boost-predefskip-v1-${{ hashFiles('depends/packages/*.mk','depends/patches/boost/*.patch') }}
 
-    - name: Harden Boost build (no predef probes, no test, safe pthread)
-      run: |
-        set -euo pipefail
-        f=depends/packages/boost.mk
-        test -f "$f"
+      - name: Harden Boost build (no predef probes, no test, safe pthread)
+        run: |
+          set -euo pipefail
+          f=depends/packages/boost.mk
+          test -f "$f"
 
-        # 1) Kill ALL predef probe programs regardless of patch application.
-        #    These run in Boost's "tools/check" and drag in <boost/predef.h>.
-        awk '1; END{
-          print "";
-          print "# Disable predef probes by overwriting sources during preprocess";
-          print "$$(package)_preprocess_cmds += echo \"int main(){return 0;}\" > libs/predef/tools/check/predef_check_cc_as_cpp.cpp";
-          print "$$(package)_preprocess_cmds += echo \"int main(){return 0;}\" > libs/predef/tools/check/predef_check_cc.cpp";
-          print "$$(package)_preprocess_cmds += echo \"int main(){return 0;}\" > libs/predef/tools/check.cpp";
-        }' "$f" > "$f.new" && mv "$f.new" "$f"
+          # 1) Kill ALL predef probe programs regardless of patch application.
+          #    These run in Boost's "tools/check" and drag in <boost/predef.h>.
+          awk '1; END{
+            print "";
+            print "# Disable predef probes by overwriting sources during preprocess";
+            print "$$(package)_preprocess_cmds += echo \"int main(){return 0;}\" > libs/predef/tools/check/predef_check_cc_as_cpp.cpp";
+            print "$$(package)_preprocess_cmds += echo \"int main(){return 0;}\" > libs/predef/tools/check/predef_check_cc.cpp";
+            print "$$(package)_preprocess_cmds += echo \"int main(){return 0;}\" > libs/predef/tools/check.cpp";
+          }' "$f" > "$f.new" && mv "$f.new" "$f"
 
-        # 2) Restrict libraries at CONFIG stage (not only build), so Boost.Test never builds.
-        grep -q -- '--with-libraries=' "$f" || echo '$$(package)_config_opts += --with-libraries=chrono,filesystem,system,thread' >> "$f"
-        # Also ensure we never build test (belt & suspenders)
-        grep -q '\$$(package)_build_opts .*=.*--without-test' "$f" || echo '$$(package)_build_opts += --without-test' >> "$f"
+          # 2) Restrict libraries at CONFIG stage (not only build), so Boost.Test never builds.
+          grep -q -- '--with-libraries=' "$f" || echo '$$(package)_config_opts += --with-libraries=chrono,filesystem,system,thread' >> "$f"
+          # Also ensure we never build test (belt & suspenders)
+          grep -q '\$$(package)_build_opts .*=.*--without-test' "$f" || echo '$$(package)_build_opts += --without-test' >> "$f"
 
-        # 3) Make PTHREAD_STACK_MIN a numeric constant and enable GNU extensions if needed.
-        #    This avoids the preprocessor error on glibc where PTHREAD_STACK_MIN can be an expression.
-        grep -q '\$$(package)_cxxflags .*=.*PTHREAD_STACK_MIN' "$f" || echo '$$(package)_cxxflags += -DPTHREAD_STACK_MIN=16384' >> "$f"
-        grep -q '\$$(package)_cxxflags .*=.*_GNU_SOURCE' "$f" || echo '$$(package)_cxxflags += -D_GNU_SOURCE' >> "$f"
+          # 3) Make PTHREAD_STACK_MIN a numeric constant and enable GNU extensions if needed.
+          #    This avoids the preprocessor error on glibc where PTHREAD_STACK_MIN can be an expression.
+          grep -q '\$$(package)_cxxflags .*=.*PTHREAD_STACK_MIN' "$f" || echo '$$(package)_cxxflags += -DPTHREAD_STACK_MIN=16384' >> "$f"
+          grep -q '\$$(package)_cxxflags .*=.*_GNU_SOURCE' "$f" || echo '$$(package)_cxxflags += -D_GNU_SOURCE' >> "$f"
 
-        echo "==== tail of boost.mk ===="
-        tail -n 150 "$f"
+          echo "==== tail of boost.mk ===="
+          tail -n 150 "$f"
        
       - name: Build depends (Linux)
         if: steps.cache-depends.outputs.cache-hit != 'true'
