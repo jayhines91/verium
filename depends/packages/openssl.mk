@@ -6,7 +6,8 @@ $(package)_sha256_hash=8f9faeaebad088e772f4ef5e38252d472be4d878c6b3a2718c10a4fce
 $(package)_patches=0001-Add-OpenSSL-termios-fix-for-musl-libc.patch
 
 define $(package)_set_vars
-$(package)_config_env=AR="$($(package)_ar)" RANLIB="$($(package)_ranlib)" CC="$($(package)_cc)"
+$(package)_config_env=AR="ar" RANLIB="ranlib" CC="$($(package)_cc)"
+$(package)_build_env=AR="ar" RANLIB="ranlib"
 $(package)_config_opts=--prefix=$(host_prefix) --openssldir=$(host_prefix)/etc/openssl
 $(package)_config_opts+=no-camellia
 $(package)_config_opts+=no-capieng
