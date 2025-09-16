@@ -33,8 +33,10 @@ endef
 
 define $(package)_preprocess_cmds
   echo "using $($(package)_toolset_$(host_os)) : : $($(package)_cxx) : <cflags>\"$($(package)_cflags)\" <cxxflags>\"$($(package)_cxxflags) $($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$($(package)_ar)\" <striper>\"$(host_STRIP)\" <ranlib>\"$(host_RANLIB)\" <rc>\"$(host_WINDRES)\" : ;" > user-config.jam && \
-  [ -f boost/thread/pthread/thread_data.hpp ] && sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN+0) > 0/' boost/thread/pthread/thread_data.hpp || true && \
-  [ -f libs/thread/src/pthread/thread.cpp ] && sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#if defined(PTHREAD_STACK_MIN) \&\& (PTHREAD_STACK_MIN+0) > 0/' libs/thread/src/pthread/thread.cpp || true
+  [ -f boost/thread/pthread/thread_data.hpp ] && \
+    sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#ifdef PTHREAD_STACK_MIN/' boost/thread/pthread/thread_data.hpp || true && \
+  [ -f libs/thread/src/pthread/thread.cpp ] && \
+    sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#ifdef PTHREAD_STACK_MIN/' libs/thread/src/pthread/thread.cpp || true
 endef
 
 define $(package)_config_cmds
