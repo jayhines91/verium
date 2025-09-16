@@ -106,42 +106,6 @@ jobs:
             find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
             exit 1
           }
-
-      - name: Patch DNS seed type (CI-only)
-        shell: bash
-        run: |
-          set -euo pipefail
-          hdr=src/chainparams.h
-
-          # If vSeeds is the wrong type, switch it to CDNSSeedData
-          if grep -Eq 'std::vector<\s*std::string\s*>\s*vSeeds' "$hdr"; then
-            sed -i -E 's/std::vector<\s*std::string\s*>\s*vSeeds/std::vector<CDNSSeedData> vSeeds/' "$hdr"
-            echo "Rewrote vSeeds to std::vector<CDNSSeedData>."
-          fi
-
-          # If CDNSSeedData is not defined anywhere, inject a minimal definition
-          if ! grep -Rqs 'struct CDNSSeedData' src; then
-            awk -v RS='\r\n|\n' '
-              BEGIN{ins=0}
-               {
-                print $0
-                if (!ins && $0 ~ /^class[[:space:]]+CChainParams\b/) {
-                  print ""
-                  print "struct CDNSSeedData {"
-                  print "    std::string name; std::string host; bool supportsServiceBitsFiltering;"
-                  print "    CDNSSeedData(const char* n, const char* h, bool s=false)"
-                  print "        : name(n), host(h), supportsServiceBitsFiltering(s) {}"
-                  print "};"
-                  print ""
-                  ins=1
-                }
-              }' "$hdr" > "$hdr.new"
-            mv "$hdr.new" "$hdr"
-            echo "Injected minimal CDNSSeedData in chainparams.h."
-          fi
-
-          # Sanity: fail early if still wrong
-          grep -Eq 'std::vector<\s*CDNSSeedData\s*>\s*vSeeds' "$hdr"
       
       - name: Configure (Linux)
         run: |
