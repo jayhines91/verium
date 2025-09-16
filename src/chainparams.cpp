@@ -99,10 +99,10 @@ public:
         // service bits we want, but we should get them updated to support all service bits wanted by any
         // release ASAP to avoid it where possible.
         // vSeeds.emplace_back("seed.vrm.vericonomy.com");
-        vSeeds.emplace_back("SuperNode1", "91.121.221.200", true);
-        vSeeds.emplace_back("SuperNode2", "104.128.239.215", true);
-        vSeeds.emplace_back("SuperNode3", "216.189.149.162", true);
-        vSeeds.emplace_back("SuperSeeder", "seeder.vrm.vericonomy.com", true);
+        vSeeds.emplace_back("91.121.221.200");
+        vSeeds.emplace_back("104.128.239.215");
+        vSeeds.emplace_back("216.189.149.162");
+        vSeeds.emplace_back("seeder.vrm.vericonomy.com");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,70);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,132);
