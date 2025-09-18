@@ -1787,8 +1787,6 @@ int32_t ComputeBlockVersion(const CBlockIndex* pindexPrev, const Consensus::Para
     return CBlock::CURRENT_VERSION;
 }
 
-const int next_height = pindexPrev ? (pindexPrev->nHeight + 1) : 0;
-const bool enforce_time = next_height >= TimeChecksActivationHeight();
 
 static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consensus::Params& consensusparams) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
     return SCRIPT_VERIFY_NONE;
