@@ -3170,10 +3170,20 @@ bool CheckBlock(const CBlock& block, CValidationState& state, const Consensus::P
     if (block.vtx.empty() || !block.vtx[0]->IsCoinBase())
         return state.Invalid(ValidationInvalidReason::CONSENSUS, false, REJECT_INVALID, "bad-cb-missing", "first tx is not coinbase");
 
+    // Height gate for timestamp rules (runtime switch via -timechecksheight)
+    int nHeight = 0;
+    {
+        LOCK(cs_main); // best-effort height for context-free CheckBlock
+        const CBlockIndex* tip = ::ChainActive().Tip();
+    nHeight = tip ? tip->nHeight + 1 : 0;
+    }
+    const bool enforce_time = nHeight >= TimeChecksActivationHeight();
+
+    
     // Check coinbase time drift
     // Required for POS
     // XXX: To remove for future version
-    if (block.GetBlockTime() > block.vtx[0]->nTime + MAX_FUTURE_BLOCK_TIME)
+    if (enforce_time && block.GetBlockTime() > block.vtx[0]->nTime + MAX_FUTURE_BLOCK_TIME)
         return state.Invalid(ValidationInvalidReason::CONSENSUS, false, REJECT_INVALID, "bad-cb-timestamp", "coinbase timestamp is too early");
 
     for (unsigned int i = 1; i < block.vtx.size(); i++)
@@ -3185,7 +3195,7 @@ bool CheckBlock(const CBlock& block, CValidationState& state, const Consensus::P
     for (const auto& tx : block.vtx) {
         // Required for POS
         // XXX: To remove for future version
-        if( block.GetBlockTime() < (int64_t)tx->nTime )
+        if( enforce_time && block.GetBlockTime() < (int64_t)tx->nTime )
             return state.Invalid(ValidationInvalidReason::CONSENSUS, false, REJECT_INVALID, "bad-tx-timestamp", "block timestamp earlier than transaction timestamp");
 
         if (!CheckTransaction(*tx, state, true))
