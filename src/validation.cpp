@@ -49,6 +49,8 @@
 #include <future>
 #include <sstream>
 #include <string>
+#include <limits> // for std::numeric_limits<int>
+
 
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/thread.hpp>
@@ -335,6 +337,14 @@ bool CheckSequenceLocks(const CTxMemPool& pool, const CTransaction& tx, int flag
 
 // Returns the script flags which should be checked for a given block
 static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consensus::Params& chainparams);
+
+// Height gate for timestamp rules.
+// Default (INT_MAX) = effectively disabled: accept historical blocks regardless of time checks.
+// You can re-enable by launching with -timechecksheight=<H>, or by changing the default in 1.3.6.
+static inline int TimeChecksActivationHeight()
+{
+    return gArgs.GetArg("-timechecksheight", std::numeric_limits<int>::max());
+}
 
 static void LimitMempoolSize(CTxMemPool& pool, size_t limit, unsigned long age)
     EXCLUSIVE_LOCKS_REQUIRED(pool.cs, ::cs_main)
@@ -1777,10 +1787,12 @@ int32_t ComputeBlockVersion(const CBlockIndex* pindexPrev, const Consensus::Para
     return CBlock::CURRENT_VERSION;
 }
 
+const int next_height = pindexPrev ? (pindexPrev->nHeight + 1) : 0;
+const bool enforce_time = next_height >= TimeChecksActivationHeight();
+
 static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consensus::Params& consensusparams) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
     return SCRIPT_VERIFY_NONE;
 }
-
 
 
 static int64_t nTimeCheck = 0;
@@ -3256,12 +3268,16 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
             return state.Invalid(ValidationInvalidReason::BLOCK_CHECKPOINT, error("%s: forked chain older than last checkpoint (height %d)", __func__, nHeight), REJECT_CHECKPOINT, "bad-fork-prior-to-checkpoint");
     }
 
-    // [VRM 1.3.5 PATCH] Disable timestamp-too-old check to allow syncing legacy 1.3.1 chain; will be re-enabled on next release with block height
-    if (false && block.GetBlockTime() <= pindexPrev->GetMedianTimePast())
+    // Height gate for timestamp rules
+    const bool enforce_time = nHeight >= TimeChecksActivationHeight();
+
+    // [VRM 1.3.5 PATCH] Gate timestamp checks by height to allow syncing legacy 1.3.1/1.3.5.
+    // Default: disabled (INT_MAX). Re-enable via -timechecksheight=<H> or change default in 1.3.6.
+    if (enforce_time && block.GetBlockTime() <= pindexPrev->GetMedianTimePast())
     return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID, "time-too-old", "block's timestamp is too early");
 
     // Check timestamp
-    if (block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME)
+    if (enforce_time && block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME)
         return state.Invalid(ValidationInvalidReason::BLOCK_TIME_FUTURE, false, REJECT_INVALID, "time-too-new", "block timestamp too far in the future");
 
     return true;
