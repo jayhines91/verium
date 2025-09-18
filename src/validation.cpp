@@ -3249,39 +3249,51 @@ static CBlockIndex* GetLastCheckpoint(const CCheckpointData& data) EXCLUSIVE_LOC
  *  in ConnectBlock().
  *  Note that -reindex-chainstate skips the validation that happens here!
  */
-static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationState& state, const CChainParams& params, const CBlockIndex* pindexPrev, int64_t nAdjustedTime) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+static bool ContextualCheckBlockHeader(const CBlockHeader& block,
+                                       CValidationState& state,
+                                       const CChainParams& params,
+                                       const CBlockIndex* pindexPrev,
+                                       int64_t nAdjustedTime) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
 {
     assert(pindexPrev != nullptr);
     const int nHeight = pindexPrev->nHeight + 1;
+    const bool enforce_time = nHeight >= TimeChecksActivationHeight();
 
     // Check proof of work
-    if (block.nBits != GetNextTargetRequired(pindexPrev))
-        return state.Invalid(ValidationInvalidReason::BLOCK_MUTATED, false, REJECT_INVALID, "bad-diffbits", strprintf("incorrect proof of work %lu - %lu", block.nBits, GetNextTargetRequired(pindexPrev)));
+    if (block.nBits != GetNextTargetRequired(pindexPrev)) {
+        return state.Invalid(ValidationInvalidReason::BLOCK_MUTATED, false, REJECT_INVALID,
+                             "bad-diffbits",
+                             strprintf("incorrect proof of work %lu - %lu",
+                                       block.nBits, GetNextTargetRequired(pindexPrev)));
+    }
 
     // Check against checkpoints
     if (fCheckpointsEnabled) {
-        // Don't accept any forks from the main chain prior to last checkpoint.
-        // GetLastCheckpoint finds the last checkpoint in MapCheckpoints that's in our
-        // g_blockman.m_block_index.
         CBlockIndex* pcheckpoint = GetLastCheckpoint(params.Checkpoints());
-        if (pcheckpoint && nHeight < pcheckpoint->nHeight)
-            return state.Invalid(ValidationInvalidReason::BLOCK_CHECKPOINT, error("%s: forked chain older than last checkpoint (height %d)", __func__, nHeight), REJECT_CHECKPOINT, "bad-fork-prior-to-checkpoint");
+        if (pcheckpoint && nHeight < pcheckpoint->nHeight) {
+            return state.Invalid(ValidationInvalidReason::BLOCK_CHECKPOINT,
+                                 error("%s: forked chain older than last checkpoint (height %d)",
+                                       __func__, nHeight),
+                                 REJECT_CHECKPOINT, "bad-fork-prior-to-checkpoint");
+        }
     }
 
-    // Height gate for timestamp rules
-    const bool enforce_time = nHeight >= TimeChecksActivationHeight();
+    // [VRM 1.3.5 PATCH] Gate timestamp checks by height.
+    // Default disabled (INT_MAX). Re-enable via -timechecksheight=<H> or in 1.3.6.
+    if (enforce_time && block.GetBlockTime() <= pindexPrev->GetMedianTimePast()) {
+        return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID,
+                             "time-too-old", "block's timestamp is too early");
+    }
 
-    // [VRM 1.3.5 PATCH] Gate timestamp checks by height to allow syncing legacy 1.3.1/1.3.5.
-    // Default: disabled (INT_MAX). Re-enable via -timechecksheight=<H> or change default in 1.3.6.
-    if (enforce_time && block.GetBlockTime() <= pindexPrev->GetMedianTimePast())
-    return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID, "time-too-old", "block's timestamp is too early");
-
-    // Check timestamp
-    if (enforce_time && block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME)
-        return state.Invalid(ValidationInvalidReason::BLOCK_TIME_FUTURE, false, REJECT_INVALID, "time-too-new", "block timestamp too far in the future");
+    // Check timestamp in the future
+    if (enforce_time && block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME) {
+        return state.Invalid(ValidationInvalidReason::BLOCK_TIME_FUTURE, false, REJECT_INVALID,
+                             "time-too-new", "block timestamp too far in the future");
+    }
 
     return true;
 }
+
 
 /** NOTE: This function is not currently invoked by ConnectBlock(), so we
  *  should consider upgrade issues if we change which consensus rules are
