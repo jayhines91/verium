@@ -69,12 +69,12 @@ jobs:
           gcc --version
           g++ --version
 
-      - name: Cache compiled depends
-        id: cache-depends
-        uses: actions/cache@v4
-        with:
-          path: depends/built
-          key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-1${{ hashFiles('depends/packages/*.mk') }}
+   #   - name: Cache compiled depends
+   #     id: cache-depends
+   #     uses: actions/cache@v4
+   #     with:
+   #       path: depends/built
+   #       key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-1${{ hashFiles('depends/packages/*.mk') }}
               
       
       - name: Force MinGW POSIX threading model (safer std::thread/pthread)
