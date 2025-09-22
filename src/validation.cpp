@@ -3257,6 +3257,7 @@ static CBlockIndex* GetLastCheckpoint(const CCheckpointData& data) EXCLUSIVE_LOC
  *  in ConnectBlock().
  *  Note that -reindex-chainstate skips the validation that happens here!
  */
+
 static bool ContextualCheckBlockHeader(const CBlockHeader& block,
                                        CValidationState& state,
                                        const CChainParams& params,
@@ -3265,7 +3266,6 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block,
 {
     assert(pindexPrev != nullptr);
     const int nHeight = pindexPrev->nHeight + 1;
-    const bool enforce_time = nHeight >= TimeChecksActivationHeight();
 
     // Check proof of work
     if (block.nBits != GetNextTargetRequired(pindexPrev)) {
@@ -3286,21 +3286,23 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block,
         }
     }
 
-    // [VRM 1.3.5 PATCH] Gate timestamp checks by height.
-    // Default disabled (INT_MAX). Re-enable via -timechecksheight=<H> or in 1.3.6.
-    if (enforce_time && block.GetBlockTime() <= pindexPrev->GetMedianTimePast()) {
+    // --- Ungated header timestamp checks (match 1.3.1 behavior) ---
+
+    // Not older than MedianTimePast
+    if (block.GetBlockTime() <= pindexPrev->GetMedianTimePast()) {
         return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID,
                              "time-too-old", "block's timestamp is too early");
     }
 
-    // Check timestamp in the future
-    if (enforce_time && block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME) {
+    // Not too far into the future
+    if (block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME) {
         return state.Invalid(ValidationInvalidReason::BLOCK_TIME_FUTURE, false, REJECT_INVALID,
                              "time-too-new", "block timestamp too far in the future");
     }
 
     return true;
 }
+
 
 
 /** NOTE: This function is not currently invoked by ConnectBlock(), so we
