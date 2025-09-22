@@ -1,1 +1,199 @@
+name: Build Verium (macOS x86_64 • depends)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: "Branch/Tag/SHA to build"
+        required: true
+        default: "Verium-1.3.5"
+      depends_target:
+        description: "Optional: build only this depends pkg first (e.g., boost, openssl). Leave empty for full depends."
+        required: false
+        default: ""
+      verbose_make:
+        description: "Verbose make output (V=1)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: verium-macos
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Standard Bitcoin Core-style darwin triplet for x86_64
+  HOST_TRIPLET: x86_64-apple-darwin14
+
+jobs:
+  macos64:
+    # Intel runner; use macos-14 if/when you want Apple Silicon
+    runs-on: macos-12
+    env:
+      HOST_TRIPLET: x86_64-apple-darwin14
+
+    steps:
+      - name: Checkout target ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Show Xcode / clang info
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          clang --version
+          sw_vers
+
+      - name: Base build deps (host)
+        run: |
+          set -euo pipefail
+          # Keep Homebrew output quiet but reliable
+          brew update -q
+          # Core utils commonly needed by depends/autotools
+          brew install -q automake libtool pkg-config coreutils gnu-getopt gnu-tar
+          # Ensure GNU getopt is used (some projects rely on it)
+          echo "$(brew --prefix)/opt/gnu-getopt/bin" >> $GITHUB_PATH
+          echo "$(brew --prefix)/opt/gnu-tar/libexec/gnubin" >> $GITHUB_PATH
+
+      - name: Export macOS build env
+        run: |
+          set -euo pipefail
+          # Prefer clang/clang++ explicitly
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
+          echo "CPP=clang -E" >> $GITHUB_ENV
+          echo "AR=ar" >> $GITHUB_ENV
+          echo "RANLIB=ranlib" >> $GITHUB_ENV
+          echo "NM=nm" >> $GITHUB_ENV
+
+          # Point to current SDK so configure scripts don't guess wrong
+          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          echo "SDKROOT=$SDKROOT" >> $GITHUB_ENV
+
+          # A reasonable minimum; depends may enforce its own min-version too
+          echo "MACOSX_DEPLOYMENT_TARGET=10.13" >> $GITHUB_ENV
+
+      - name: Build depends (macOS)
+        run: |
+          set -e
+          CORES="$(sysctl -n hw.logicalcpu || echo 2)"
+
+          # Optional priming of a single depends pkg
+          if [ -n "${{ inputs.depends_target }}" ]; then
+            echo "Priming depends target: ${{ inputs.depends_target }}"
+            make -C depends HOST=${HOST_TRIPLET} CC=clang CXX=clang++ \
+              ${{ inputs.depends_target }} -j"$CORES"
+          fi
+
+          # Full depends build
+          make -C depends HOST=${HOST_TRIPLET} CC=clang CXX=clang++ -j"$CORES" || {
+            echo "---- tail any config.log ----"
+            find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
+            exit 1
+          }
+
+      - name: Configure (macOS)
+        run: |
+          set -e
+          ./autogen.sh
+
+          export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
+          DEP="$(pwd)/depends/${HOST_TRIPLET}"
+
+          # Ensure our depends paths are first
+          export BOOST_CPPFLAGS="-I$DEP/include"
+          export BOOST_LDFLAGS="-L$DEP/lib"
+          export CPPFLAGS="$BOOST_CPPFLAGS ${CPPFLAGS:-}"
+          export LDFLAGS="$BOOST_LDFLAGS ${LDFLAGS:-}"
+
+          # Detect Boost static suffix produced by depends (e.g., -mt-x64)
+          bs="$(ls "$DEP/lib"/libboost_system*.a | head -n1 || true)"
+          if [ -z "$bs" ]; then
+            echo "ERROR: No libboost_system*.a found in $DEP/lib (did depends/boost build?)."
+            ls -l "$DEP/lib" || true
+            exit 1
+          fi
+          suf="${bs##*/}"; suf="${suf#libboost_system}"; suf="${suf%.a}"
+          export BOOST_LIB_SUFFIX="$suf"
+          export BOOST_THREAD_LIB_SUFFIX="$suf"
+          echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
+
+          # No -lrt on macOS
+          export LIBS="${LIBS:-} -pthread"
+
+          # Configure with Qt from depends
+          CC="${CC:-clang}" CXX="${CXX:-clang++}" \
+          ./configure \
+            --host=${HOST_TRIPLET} \
+            --prefix="$DEP" \
+            --with-gui=qt5 \
+            --with-qt-bindir="$DEP/native/bin" \
+            --with-qt-incdir="$DEP/include" \
+            --with-qt-libdir="$DEP/lib" \
+            --with-boost="$DEP" \
+            --with-boost-libdir="$DEP/lib" \
+            --disable-bench --disable-tests \
+            --enable-reduce-exports \
+            --disable-shared --enable-static
+
+      - name: Build (macOS)
+        run: |
+          set -e
+          CORES="$(sysctl -n hw.logicalcpu || echo 2)"
+          if [ "${{ inputs.verbose_make }}" = "true" ]; then
+            make CC="$CC" CXX="$CXX" -j"$CORES" V=1
+          else
+            make CC="$CC" CXX="$CXX" -j"$CORES"
+          fi
+
+      - name: Package + checksums (macOS)
+        run: |
+          set -euo pipefail
+          V=$(git describe --tags --dirty --always || echo untagged)
+          OUTDIR="out-macos"
+          mkdir -p "$OUTDIR"
+          # CLI/daemon
+          cp -f src/verium* "$OUTDIR/" 2>/dev/null || true
+          # Qt app bundle or binary
+          cp -f src/qt/verium* "$OUTDIR/" 2>/dev/null || true
+
+          if [ -z "$(ls -A "$OUTDIR" 2>/dev/null)" ]; then
+            echo "No macOS binaries found in $OUTDIR; exiting."
+            exit 2
+          fi
+
+          PKG="verium-${V}-${HOST_TRIPLET}.tar.gz"
+          # Use GNU tar to avoid BSD tar quirks
+          gtar -C "$OUTDIR" -czf "$PKG" .
+          shasum -a 256 "$PKG" > "${PKG}.SHA256SUMS"
+
+          echo "ART_MAIN=$PKG" >> $GITHUB_ENV
+          echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
+
+      - name: Upload artifacts (binaries + checksums)
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos64-${{ env.HOST_TRIPLET }}
+          path: |
+            ${{ env.ART_MAIN }}
+            ${{ env.ART_SUMS }}
+
+      - name: Upload build logs (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dep-logs
+          path: |
+            depends/work/build/**/config.log
+            depends/work/build/**/config.status
+          if-no-files-found: ignore
 
