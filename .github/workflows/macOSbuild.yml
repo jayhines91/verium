@@ -46,11 +46,16 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Show Xcode / clang info
+      - name: Show toolchain info
         run: |
           set -euo pipefail
-          xcodebuild -version
-          clang --version
+          echo "Dev dir: $(xcode-select -p || true)"
+          if xcrun -f xcodebuild >/dev/null 2>&1; then
+           xcodebuild -version
+          else
+            echo "Full Xcode not installed; proceeding with Command Line Tools."
+          fi
+          clang --version || true
           sw_vers
 
       - name: Base build deps (host)
