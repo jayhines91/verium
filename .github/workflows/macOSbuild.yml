@@ -119,7 +119,7 @@ jobs:
           # Ensure our depends paths are first
           export BOOST_CPPFLAGS="-I$DEP/include"
           export BOOST_LDFLAGS="-L$DEP/lib"
-          export CPPFLAGS="$BOOST_CPPFLAGS ${CPPFLAGS:-}"
+          export CPPFLAGS="$BOOST_CPPFLAGS ${CPPFLAGS:-} -DBOOST_MPL_CFG_NO_NESTED_VALUE_ARITHMETIC"
           export LDFLAGS="$BOOST_LDFLAGS ${LDFLAGS:-}"
 
           # Detect Boost static suffix produced by depends (e.g., -mt-x64)
@@ -133,13 +133,18 @@ jobs:
           export BOOST_LIB_SUFFIX="$suf"
           export BOOST_THREAD_LIB_SUFFIX="$suf"
           echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
+
+          # Pthread + consistent macOS flags (apply to both compile & link tests)
           export CFLAGS="${CFLAGS:-} -pthread"
-          export CXXFLAGS="${CXXFLAGS:-} -pthread"
-          export LIBS="${LIBS:-} -pthread"
-          export BOOST_LIB_SUFFIX="-mt-x64"
+          export CXXFLAGS="${CXXFLAGS:-} -stdlib=libc++ -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET} -pthread"
 
+          # Tell configure exactly which Boost libs to use for its probes
+          export BOOST_THREAD_LIB="-lboost_thread${BOOST_LIB_SUFFIX}"
+          export BOOST_CHRONO_LIB="-lboost_chrono${BOOST_LIB_SUFFIX}"
+          export BOOST_SYSTEM_LIB="-lboost_system${BOOST_LIB_SUFFIX}"
+          export LIBS="${LIBS:-} -pthread $BOOST_THREAD_LIB $BOOST_CHRONO_LIB $BOOST_SYSTEM_LIB"
 
-          # No -lrt on macOS
+          # No -lrt on macOS (redundant, but fine to keep)
           export LIBS="${LIBS:-} -pthread"
 
           # Configure with Qt from depends
