@@ -167,7 +167,17 @@ jobs:
             --enable-reduce-exports \
             --disable-shared --enable-static
 
-   
+           # Persist critical flags for the next "Build" step
+          {
+            echo "CC=$CC"
+            echo "CXX=$CXX"
+            echo "CFLAGS=$CFLAGS"
+            echo "CXXFLAGS=$CXXFLAGS"
+            echo "OBJCXXFLAGS=$OBJCXXFLAGS"
+            echo "CPPFLAGS=$CPPFLAGS"
+            echo "LDFLAGS=$LDFLAGS"
+            echo "LIBS=$LIBS"
+          } >> "$GITHUB_ENV"
 
       - name: Build (macOS)
         run: |
