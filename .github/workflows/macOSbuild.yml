@@ -81,8 +81,8 @@ jobs:
           echo "NM=nm" >> $GITHUB_ENV
 
           # Point to current SDK so configure scripts don't guess wrong
-          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
-          echo "SDKROOT=$SDKROOT" >> $GITHUB_ENV
+          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || echo /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk)" >> $GITHUB_ENV
+          echo "MACOSX_DEPLOYMENT_TARGET=10.13" >> $GITHUB_ENV
 
           # A reasonable minimum; depends may enforce its own min-version too
           echo "MACOSX_DEPLOYMENT_TARGET=10.13" >> $GITHUB_ENV
