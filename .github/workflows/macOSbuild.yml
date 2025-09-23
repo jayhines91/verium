@@ -117,23 +117,18 @@ jobs:
           DEP="$(pwd)/depends/${HOST_TRIPLET}"
           : "${MACOSX_DEPLOYMENT_TARGET:=10.13}"
 
-          # Start clean so old "no" results aren't reused
+          # fresh probe results (old 'no' gets cached)
           rm -f config.cache
 
-          # Toolchain & standard everywhere (C++ & ObjC++)
-          export CC=clang
-          export CXX="clang++"
-          export CFLAGS="${CFLAGS:-} -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
-          export CXXFLAGS="${CXXFLAGS:-} -std=c++11 -stdlib=libc++ -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET} -pthread -Wno-deprecated-declarations"
-          export OBJCXXFLAGS="$CXXFLAGS"
-
-          # Make depends search paths first
+          # Ensure our depends paths are first
           export BOOST_CPPFLAGS="-I$DEP/include"
           export BOOST_LDFLAGS="-L$DEP/lib"
+
+          # Compile flags for probes (add the MPL workaround; keep min macOS)
           export CPPFLAGS="$BOOST_CPPFLAGS ${CPPFLAGS:-} -DBOOST_MPL_CFG_NO_NESTED_VALUE_ARITHMETIC -D_LIBCPP_DISABLE_AVAILABILITY"
           export LDFLAGS="$BOOST_LDFLAGS ${LDFLAGS:-}"
 
-          # Detect Boost static suffix (e.g., -mt-x64)
+          # Detect Boost static suffix produced by depends (e.g., -mt-x64)
           bs="$(ls "$DEP/lib"/libboost_system*.a | head -n1 || true)"
           if [ -z "$bs" ]; then
             echo "ERROR: No libboost_system*.a found in $DEP/lib (did depends/boost build?)."
@@ -145,26 +140,20 @@ jobs:
           export BOOST_THREAD_LIB_SUFFIX="$suf"
           echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
 
-          # Explicit Boost libs for probes (and make sure pthread is linked)
+          # Toolchain flags for configure tests (compile + link)
+          export CFLAGS="${CFLAGS:-} -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET} -pthread"
+          export CXXFLAGS="${CXXFLAGS:-} -stdlib=libc++ -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET} -pthread -Wno-deprecated-declarations -Wno-enum-constexpr-conversion"
+
+          # Tell the boost.m4 probes exactly which libs to link (and in what order)
           export BOOST_THREAD_LIB="-lboost_thread${BOOST_LIB_SUFFIX}"
           export BOOST_CHRONO_LIB="-lboost_chrono${BOOST_LIB_SUFFIX}"
           export BOOST_SYSTEM_LIB="-lboost_system${BOOST_LIB_SUFFIX}"
-          export BOOST_THREAD_LIBS="$BOOST_THREAD_LIB"   # some macros look for this plural var
-          export LIBS="$BOOST_THREAD_LIB $BOOST_CHRONO_LIB $BOOST_SYSTEM_LIB -pthread ${LIBS:-}"
 
-          # --- Short-circuit the flaky autoconf probes on macOS ---
-          # AX_BOOST_THREAD cache variable (Autoconf Archive macro)
-          export ax_cv_boost_thread=yes
-          # Bitcoin/altcoin "boost sleep" check cache variables (cover common names)
-          export ac_cv_boost_sleep=yes
-          export bitcoin_cv_boost_sleep=yes
-
-          # (Optional: ensure static pkg-config behavior matches depends)
-          if command -v pkg-config >/dev/null 2>&1; then
-          export PKG_CONFIG="$(command -v pkg-config) --static"
-          fi
+          # Make sure the link test pulls pthread, too
+          export LIBS="$BOOST_THREAD_LIB $BOOST_CHRONO_LIB $BOOST_SYSTEM_LIB -lpthread ${LIBS:-}"
 
           # Configure with Qt from depends
+          CC="${CC:-clang}" CXX="${CXX:-clang++}" \
           ./configure \
             --host=${HOST_TRIPLET} \
             --prefix="$DEP" \
