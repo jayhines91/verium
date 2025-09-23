@@ -16,9 +16,9 @@ $(package)_config_opts_linux=target-os=linux threadapi=pthread runtime-link=shar
 $(package)_config_opts_mingw32=target-os=windows binary-format=pe threadapi=win32 runtime-link=static cxxstd=17
 
 # macOS: C++14 + libc++ + explicit min version + silence enum constexpr warning in Boost
-$(package)_config_opts_darwin=target-os=darwin runtime-link=shared cxxstd=14
-$(package)_config_opts_darwin+=cxxflags="-stdlib=libc++ -fvisibility=hidden -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET) -Wno-enum-constexpr-conversion -Wno-error=enum-constexpr-conversion -DBOOST_MPL_CFG_NO_NESTED_VALUE_ARITHMETIC"
-$(package)_config_opts_darwin+=linkflags="-stdlib=libc++ -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET)"
+$(package)_config_opts_darwin+=target-os=darwin runtime-link=shared threadapi=pthread cxxstd=14
+$(package)_config_opts_darwin+=cxxflags="-stdlib=libc++ -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET) -pthread -Wno-enum-constexpr-conversion -Wno-error=enum-constexpr-conversion -DBOOST_MPL_CFG_NO_NESTED_VALUE_ARITHMETIC"
+$(package)_config_opts_darwin+=linkflags="-stdlib=libc++ -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET) -pthread"
 
 $(package)_config_opts_x86_64=architecture=x86 address-model=64
 $(package)_config_opts_i686=architecture=x86 address-model=32
