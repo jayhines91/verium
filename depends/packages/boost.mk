@@ -11,18 +11,14 @@ $(package)_config_opts=--layout=tagged --build-type=complete --user-config=user-
 $(package)_config_opts+=threading=multi link=static -sNO_BZIP2=1 -sNO_ZLIB=1
 $(package)_config_opts+=toolset=clang
 
-# Per-OS cxxstd (do NOT set cxxstd globally)
+# Linux / Windows keep C++17
 $(package)_config_opts_linux=target-os=linux threadapi=pthread runtime-link=shared cxxstd=17
 $(package)_config_opts_mingw32=target-os=windows binary-format=pe threadapi=win32 runtime-link=static cxxstd=17
 
-# macOS: use C++14 to avoid Boost 1.71 + Apple clang 16 hiccups
+# macOS: C++14 + libc++ + explicit min version + silence enum constexpr warning in Boost
 $(package)_config_opts_darwin=target-os=darwin runtime-link=shared cxxstd=14
-$(package)_config_opts_darwin+=cxxflags="-stdlib=libc++ -fvisibility=hidden -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET)"
+$(package)_config_opts_darwin+=cxxflags="-stdlib=libc++ -fvisibility=hidden -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET) -Wno-enum-constexpr-conversion -Wno-error=enum-constexpr-conversion -DBOOST_MPL_CFG_NO_NESTED_VALUE_ARITHMETIC"
 $(package)_config_opts_darwin+=linkflags="-stdlib=libc++ -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET)"
-# Optional if SDK availability warnings bite:
-# $(package)_config_opts_darwin+=cxxflags+="-D_LIBCPP_DISABLE_AVAILABILITY"
-# (Optional) keep b2 from injecting 10.10 defaults:
-# $(package)_config_opts_darwin+=macosx-version=$(MACOSX_DEPLOYMENT_TARGET)
 
 $(package)_config_opts_x86_64=architecture=x86 address-model=64
 $(package)_config_opts_i686=architecture=x86 address-model=32
@@ -37,12 +33,11 @@ endif
 
 $(package)_config_libraries=filesystem,system,chrono,thread
 
-# Do NOT force a -std here; let cxxstd above control it
+# Do NOT force -std here; let cxxstd above control it
 $(package)_cxxflags=-fvisibility=hidden -D_GNU_SOURCE
 $(package)_cxxflags_linux=-fPIC
 $(package)_cxxflags_android=-fPIC
 endef
-
 
 define $(package)_preprocess_cmds
   echo "using $($(package)_toolset_$(host_os)) : : $($(package)_cxx) : <cflags>\"$($(package)_cflags)\" <cxxflags>\"$($(package)_cxxflags) $($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$($(package)_ar)\" <striper>\"$(host_STRIP)\" <ranlib>\"$(host_RANLIB)\" <rc>\"$(host_WINDRES)\" : ;" > user-config.jam && \
