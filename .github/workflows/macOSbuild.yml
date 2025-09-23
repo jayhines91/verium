@@ -133,6 +133,11 @@ jobs:
           export BOOST_LIB_SUFFIX="$suf"
           export BOOST_THREAD_LIB_SUFFIX="$suf"
           echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
+          export CFLAGS="${CFLAGS:-} -pthread"
+          export CXXFLAGS="${CXXFLAGS:-} -pthread"
+          export LIBS="${LIBS:-} -pthread"
+          export BOOST_LIB_SUFFIX="-mt-x64"
+
 
           # No -lrt on macOS
           export LIBS="${LIBS:-} -pthread"
