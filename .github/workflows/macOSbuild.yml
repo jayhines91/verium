@@ -116,10 +116,14 @@ jobs:
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
           DEP="$(pwd)/depends/${HOST_TRIPLET}"
 
+          rm -f config.cache
+
           # Ensure our depends paths are first
           export BOOST_CPPFLAGS="-I$DEP/include"
           export BOOST_LDFLAGS="-L$DEP/lib"
-          export CPPFLAGS="$BOOST_CPPFLAGS ${CPPFLAGS:-} -DBOOST_MPL_CFG_NO_NESTED_VALUE_ARITHMETIC"
+
+          # Compile flags for probes (add the MPL workaround; keep min macOS)
+          export CPPFLAGS="$BOOST_CPPFLAGS ${CPPFLAGS:-} -DBOOST_MPL_CFG_NO_NESTED_VALUE_ARITHMETIC -D_LIBCPP_DISABLE_AVAILABILITY"
           export LDFLAGS="$BOOST_LDFLAGS ${LDFLAGS:-}"
 
           # Detect Boost static suffix produced by depends (e.g., -mt-x64)
@@ -134,18 +138,17 @@ jobs:
           export BOOST_THREAD_LIB_SUFFIX="$suf"
           echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
 
-          # Pthread + consistent macOS flags (apply to both compile & link tests)
-          export CFLAGS="${CFLAGS:-} -pthread"
-          export CXXFLAGS="${CXXFLAGS:-} -stdlib=libc++ -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET} -pthread"
+          # Toolchain flags for configure tests (compile + link)
+          export CFLAGS="${CFLAGS:-} -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET} -pthread"
+          export CXXFLAGS="${CXXFLAGS:-} -stdlib=libc++ -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET} -pthread -Wno-deprecated-declarations -Wno-enum-constexpr-conversion"
 
-          # Tell configure exactly which Boost libs to use for its probes
+          # Tell the boost.m4 probes exactly which libs to link (and in what order)
           export BOOST_THREAD_LIB="-lboost_thread${BOOST_LIB_SUFFIX}"
           export BOOST_CHRONO_LIB="-lboost_chrono${BOOST_LIB_SUFFIX}"
           export BOOST_SYSTEM_LIB="-lboost_system${BOOST_LIB_SUFFIX}"
-          export LIBS="${LIBS:-} -pthread $BOOST_THREAD_LIB $BOOST_CHRONO_LIB $BOOST_SYSTEM_LIB"
 
-          # No -lrt on macOS (redundant, but fine to keep)
-          export LIBS="${LIBS:-} -pthread"
+          # Make sure the link test pulls pthread, too
+          export LIBS="$BOOST_THREAD_LIB $BOOST_CHRONO_LIB $BOOST_SYSTEM_LIB -lpthread ${LIBS:-}"
 
           # Configure with Qt from depends
           CC="${CC:-clang}" CXX="${CXX:-clang++}" \
@@ -160,7 +163,7 @@ jobs:
             --with-boost-libdir="$DEP/lib" \
             --disable-bench --disable-tests \
             --enable-reduce-exports \
-            --disable-shared --enable-static
+            --disable-shared --enable-static         
 
       - name: Build (macOS)
         run: |
