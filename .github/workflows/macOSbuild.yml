@@ -139,44 +139,44 @@ jobs:
             echo "ERROR: No libboost_system*.a found in $DEP/lib (did depends/boost build?)."
             ls -l "$DEP/lib" || true
             exit 1
-        fi
-        suf="${bs##*/}"; suf="${suf#libboost_system}"; suf="${suf%.a}"
-        export BOOST_LIB_SUFFIX="$suf"
-        export BOOST_THREAD_LIB_SUFFIX="$suf"
-        echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
+          fi
+          suf="${bs##*/}"; suf="${suf#libboost_system}"; suf="${suf%.a}"
+          export BOOST_LIB_SUFFIX="$suf"
+          export BOOST_THREAD_LIB_SUFFIX="$suf"
+          echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
 
-        # Explicit Boost libs for probes (and make sure pthread is linked)
-        export BOOST_THREAD_LIB="-lboost_thread${BOOST_LIB_SUFFIX}"
-        export BOOST_CHRONO_LIB="-lboost_chrono${BOOST_LIB_SUFFIX}"
-        export BOOST_SYSTEM_LIB="-lboost_system${BOOST_LIB_SUFFIX}"
-        export BOOST_THREAD_LIBS="$BOOST_THREAD_LIB"   # some macros look for this plural var
-        export LIBS="$BOOST_THREAD_LIB $BOOST_CHRONO_LIB $BOOST_SYSTEM_LIB -pthread ${LIBS:-}"
+          # Explicit Boost libs for probes (and make sure pthread is linked)
+          export BOOST_THREAD_LIB="-lboost_thread${BOOST_LIB_SUFFIX}"
+          export BOOST_CHRONO_LIB="-lboost_chrono${BOOST_LIB_SUFFIX}"
+          export BOOST_SYSTEM_LIB="-lboost_system${BOOST_LIB_SUFFIX}"
+          export BOOST_THREAD_LIBS="$BOOST_THREAD_LIB"   # some macros look for this plural var
+          export LIBS="$BOOST_THREAD_LIB $BOOST_CHRONO_LIB $BOOST_SYSTEM_LIB -pthread ${LIBS:-}"
 
-        # --- Short-circuit the flaky autoconf probes on macOS ---
-        # AX_BOOST_THREAD cache variable (Autoconf Archive macro)
-        export ax_cv_boost_thread=yes
-        # Bitcoin/altcoin "boost sleep" check cache variables (cover common names)
-        export ac_cv_boost_sleep=yes
-        export bitcoin_cv_boost_sleep=yes
+          # --- Short-circuit the flaky autoconf probes on macOS ---
+          # AX_BOOST_THREAD cache variable (Autoconf Archive macro)
+          export ax_cv_boost_thread=yes
+          # Bitcoin/altcoin "boost sleep" check cache variables (cover common names)
+          export ac_cv_boost_sleep=yes
+          export bitcoin_cv_boost_sleep=yes
 
-        # (Optional: ensure static pkg-config behavior matches depends)
-        if command -v pkg-config >/dev/null 2>&1; then
+          # (Optional: ensure static pkg-config behavior matches depends)
+          if command -v pkg-config >/dev/null 2>&1; then
           export PKG_CONFIG="$(command -v pkg-config) --static"
-        fi
+          fi
 
-        # Configure with Qt from depends
-        ./configure \
-          --host=${HOST_TRIPLET} \
-          --prefix="$DEP" \
-          --with-gui=qt5 \
-          --with-qt-bindir="$DEP/native/bin" \
-          --with-qt-incdir="$DEP/include" \
-          --with-qt-libdir="$DEP/lib" \
-          --with-boost="$DEP" \
-          --with-boost-libdir="$DEP/lib" \
-          --disable-bench --disable-tests \
-          --enable-reduce-exports \
-          --disable-shared --enable-static
+          # Configure with Qt from depends
+          ./configure \
+            --host=${HOST_TRIPLET} \
+            --prefix="$DEP" \
+            --with-gui=qt5 \
+            --with-qt-bindir="$DEP/native/bin" \
+            --with-qt-incdir="$DEP/include" \
+            --with-qt-libdir="$DEP/lib" \
+            --with-boost="$DEP" \
+            --with-boost-libdir="$DEP/lib" \
+            --disable-bench --disable-tests \
+            --enable-reduce-exports \
+            --disable-shared --enable-static
 
    
 
