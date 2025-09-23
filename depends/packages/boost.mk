@@ -9,19 +9,20 @@ $(package)_config_opts_release=variant=release
 $(package)_config_opts_debug=variant=debug
 $(package)_config_opts=--layout=tagged --build-type=complete --user-config=user-config.jam
 $(package)_config_opts+=threading=multi link=static -sNO_BZIP2=1 -sNO_ZLIB=1
-# Default: build Boost with C++17 everywhere...
-$(package)_config_opts+=cxxstd=17
+$(package)_config_opts+=toolset=clang
 
-$(package)_config_opts_linux=target-os=linux threadapi=pthread runtime-link=shared
-$(package)_config_opts_darwin=target-os=darwin runtime-link=shared
-# macOS tweaks: prefer C++14 for Boost 1.71 on Apple clang 16 + libc++
-$(package)_config_opts_darwin+=cxxstd=14
+# Per-OS cxxstd (do NOT set cxxstd globally)
+$(package)_config_opts_linux=target-os=linux threadapi=pthread runtime-link=shared cxxstd=17
+$(package)_config_opts_mingw32=target-os=windows binary-format=pe threadapi=win32 runtime-link=static cxxstd=17
+
+# macOS: use C++14 to avoid Boost 1.71 + Apple clang 16 hiccups
+$(package)_config_opts_darwin=target-os=darwin runtime-link=shared cxxstd=14
 $(package)_config_opts_darwin+=cxxflags="-stdlib=libc++ -fvisibility=hidden -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET)"
 $(package)_config_opts_darwin+=linkflags="-stdlib=libc++ -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET)"
-# If you hit SDK availability noise, uncomment:
+# Optional if SDK availability warnings bite:
 # $(package)_config_opts_darwin+=cxxflags+="-D_LIBCPP_DISABLE_AVAILABILITY"
-
-$(package)_config_opts_mingw32=target-os=windows binary-format=pe threadapi=win32 runtime-link=static
+# (Optional) keep b2 from injecting 10.10 defaults:
+# $(package)_config_opts_darwin+=macosx-version=$(MACOSX_DEPLOYMENT_TARGET)
 
 $(package)_config_opts_x86_64=architecture=x86 address-model=64
 $(package)_config_opts_i686=architecture=x86 address-model=32
@@ -36,7 +37,7 @@ endif
 
 $(package)_config_libraries=filesystem,system,chrono,thread
 
-# Global CXXFLAGS: let cxxstd above pick the standard; keep visibility/defines
+# Do NOT force a -std here; let cxxstd above control it
 $(package)_cxxflags=-fvisibility=hidden -D_GNU_SOURCE
 $(package)_cxxflags_linux=-fPIC
 $(package)_cxxflags_android=-fPIC
