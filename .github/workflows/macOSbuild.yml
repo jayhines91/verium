@@ -68,6 +68,8 @@ jobs:
           # Ensure GNU getopt is used (some projects rely on it)
           echo "$(brew --prefix)/opt/gnu-getopt/bin" >> $GITHUB_PATH
           echo "$(brew --prefix)/opt/gnu-tar/libexec/gnubin" >> $GITHUB_PATH
+          brew install cmake
+        
 
       - name: Export macOS build env
         run: |
