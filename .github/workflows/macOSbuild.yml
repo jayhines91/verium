@@ -34,7 +34,7 @@ env:
 jobs:
   macos64:
     # Intel runner; use macos-14 if/when you want Apple Silicon
-    runs-on: macos-12
+    runs-on: self-hosted
     env:
       HOST_TRIPLET: x86_64-apple-darwin14
 
