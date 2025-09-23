@@ -108,6 +108,37 @@ jobs:
             exit 1
           }
 
+      - name: Force C++11 everywhere (wrappers)
+        run: |
+          set -euo pipefail
+          WRAP="$PWD/.ccwrap"
+          mkdir -p "$WRAP"
+
+          cat > "$WRAP/clang++" <<'EOF'
+          #!/usr/bin/env bash
+          real="$(xcrun -f clang++)"
+          has_std=0; has_stdlib=0; has_min=0
+          for a in "$@"; do
+            [[ "$a" == -std=* ]] && has_std=1
+            [[ "$a" == -stdlib=* ]] && has_stdlib=1
+            [[ "$a" == -mmacosx-version-min=* ]] && has_min=1
+          done
+          extras=()
+          [[ $has_std -eq 0    ]] && extras+=("-std=c++11")
+          [[ $has_stdlib -eq 0 ]] && extras+=("-stdlib=libc++")
+          [[ $has_min -eq 0    ]] && extras+=("-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET:-10.13}")
+          exec "$real" "${extras[@]}" "$@"
+          EOF
+          chmod +x "$WRAP/clang++"
+
+          # Also catch 'c++' and 'g++' calls that ignore $(CXX)
+          ln -sf ./clang++ "$WRAP/c++"
+          ln -sf ./clang++ "$WRAP/g++"
+
+          # Put wrappers first on PATH
+          echo "$WRAP" >> "$GITHUB_PATH"
+
+      
       - name: Configure (macOS)
         run: |
           set -e
@@ -140,10 +171,15 @@ jobs:
           export BOOST_THREAD_LIB_SUFFIX="$suf"
           echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
 
+          # Select compilers first
+          export CC=clang
+          export CXX=clang++
+
           # Toolchain flags for configure tests (compile + link)
           export CFLAGS="${CFLAGS:-} -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET} -pthread"
           export CXXFLAGS="${CXXFLAGS:-} -stdlib=libc++ -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET} -pthread -Wno-deprecated-declarations -Wno-enum-constexpr-conversion"
-
+          export OBJCXXFLAGS="$CXXFLAGS"
+          
           # Tell the boost.m4 probes exactly which libs to link (and in what order)
           export BOOST_THREAD_LIB="-lboost_thread${BOOST_LIB_SUFFIX}"
           export BOOST_CHRONO_LIB="-lboost_chrono${BOOST_LIB_SUFFIX}"
@@ -153,7 +189,6 @@ jobs:
           export LIBS="$BOOST_THREAD_LIB $BOOST_CHRONO_LIB $BOOST_SYSTEM_LIB -lpthread ${LIBS:-}"
 
           # Configure with Qt from depends
-          CC="${CC:-clang}" CXX="${CXX:-clang++}" \
           ./configure \
             --host=${HOST_TRIPLET} \
             --prefix="$DEP" \
@@ -182,6 +217,8 @@ jobs:
       - name: Build (macOS)
         run: |
           set -e
+          # one run with V=1 to confirm every clang++ line shows -std=c++11 (wrapper will add it)
+          make CC="$CC" CXX="$CXX" -j"$(sysctl -n hw.logicalcpu || echo 2)" V=1
           CORES="$(sysctl -n hw.logicalcpu || echo 2)"
           if [ "${{ inputs.verbose_make }}" = "true" ]; then
             make CC="$CC" CXX="$CXX" -j"$CORES" V=1
