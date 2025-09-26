@@ -125,7 +125,6 @@ jobs:
           tail -n 50 "$f"
           
       - name: Build depends (Win64)
-        if: steps.cache-depends.outputs.cache-hit != 'true'
         run: |
           set -e
           export RC=${HOST_TRIPLET}-windres
