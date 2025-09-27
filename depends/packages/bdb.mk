@@ -21,6 +21,7 @@ endef
 # Configure (force cross tools)
 # -----------------------------
 define $(package)_config_cmds
+  mkdir -p $($(package)_build_subdir) && \
   cd $($(package)_build_subdir) && \
   CC="$(host)-gcc" CXX="$(host)-g++" AR="$(host)-ar" RANLIB="$(host)-ranlib" STRIP="$(host)-strip" \
   CPPFLAGS="-I$($(package)_staging_prefix_dir)/include" \
