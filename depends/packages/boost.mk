@@ -69,7 +69,7 @@ define $(package)_config_cmds
 endef
 
 define $(package)_build_cmds
-  ./b2 -d2 -j2(nproc) \
+  ./b2 -d2 -j2 \
     --prefix=$($(package)_staging_prefix_dir) \
     $($(package)_config_opts) \
     $($(package)_config_opts_$(host_os)) \
@@ -79,7 +79,7 @@ define $(package)_build_cmds
 endef
 
 define $(package)_stage_cmds
-  ./b2 -d0 -j2(nproc) \
+  ./b2 -d0 -j2 \
     --prefix=$($(package)_staging_prefix_dir) \
     $($(package)_config_opts) \
     $($(package)_config_opts_$(host_os)) \
