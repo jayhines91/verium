@@ -195,7 +195,7 @@ jobs:
                   
       - name: Configure (Win64)
         run: |
-          EXTRA_CXXFLAGS='-DCLIENT_VERSION_SUFFIX=\"-beta-3\"'
+          
           ./autogen.sh
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
           DEP="$(pwd)/depends/${HOST_TRIPLET}"
