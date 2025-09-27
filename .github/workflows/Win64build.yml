@@ -130,14 +130,6 @@ jobs:
           export RC=${HOST_TRIPLET}-windres
           export WINDRES=${HOST_TRIPLET}-windres
 
-          JOBS="${JOBS:-$(
-            (command -v nproc   >/dev/null 2>&1 && nproc)   || \
-            (command -v getconf >/dev/null 2>&1 && getconf _NPROCESSORS_ONLN) || \
-            (command -v sysctl  >/dev/null 2>&1 && sysctl -n hw.ncpu) || \
-            echo 2
-          )}"
-          export JOBS
-
           if [ -n "${{ inputs.depends_target }}" ]; then
           echo "Priming depends target: ${{ inputs.depends_target }}"
           make -C depends HOST=${HOST_TRIPLET} \
