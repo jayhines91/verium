@@ -5,7 +5,6 @@ $(package)_file_name=boost_$($(package)_version).tar.bz2
 $(package)_sha256_hash=d73a8da01e8bf8c7eda40b4c84915071a8c8a0df4a6734537ddde4a8580524ee
 
 define $(package)_set_vars
-# Common flags/options (don’t set toolset here; that’s per-target)
 $(package)_config_opts_release=variant=release
 $(package)_config_opts_debug=variant=debug
 $(package)_config_opts=--layout=tagged --build-type=complete --user-config=user-config.jam
@@ -28,30 +27,18 @@ $(package)_cxxflags=-fvisibility=hidden -D_GNU_SOURCE
 $(package)_cxxflags_linux=-fPIC
 $(package)_cxxflags_android=-fPIC
 
-# ------------------------------
 # Target-specific b2 options
-# ------------------------------
-
-# Linux target
 $(package)_config_opts_linux=target-os=linux threadapi=pthread runtime-link=shared cxxstd=$($(package)_cxxstd)
-
-# Windows (MinGW) target
-# - We always use GCC toolchain here (predictable & includes Win headers)
 $(package)_config_opts_mingw32=target-os=windows binary-format=pe threadapi=win32 runtime-link=static cxxstd=$($(package)_cxxstd)
 
-# macOS (Darwin) target
-# - Keep your macOS tweaks: libc++, min version, silence enum constexpr warning
+# macOS tweaks: libc++, min version, silence enum constexpr warning
 $(package)_config_opts_darwin=target-os=darwin threadapi=pthread runtime-link=shared cxxstd=14
 $(package)_config_opts_darwin+= cxxflags="-stdlib=libc++ -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET) -pthread -Wno-enum-constexpr-conversion -Wno-error=enum-constexpr-conversion -DBOOST_MPL_CFG_NO_NESTED_VALUE_ARITHMETIC"
 $(package)_config_opts_darwin+= linkflags="-stdlib=libc++ -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET) -pthread"
 
-# ------------------------------
 # Toolset selection (by host)
-# ------------------------------
-# We DO NOT force toolset globally. We pick per host OS.
-# - For MinGW targets, always gcc.
-# - Else: if the actual C++ compiler name contains 'clang', use clang; otherwise gcc.
-
+# - MinGW targets always gcc (brings Win headers/CRT)
+# - else: pick clang if the actual C++ compiler name contains 'clang'
 ifneq (,$(findstring w64-mingw32,$(host)))
   $(package)_toolset_$(host_os)=gcc
 else
@@ -64,19 +51,17 @@ endif
 endef
 
 define $(package)_preprocess_cmds
-  # Compose a sane user-config.jam fitted to the TARGET, not the build host.
-  # For MinGW: explicitly point b2 to the cross gcc + windres.
   if echo "$(host)" | grep -q "w64-mingw32"; then \
-    echo "using gcc : mingw : $(host)-g++ : <rc>$(host)-windres <archiver>$(host)-ar <ranlib>$(host)-ranlib ;" > user-config.jam ; \
+    echo "using gcc : mingw : $(host)-g++ : <rc>$(host)-windres <archiver>$(host)-ar <ranlib>$(host)-ranlib ;" > user-config.jam; \
   else \
-    echo "using $($(package)_toolset_$(host_os)) : : $($(package)_cxx) : <cflags>\"$($(package)_cflags)\" <cxxflags>\"$($(package)_cxxflags) $($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$($(package)_ar)\" <ranlib>\"$(host_RANLIB)\" ;" > user-config.jam ; \
-  fi ; \
-  \
-  # Only apply the PTHREAD_STACK_MIN guard when pthread sources exist (non-Windows).
-  [ -f boost/thread/pthread/thread_data.hpp ] && \
-    sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#ifdef PTHREAD_STACK_MIN/' boost/thread/pthread/thread_data.hpp || true && \
-  [ -f libs/thread/src/pthread/thread.cpp ] && \
-    sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#ifdef PTHREAD_STACK_MIN/' libs/thread/src/pthread/thread.cpp || true
+    echo "using $($(package)_toolset_$(host_os)) : : $($(package)_cxx) : <cflags>\"$($(package)_cflags)\" <cxxflags>\"$($(package)_cxxflags) $($(package)_cppflags)\" <linkflags>\"$($(package)_ldflags)\" <archiver>\"$($(package)_ar)\" <ranlib>\"$(host_RANLIB)\" ;" > user-config.jam; \
+  fi; \
+  if [ -f boost/thread/pthread/thread_data.hpp ]; then \
+    sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#ifdef PTHREAD_STACK_MIN/' boost/thread/pthread/thread_data.hpp; \
+  fi; \
+  if [ -f libs/thread/src/pthread/thread.cpp ]; then \
+    sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#ifdef PTHREAD_STACK_MIN/' libs/thread/src/pthread/thread.cpp; \
+  fi
 endef
 
 define $(package)_config_cmds
