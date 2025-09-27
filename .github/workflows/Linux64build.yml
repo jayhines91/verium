@@ -110,6 +110,7 @@ jobs:
       - name: Configure (Linux)
         run: |
           set -e
+          EXTRA_CXXFLAGS='-DCLIENT_VERSION_SUFFIX=\"-beta-3\"'
           ./autogen.sh
 
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
