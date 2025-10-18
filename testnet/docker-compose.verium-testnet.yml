@@ -1,0 +1,167 @@
+version: '3.8'
+
+networks:
+  verium-testnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+services:
+  # Verium Testnet Node 1 (Primary/Seed Node)
+  verium-testnet-node1:
+    image: verium:latest  # You'll need to build or pull a Verium Docker image
+    container_name: verium-testnet-node1
+    restart: unless-stopped
+    networks:
+      verium-testnet:
+        ipv4_address: 172.20.0.10
+    ports:
+      - "36989:36989"  # P2P port (external access)
+      - "36988:36988"  # RPC port (external access)
+    volumes:
+      - /docker/appdata/verium-testnet/node1:/root/.verium
+      - ./configs/verium-testnet-node1.conf:/root/.verium/verium.conf:ro
+    command: veriumd -conf=/root/.verium/verium.conf
+    environment:
+      - VERIUM_NETWORK=testnet
+    healthcheck:
+      test: ["CMD", "verium-cli", "-conf=/root/.verium/verium.conf", "getblockchaininfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Verium Testnet Node 2
+  verium-testnet-node2:
+    image: verium:latest
+    container_name: verium-testnet-node2
+    restart: unless-stopped
+    networks:
+      verium-testnet:
+        ipv4_address: 172.20.0.11
+    ports:
+      - "36990:36989"  # Different external port
+      - "36991:36988"  # Different RPC port
+    volumes:
+      - /docker/appdata/verium-testnet/node2:/root/.verium
+      - ./configs/verium-testnet-node2.conf:/root/.verium/verium.conf:ro
+    command: veriumd -conf=/root/.verium/verium.conf
+    environment:
+      - VERIUM_NETWORK=testnet
+    depends_on:
+      - verium-testnet-node1
+    healthcheck:
+      test: ["CMD", "verium-cli", "-conf=/root/.verium/verium.conf", "getblockchaininfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Verium Testnet Node 3
+  verium-testnet-node3:
+    image: verium:latest
+    container_name: verium-testnet-node3
+    restart: unless-stopped
+    networks:
+      verium-testnet:
+        ipv4_address: 172.20.0.12
+    ports:
+      - "36992:36989"  # Different external port
+      - "36993:36988"  # Different RPC port
+    volumes:
+      - /docker/appdata/verium-testnet/node3:/root/.verium
+      - ./configs/verium-testnet-node3.conf:/root/.verium/verium.conf:ro
+    command: veriumd -conf=/root/.verium/verium.conf
+    environment:
+      - VERIUM_NETWORK=testnet
+    depends_on:
+      - verium-testnet-node1
+    healthcheck:
+      test: ["CMD", "verium-cli", "-conf=/root/.verium/verium.conf", "getblockchaininfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Verium Testnet Explorer
+  verium-testnet-explorer:
+    container_name: verium-testnet-explorer
+    build:
+      context: .
+      dockerfile: Dockerfile.verium
+    image: verium-rpc-explorer:testnet
+    restart: unless-stopped
+    networks:
+      verium-testnet:
+        ipv4_address: 172.20.0.20
+    ports:
+      - "3003:3002"  # Different port for testnet explorer
+    volumes:
+      - /docker/appdata/verium-testnet/explorer-cache:/workspace/cache
+    environment:
+      # Connect to Node 1 as primary
+      BTCEXP_BITCOIND_URI: verium://testnet_user:testnet_password@verium-testnet-node1:36988/
+      
+      # Alternative: Connect to external node
+      # BTCEXP_BITCOIND_URI: verium://testnet_user:testnet_password@127.0.0.1:36988/
+      
+      # Core Configuration
+      BTCEXP_COIN: VRM
+      BTCEXP_HOST: 0.0.0.0
+      BTCEXP_PORT: 3002
+      
+      # Rate Limiting
+      BTCEXP_RATE_LIMIT_WINDOW_MAX_REQUESTS: 5000
+      BTCEXP_RATE_LIMIT_WINDOW_MINUTES: 15
+      
+      # UI Configuration
+      BTCEXP_UI_THEME: dark
+      BTCEXP_SLOW_DEVICE_MODE: false
+      
+      # Privacy and External Data
+      BTCEXP_PRIVACY_MODE: true
+      BTCEXP_NO_RATES: true
+      
+      # Demo Mode
+      BTCEXP_DEMO: false
+      
+      # Address API (disabled for testnet)
+      # BTCEXP_ADDRESS_API: electrum
+      # BTCEXP_ELECTRUM_SERVERS: tcp://127.0.0.1:50001
+      
+    depends_on:
+      verium-testnet-node1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/api/status', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Mining Node (for generating test blocks)
+  verium-testnet-miner:
+    image: verium:latest
+    container_name: verium-testnet-miner
+    restart: unless-stopped
+    networks:
+      verium-testnet:
+        ipv4_address: 172.20.0.13
+    volumes:
+      - /docker/appdata/verium-testnet/miner:/root/.verium
+      - ./configs/verium-testnet-miner.conf:/root/.verium/verium.conf:ro
+    command: veriumd -conf=/root/.verium/verium.conf
+    environment:
+      - VERIUM_NETWORK=testnet
+    depends_on:
+      - verium-testnet-node1
+    healthcheck:
+      test: ["CMD", "verium-cli", "-conf=/root/.verium/verium.conf", "getmininginfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  # These are bind mounts to /docker/appdata, so no need for named volumes
