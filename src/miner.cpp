@@ -588,14 +588,69 @@ void Miner(CWallet *pwallet)
     {
         while (fGenerateVerium && memory)
         {
-            while (::ChainstateActive().IsInitialBlockDownload() || GetNumPeers() < 1 || ::ChainActive().Tip()->nHeight < GetNumBlocksOfPeers()){
+            CBlockIndex* pindexTip = nullptr;
+            CBlockIndex* pindexGenesis = nullptr;
+            bool fGenesisExists = false;
+            const CChainParams& chainparams = Params();
+            
+            {
+                LOCK(cs_main);
+                pindexTip = ::ChainActive().Tip();
+                // Check if genesis block exists in index (even if not activated)
+                pindexGenesis = LookupBlockIndex(chainparams.GetConsensus().hashGenesisBlock);
+                fGenesisExists = (pindexGenesis != nullptr);
+            }
+            
+            // Allow mining if genesis exists but isn't activated yet (for new chains)
+            bool fCanMine = false;
+            if (pindexTip != nullptr) {
+                LOCK(cs_main);
+                // Normal case: chain tip exists
+                fCanMine = !::ChainstateActive().IsInitialBlockDownload() && 
+                          GetNumPeers() >= 1 && 
+                          pindexTip->nHeight >= GetNumBlocksOfPeers();
+            } else if (fGenesisExists) {
+                // Special case: genesis exists but not activated - allow mining to activate it
+                fCanMine = true;
+            }
+            
+            while (!fCanMine && fGenerateVerium) {
                 LogPrintf("Mining inactive while chain is syncing...\n");
                 MilliSleep(5000);
+                {
+                    LOCK(cs_main);
+                    pindexTip = ::ChainActive().Tip();
+                    pindexGenesis = LookupBlockIndex(chainparams.GetConsensus().hashGenesisBlock);
+                    fGenesisExists = (pindexGenesis != nullptr);
+                }
+                
+                if (pindexTip != nullptr) {
+                    LOCK(cs_main);
+                    fCanMine = !::ChainstateActive().IsInitialBlockDownload() && 
+                              GetNumPeers() >= 1 && 
+                              pindexTip->nHeight >= GetNumBlocksOfPeers();
+                } else if (fGenesisExists) {
+                    fCanMine = true;
+                }
             }
 
             // Create new block
             unsigned int nTransactionsUpdatedLast = mempool.GetTransactionsUpdated();
-            CBlockIndex* pindexPrev = ::ChainActive().Tip();
+            CBlockIndex* pindexPrev = nullptr;
+            {
+                LOCK(cs_main);
+                pindexPrev = ::ChainActive().Tip();
+                if (pindexPrev == nullptr) {
+                    // Try to use genesis block if chain tip doesn't exist
+                    pindexPrev = LookupBlockIndex(chainparams.GetConsensus().hashGenesisBlock);
+                    if (pindexPrev == nullptr) {
+                        LogPrintf("Mining inactive: no chain tip or genesis available\n");
+                        MilliSleep(5000);
+                        continue;
+                    }
+                    LogPrintf("Mining on genesis block (chain tip not yet activated)\n");
+                }
+            }
 
             std::unique_ptr<CBlockTemplate> pblocktemplate;
             try

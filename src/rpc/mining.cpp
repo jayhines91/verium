@@ -145,9 +145,18 @@ static UniValue getmininginfo(const JSONRPCRequest& request)
 
     LOCK(cs_main);
 
+    CBlockIndex* pindexTip = ::ChainActive().Tip();
     double nethashrate = GetPoWKHashPM();
-    double blockreward = (double)GetProofOfWorkReward(0,::ChainActive().Tip()->pprev)/COIN;
-    double blocktime = (double)calculateBlocktime(::ChainActive().Tip())/60;
+    double blockreward = 0.0;
+    double blocktime = 0.0;
+    double difficulty = 0.0;
+    
+    if (pindexTip != nullptr && pindexTip->pprev != nullptr) {
+        blockreward = (double)GetProofOfWorkReward(0, pindexTip->pprev)/COIN;
+        blocktime = (double)calculateBlocktime(pindexTip)/60;
+        difficulty = (double)GetDifficulty(pindexTip);
+    }
+    
     double totalhashrate = hashrate;
     double minerate;
     if (totalhashrate == 0.0){minerate = 0.0;}
@@ -165,7 +174,7 @@ static UniValue getmininginfo(const JSONRPCRequest& request)
     obj.pushKV("blocktime",           (double)blocktime);
     obj.pushKV("chain",            Params().NetworkIDString());
     if (BlockAssembler::m_last_block_num_txs) obj.pushKV("currentblocktx", *BlockAssembler::m_last_block_num_txs);
-    obj.pushKV("difficulty",       (double)GetDifficulty(::ChainActive().Tip()));
+    obj.pushKV("difficulty",       difficulty);
     obj.pushKV("est. block rate (hrs)",           (double)minerate);
     obj.pushKV("estimateblockrate",           (double)minerate);
     obj.pushKV("hashrate (H/m)",           (double)totalhashrate);
