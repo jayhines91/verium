@@ -136,11 +136,71 @@ public:
 
 /**
  * Testnet
- * XXX - TODO: Implement Testnet
  */
 class CTestNetParams : public CChainParams {
 public:
     CTestNetParams() {
+        strNetworkID = "test";
+        consensus.nPowTargetSpacing = 5 * 60;
+        consensus.nPowTargetTimespan = 2 * 24 * 60 * 60; // two days
+        consensus.fPowNoRetargeting = false;
+
+        // The best chain should have at least this much work.
+        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000000000000000000000000");
+
+        // By default assume that the signatures in ancestors of this block are valid.
+        consensus.defaultAssumeValid = uint256S("0x0000000000000000000000000000000000000000000000000000000000000000");
+
+        // VIP (Verium Improvement Protocol) - same as mainnet for now
+        consensus.VIP1Height = 520000;
+
+        /**
+         * The message start string is designed to be unlikely to occur in normal data.
+         * Different from mainnet to ensure network separation.
+         */
+        pchMessageStart[0] = 0x0b;
+        pchMessageStart[1] = 0x11;
+        pchMessageStart[2] = 0x09;
+        pchMessageStart[3] = 0x07;
+        nDefaultPort = 36989; // Different from mainnet (36988)
+        nPruneAfterHeight = 1000; // Lower for testnet
+        m_assumed_blockchain_size = 1;
+        m_assumed_chain_state_size = 4;
+
+        genesis = CreateGenesisBlock(1704067200, 869, proofOfWorkLimitTestNet.GetCompact(), 1, 2500 * COIN);
+        consensus.hashGenesisBlock = genesis.GetHash();
+        assert(consensus.hashGenesisBlock == uint256S("0x0019bd6c127ca576024643e70e6b39dbc002d9acd5ca05c364342bf5ca6267c6"));
+        assert(genesis.hashMerkleRoot == uint256S("0xb4e66f65015d59122e410e5253da361433cee45a50fed88c51f93e5165b5d157"));
+
+        // Testnet seeds (can be empty initially)
+        vSeeds.clear();
+
+        // Testnet address prefixes (different from mainnet)
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,111);  // 'm' or 'n' prefix
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,196); // '2' prefix
+        base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,128+111); // '9' prefix
+        base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
+        base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
+
+        bech32_hrp = "tvrm"; // Testnet bech32 prefix
+
+        vFixedSeeds = std::vector<SeedSpec6>(); // Empty for now
+
+        fDefaultConsistencyChecks = false;
+        fRequireStandard = false; // Allow non-standard transactions on testnet
+        m_is_test_chain = true; // Mark as test chain
+
+        checkpointData = {
+            {
+                // No checkpoints initially
+            }
+        };
+
+        chainTxData = ChainTxData{
+            /* nTime    */ 0,
+            /* nTxCount */ 0,
+            /* dTxRate  */ 0,
+        };
     }
 };
 
@@ -165,8 +225,8 @@ std::unique_ptr<const CChainParams> CreateChainParams(const std::string& chain)
 {
     if (chain == CBaseChainParams::MAIN)
         return std::unique_ptr<CChainParams>(new CMainParams());
-//    else if (chain == CBaseChainParams::TESTNET)
-//        return std::unique_ptr<CChainParams>(new CTestNetParams());
+    else if (chain == CBaseChainParams::TESTNET)
+        return std::unique_ptr<CChainParams>(new CTestNetParams());
 //    else if (chain == CBaseChainParams::REGTEST)
 //        return std::unique_ptr<CChainParams>(new CRegTestParams(gArgs));
     throw std::runtime_error(strprintf("%s: Unknown chain %s.", __func__, chain));
