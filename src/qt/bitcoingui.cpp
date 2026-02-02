@@ -267,10 +267,7 @@ BitcoinGUI::BitcoinGUI(interfaces::Node& node, const PlatformStyle *_platformSty
     m_app_nap_inhibitor = new CAppNapInhibitor;
 #endif
 
-    // XXX: FOR DEVELOPMENT
-    // QString strPath(QCoreApplication::applicationDirPath() + "/res/style.qss");
-    // QFile f(strPath);
-
+    // Apply Verium 1.3.5 color palette stylesheet (original dark blue theme)
     QFile f(":/style");
     f.open(QFile::ReadOnly | QFile::Text);
     QTextStream ts(&f);
@@ -625,8 +622,12 @@ void BitcoinGUI::createMenuBar()
 
     // Declare Windows Action
     QAction *minimizeAction = new QAction(QIcon(":/icons/minimize"), tr("&Minimize"), this);
-    connect(minimizeAction, &QAction::triggered, [] {
-        QApplication::activeWindow()->showMinimized();
+    connect(minimizeAction, &QAction::triggered, [this] {
+        if (QWidget* activeWindow = QApplication::activeWindow()) {
+            activeWindow->showMinimized();
+        } else {
+            this->showMinimized();
+        }
     });
 
     // customize button
@@ -1601,18 +1602,35 @@ void BitcoinGUI::unsubscribeFromCoreSignals()
 }
 
 MoveWindowControl::MoveWindowControl(QWidget *parent) :
-    QToolButton(parent)
+    QToolButton(parent),
+    m_dragging(false)
 {
 }
 
 void MoveWindowControl::mousePressEvent(QMouseEvent *event)
 {
-    initPosition = event->windowPos();
+    if (event->button() == Qt::LeftButton) {
+        m_dragging = true;
+        initPosition = event->windowPos();
+    }
+    QToolButton::mousePressEvent(event);
 }
 
 void MoveWindowControl::mouseMoveEvent(QMouseEvent *event)
 {
-    window()->move(event->globalX() - initPosition.x(), event->globalY() - initPosition.y());
+    if (m_dragging && (event->buttons() & Qt::LeftButton)) {
+        QPointF delta = event->globalPos() - (window()->mapToGlobal(QPoint(0, 0)) + initPosition);
+        window()->move(window()->pos() + delta.toPoint());
+    }
+    QToolButton::mouseMoveEvent(event);
+}
+
+void MoveWindowControl::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        m_dragging = false;
+    }
+    QToolButton::mouseReleaseEvent(event);
 }
 
 UnitDisplayStatusBarControl::UnitDisplayStatusBarControl(const PlatformStyle *platformStyle) :
