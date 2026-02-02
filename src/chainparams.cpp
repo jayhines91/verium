@@ -54,6 +54,16 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
 }
 
 /**
+ * Build the testnet genesis block with custom timestamp message.
+ */
+static CBlock CreateTestnetGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits, int32_t nVersion, const CAmount& genesisReward)
+{
+    const char* pszTimestamp = "Verium Testnet Launch";
+    const CScript genesisOutputScript = CScript();
+    return CreateGenesisBlock(pszTimestamp, genesisOutputScript, nTime, nNonce, nBits, nVersion, genesisReward);
+}
+
+/**
  * Main network
  */
 class CMainParams : public CChainParams {
@@ -167,9 +177,9 @@ public:
         m_assumed_blockchain_size = 1;
         m_assumed_chain_state_size = 4;
 
-        genesis = CreateGenesisBlock(1704067200, 869, proofOfWorkLimitTestNet.GetCompact(), 1, 2500 * COIN);
+        genesis = CreateTestnetGenesisBlock(1704067200, 665, proofOfWorkLimitTestNet.GetCompact(), 1, 2500 * COIN);
         consensus.hashGenesisBlock = genesis.GetHash();
-        assert(consensus.hashGenesisBlock == uint256S("0x0019bd6c127ca576024643e70e6b39dbc002d9acd5ca05c364342bf5ca6267c6"));
+        assert(consensus.hashGenesisBlock == uint256S("0x4cebbc55af4761b306f05630df20506cd351454eeb7e87b0c8eb5342cb3d7268"));
         assert(genesis.hashMerkleRoot == uint256S("0xb4e66f65015d59122e410e5253da361433cee45a50fed88c51f93e5165b5d157"));
 
         // Testnet seeds (can be empty initially)
