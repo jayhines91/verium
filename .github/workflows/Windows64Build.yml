@@ -60,63 +60,7 @@ jobs:
           perl -0777 -pe '
           s/(\$\(package\)_set_vars\s*\n)/$1# mingw cross-friendly opts\n$$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp\n$$(package)_config_opts_mingw32 += --with-winssl\n$$(package)_config_opts_mingw64 += --with-winssl\n$$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no\n/ or die $_' -i "$f" || true
         
-      - name: Patch Qt 5.9.8 numeric_limits include (GCC11 fix)
-        run: |
-          set -euo pipefail
-          # 1) Write the patch file into depends/patches/qt/
-          mkdir -p depends/patches/qt
-          cat > depends/patches/qt/qt-5.9.8-include-limits-for-numeric_limits.patch <<'PATCH'
-          diff --git a/qtbase/src/corelib/tools/qbytearraymatcher.h b/qtbase/src/corelib/tools/qbytearraymatcher.h
-          index 2c7c0c0..b7a6a61 100644
-          --- a/qtbase/src/corelib/tools/qbytearraymatcher.h
-          +++ b/qtbase/src/corelib/tools/qbytearraymatcher.h
-          @@ -40,6 +40,7 @@
-          #define QBYTEARRAYMATCHER_H
-
-          #include <QtCore/qbytearray.h>
-          +#include <limits>
-
-          QT_BEGIN_NAMESPACE
-          PATCH
-
-          # 2) Locate the qt depends recipe (.mk)
-          qt_mk=""
-          for f in depends/packages/qt.mk depends/packages/qtbase.mk depends/packages/qt5.mk; do
-            if [ -f "$f" ]; then
-              qt_mk="$f"
-              break
-            fi
-          done
-
-          if [ -z "$qt_mk" ]; then
-            qt_mk="$(grep -RIl '5\.9\.8' depends/packages 2>/dev/null | head -n 1 || true)"
-          fi
-
-          if [ -z "$qt_mk" ]; then
-            echo "ERROR: Could not locate a Qt depends .mk file under depends/packages/"
-            ls -la depends/packages || true
-            exit 1
-          fi
-
-          echo "Using Qt depends recipe: $qt_mk"
-
-          patch_name="qt-5.9.8-include-limits-for-numeric_limits.patch"
-
-          # 3) Reference the patch in the recipe if not already present
-          if grep -qF "$patch_name" "$qt_mk"; then
-            echo "Patch already referenced in $qt_mk"
-          else
-            # Prefer $(package)_patches if it exists; otherwise append a new line at the end.
-            if grep -qE '^\$\((package)\)_patches\s*\+?=' "$qt_mk"; then
-              echo "\$(package)_patches += $patch_name" >> "$qt_mk"
-          else
-              echo "\$(package)_patches += $patch_name" >> "$qt_mk"
-            fi
-          fi
-
-          echo "---- Confirm patch reference ----"
-          tail -n 50 "$qt_mk" | sed -n '1,50p'
-
+      
 
       - name: Build depends (Win64)
         run: |
