@@ -1,14 +1,27 @@
-name: Build Verium (Windows x86_64 via Ubuntu)
+name: Build Verium (Windows x86_64 • old-style)
 
 on:
   workflow_dispatch:
+    inputs:
+      target_ref:
+        description: "Branch/Tag/SHA to build"
+        required: true
+        default: "master"
+      depends_target:
+        description: "Optional: build only this depends pkg first (e.g., curl, openssl). Leave empty for full depends."
+        required: false
+        default: ""
+      verbose_make:
+        description: "Verbose make output (V=1)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: verium-global
+  cancel-in-progress: true
 
 permissions:
   contents: write
-
-concurrency:
-  group: verium-ci-${{ github.ref }}   
-  cancel-in-progress: true
 
 defaults:
   run:
@@ -21,12 +34,23 @@ jobs:
   win64:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout target ref
+        uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.target_ref }} 
           submodules: recursive
           fetch-depth: 0
 
-      - name: Base deps + MinGW
+    #  - name: Overwrite depends/ with master version (CI-only)
+    #    run: |
+    #      set -euo pipefail
+    #      git fetch --depth=1 origin master
+    #      rm -rf depends
+    #      git checkout origin/master -- depends
+    #      echo "Using depends/ from master:"
+    #      git log -1 --format='%h %ci %s' -- depends    
+
+      - name: Base deps + MinGW toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -34,64 +58,170 @@ jobs:
             g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 \
             curl zip unzip ccache
 
-      # Optional: preseed source tarballs (uncomment if you host them)
-      # - name: Preseed depends sources
-      #   run: |
-      #     mkdir -p depends/sources
-      #     gh release download deps-sources-v1 --pattern 'depends-sources-*.zip' --dir .
-      #     unzip -o depends-sources-*.zip -d depends/sources
-      #   env: { GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
-
-      - name: Cache depends
-        uses: actions/cache@v4
-        with:
-          path: |
-            depends/sources
-            depends/built
-          key: win-${{ env.HOST_TRIPLET }}-${{ hashFiles('depends/packages/*.mk') }}
-          restore-keys: win-${{ env.HOST_TRIPLET }}-
-
-      # Patch curl for cross-compile (avoid AC_RUN_IFELSE)
-      - name: Patch curl.mk for MinGW
+      - name: Install GCC 9 (host) and select it
         run: |
           set -e
-          f=depends/packages/curl.mk
-          [ -f "$f" ] || exit 0
-          perl -0777 -pe '
-          s/(\$\(package\)_set_vars\s*\n)/$1# mingw cross-friendly opts\n$$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp\n$$(package)_config_opts_mingw32 += --with-winssl\n$$(package)_config_opts_mingw64 += --with-winssl\n$$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no\n/ or die $_' -i "$f" || true
+          sudo apt-get update
+          sudo apt-get install -y gcc-9 g++-9
+          # make gcc-9/g++-9 the default host compilers
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
+          gcc --version
+          g++ --version
+
+   #   - name: Cache compiled depends
+   #     id: cache-depends
+   #     uses: actions/cache@v4
+   #     with:
+   #       path: depends/built
+   #       key: depends-${{ runner.os }}-${{ env.HOST_TRIPLET }}-1${{ hashFiles('depends/packages/*.mk') }}
+              
       
+      - name: Force MinGW POSIX threading model (safer std::thread/pthread)
+        run: |
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+
+      - name: Hotfix headers (std::mutex / std::condition_variable)
+        run: |
+          set -e
+          # Add <mutex> + <condition_variable> after <thread> in src/sync.h
+          if [ -f src/sync.h ] && ! grep -q '<mutex>' src/sync.h; then
+            awk '{
+              print;
+              if ($0 ~ /#include[[:space:]]*<thread>/) {
+                print "#include <mutex>";
+                print "#include <condition_variable>";
+              }
+            }' src/sync.h > src/sync.h.new && mv src/sync.h.new src/sync.h
+          fi
+
+          # Add <mutex> after <tinyformat.h> in src/logging.h
+          if [ -f src/logging.h ] && ! grep -q '<mutex>' src/logging.h; then
+            awk '{
+              print;
+              if ($0 ~ /#include[[:space:]]*<tinyformat\.h>/) {
+                print "#include <mutex>";
+              }
+            }' src/logging.h > src/logging.h.new && mv src/logging.h.new src/logging.h
+          fi
+                
+      - name: Force curl cross-compile opts (append)
+        run: |
+          set -euo pipefail
+          f=depends/packages/curl.mk
+          test -f "$f" || { echo "curl.mk not found"; exit 1; }
+          {
+            echo ''
+            echo '# === CI injected: cross-compile friendly opts for Windows ==='
+            echo '$$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp'
+            echo '$$(package)_config_opts_mingw32 += --with-winssl'
+            echo '$$(package)_config_opts_mingw64 += --with-winssl'
+            echo '$$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes'
+          } >> "$f"
+          # start fresh so old configure state can’t leak
+          rm -rf depends/work/build/*/curl/
+          echo "==== tail of updated curl.mk ===="
+          tail -n 50 "$f"
+          
       - name: Build depends (Win64)
         run: |
           set -e
-          make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)" || {
+          export RC=${HOST_TRIPLET}-windres
+          export WINDRES=${HOST_TRIPLET}-windres
+
+          if [ -n "${{ inputs.depends_target }}" ]; then
+          echo "Priming depends target: ${{ inputs.depends_target }}"
+          make -C depends HOST=${HOST_TRIPLET} \
+          CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 \
+          ${{ inputs.depends_target }} -j"$(nproc || echo 2)" \
+          RC="$RC" WINDRES="$WINDRES"
+          fi
+
+          make -C depends HOST=${HOST_TRIPLET} \
+          CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 \
+          -j"$(nproc || echo 2)" RC="$RC" WINDRES="$WINDRES" || {
             echo "---- tail curl config.log ----"
             find depends/work/build -path "*/curl/*/config.log" -exec sh -c 'echo "==> {}"; tail -n 200 "{}"' \;
             echo "---- tail any config.log ----"
-            find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 100 "{}"' \;
+            find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
             exit 1
           }
 
+      - name: Patch chainparams seeds to old style
+        run: |
+          set -e
+          f=src/chainparams.cpp
+          test -f "$f" || { echo "$f not found"; exit 1; }
+          cp "$f" "$f.bak"
+          # Replace 3-arg and 2-arg forms with a single host string
+          perl -0777 -pe 's/vSeeds\.emplace_back\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)/vSeeds.push_back("$1")/g' -i "$f"
+          # Optional: also handle initializer-list style if present
+          perl -0777 -pe 's/vSeeds\.push_back\(\s*CDNSSeedData\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)\s*\)/vSeeds.push_back("$1")/g' -i "$f"
+          echo "Patch diff:"
+          git --no-pager diff -- "$f" || true
+
+      - name: Shim gmtime_r for Windows (use gmtime_s)
+        run: |
+          set -e
+          f=src/util/time.cpp
+          # Only patch once
+          if [ -f "$f" ] && ! grep -q 'gmtime_r_compat' "$f"; then
+            # Insert at top of the file
+            sed -i '1i \
+          #ifdef _WIN32\n\
+          #include <time.h>\n\
+          static inline struct tm* gmtime_r_compat(const time_t* t, struct tm* res){ return gmtime_s(res,t)==0 ? res : NULL; }\n\
+          #define gmtime_r(t,r) gmtime_r_compat((t),(r))\n\
+          #endif\n' "$f"
+          fi    
+  
+
+      - name: Initialize Qt automake vars (fix += error)
+        run: |
+          set -e
+          f=src/Makefile.qt.include
+          if [ -f "$f" ]; then
+            # Insert only if not already present
+            grep -q '^[[:space:]]*LIBBITCOINQT_LIBS[[:space:]]*=' "$f" || \
+              sed -i '1i LIBBITCOINQT_LIBS =\nLIBBITCOINQT_INCLUDES =' "$f"
+            echo "Patched $f:"
+            head -n 8 "$f"
+          else
+            echo "ERROR: $f not found" >&2
+            exit 1
+          fi
+
+                  
       - name: Configure (Win64)
         run: |
+          
           ./autogen.sh
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
-          set -o pipefail
+          DEP="$(pwd)/depends/${HOST_TRIPLET}"
           ./configure \
             --host=${HOST_TRIPLET} \
-            --prefix="$(pwd)/depends/${HOST_TRIPLET}" \
+            --prefix="$DEP" \
+            --with-gui=qt5 \
+            --with-qt-bindir="$DEP/native/bin" \
+            --with-qt-incdir="$DEP/include" \
+            --with-qt-libdir="$DEP/lib" \
             --disable-bench --disable-tests \
             --enable-reduce-exports \
-            --disable-shared --enable-static \
-          || { echo "=== config.log (tail) ==="; tail -n 200 config.log || true; exit 1; }
-
+            --disable-shared --enable-static
+            
       - name: Build (Win64)
-        run: make -j"$(nproc || echo 2)" V=1
+        run: |
+          if [ "${{ inputs.verbose_make }}" = "true" ]; then
+            make -j"$(nproc || echo 2)" V=1
+          else
+            make -j"$(nproc || echo 2)"
+          fi
 
-      - name: Package + checksums
+      - name: Package + checksums (Win64)
         run: |
           set -euo pipefail
-          V="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
-          if [ -z "$V" ]; then V=$(git describe --tags --dirty --always || echo untagged); fi
+          V=$(git describe --tags --dirty --always || echo untagged)
           PKG="verium-${V}-${HOST_TRIPLET}.zip"
           mkdir -p out
           cp -f src/*.exe out/ 2>/dev/null || true
@@ -102,9 +232,20 @@ jobs:
           echo "ART_MAIN=$PKG" >> $GITHUB_ENV
           echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifacts (binaries + checksums)
+        uses: actions/upload-artifact@v4
         with:
           name: win64-${{ env.HOST_TRIPLET }}
           path: |
             ${{ env.ART_MAIN }}
             ${{ env.ART_SUMS }}
+
+      - name: Upload build logs (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: win64-dep-logs
+          path: |
+            depends/work/build/**/config.log
+            depends/work/build/**/config.status
+          if-no-files-found: ignore
