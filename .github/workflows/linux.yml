@@ -1,14 +1,28 @@
-name: Build Verium (Linux)
-  
+
+name: Build Verium (Linux x86_64 • depends)
+
 on:
   workflow_dispatch:
+    inputs:
+      target_ref:
+        description: "Branch/Tag/SHA to build"
+        required: true
+        default: "Verium-1.3.5"
+      depends_target:
+        description: "Optional: build only this depends pkg first (e.g., boost, openssl). Leave empty for full depends."
+        required: false
+        default: ""
+      verbose_make:
+        description: "Verbose make output (V=1)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: verium-linux
+  cancel-in-progress: true
 
 permissions:
   contents: write
-
-concurrency:
-  group: verium-ci-${{ github.ref }}   
-  cancel-in-progress: true
 
 defaults:
   run:
@@ -18,77 +32,169 @@ env:
   HOST_TRIPLET: x86_64-pc-linux-gnu
 
 jobs:
-  linux:
+  linux64:
     runs-on: ubuntu-22.04
+    env:
+      HOST_TRIPLET: x86_64-pc-linux-gnu
+      # NEW: force toolchain to GCC 9 everywhere
+      CC: gcc-9
+      CXX: g++-9
+          
+      
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout target ref
+        uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.target_ref }}
           submodules: recursive
           fetch-depth: 0
 
-      - name: Base deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential automake libtool pkg-config python3 \
-            curl zip unzip ccache
-
-      # Optional: preseed source tarballs (uncomment if you host them)
-      # - name: Preseed depends sources
-      #   run: |
-      #     mkdir -p depends/sources
-      #     gh release download deps-sources-v1 --pattern 'depends-sources-*.zip' --dir .
-      #     unzip -o depends-sources-*.zip -d depends/sources
-      #   env: { GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
-
-      - name: Cache depends
-        uses: actions/cache@v4
-        with:
-          path: |
-            depends/sources
-            depends/built
-          key: linux-${{ env.HOST_TRIPLET }}-${{ hashFiles('depends/packages/*.mk') }}
-          restore-keys: linux-${{ env.HOST_TRIPLET }}-
-
-      - name: Build depends
-        run: make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)"
-
-      - name: Configure
-        run: |
-          ./autogen.sh
-          export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
-          set -o pipefail
-          ./configure \
-            --prefix="$(pwd)/depends/${HOST_TRIPLET}" \
-            --host="${HOST_TRIPLET}" \
-            --disable-bench --disable-tests \
-            --enable-reduce-exports \
-            --disable-shared --enable-static \
-          || { echo "=== config.log (tail) ==="; tail -n 200 config.log || true; exit 1; }
-
-      - name: Build
-        run: make -j"$(nproc || echo 2)" V=1
-
-      - name: Package + checksums
+      - name: Select GCC 9 toolchain (Linux)
+        if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          V="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
-          if [ -z "$V" ]; then V=$(git describe --tags --dirty --always || echo untagged); fi
+          sudo apt-get update
+          sudo apt-get install -y gcc-9 g++-9
+          # Make gcc/g++ point to version 9 everywhere (covers scripts that hardcode 'gcc')
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100 \
+            --slave /usr/bin/g++ g++ /usr/bin/g++-9 \
+            --slave /usr/bin/gcov gcov /usr/bin/gcov-9 \
+            --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-9 \
+            --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-9 \
+            --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-9
+          gcc --version
+          g++ --version    
+
+      - name: Export GCC 9 env (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "CC=gcc" >> $GITHUB_ENV
+          echo "CXX=g++" >> $GITHUB_ENV
+          echo "CPP=gcc -E" >> $GITHUB_ENV
+          echo "AR=ar" >> $GITHUB_ENV
+          echo "RANLIB=ranlib" >> $GITHUB_ENV
+          echo "NM=nm" >> $GITHUB_ENV
+  
+      - name: Base build deps (host)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # NEW: install gcc-9/g++-9
+          sudo apt-get install -y \
+            build-essential automake libtool pkg-config python3 \
+            curl zip unzip ccache \
+            gcc-9 g++-9
+          "$CC" --version; "$CXX" --version
+
+      - name: Build depends (Linux)
+        run: |
+          set -e
+          # If user asked to prime a single depends target, do it first (with GCC 9)
+          if [ -n "${{ inputs.depends_target }}" ]; then
+            echo "Priming depends target: ${{ inputs.depends_target }}"
+            CC=gcc-9 CXX=g++-9 make -C depends HOST=${HOST_TRIPLET} \
+              ${{ inputs.depends_target }} -j"$(nproc || echo 2)"
+          fi
+
+          # Always pre-build FreeType with GCC 11 (it’s a C lib; ABI-safe)
+          echo "Priming FreeType with GCC 11"
+          make -C depends HOST=${HOST_TRIPLET} CC=gcc-11 CXX=g++-11 freetype -j"$(nproc || echo 2)"
+
+          # Build everything else with GCC 9
+          export CC=gcc-9 CXX=g++-9
+          make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)" || {
+            echo "---- tail any config.log ----"
+            find depends/work/build -name config.log -exec sh -c 'echo "==> {}"; tail -n 120 "{}"' \;
+            exit 1
+          }
+      
+      - name: Configure (Linux)
+        run: |
+          set -e
+          
+          ./autogen.sh
+
+          export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
+          DEP="$(pwd)/depends/${HOST_TRIPLET}"
+
+          # Make configure search depends first
+          export BOOST_CPPFLAGS="-I$DEP/include"
+          export BOOST_LDFLAGS="-L$DEP/lib"
+          export CPPFLAGS="$BOOST_CPPFLAGS ${CPPFLAGS:-}"
+          export LDFLAGS="$BOOST_LDFLAGS ${LDFLAGS:-}"
+
+          # Detect the exact Boost suffix produced by depends (e.g. -mt-x64)
+          bs="$(ls "$DEP/lib"/libboost_system*.a | head -n1 || true)"
+          if [ -z "$bs" ]; then
+            echo "ERROR: No libboost_system*.a found in $DEP/lib (did depends/boost build?)."
+            ls -l "$DEP/lib" || true
+            exit 1
+          fi
+          suf="${bs##*/}"; suf="${suf#libboost_system}"; suf="${suf%.a}"
+          export BOOST_LIB_SUFFIX="$suf"
+          export BOOST_THREAD_LIB_SUFFIX="$suf"   # some macros still read this
+          echo "Using BOOST_LIB_SUFFIX='$BOOST_LIB_SUFFIX'"
+
+          # Helpful when linking statically
+          export LIBS="${LIBS:-} -pthread -lrt"
+
+          # Pass CC/CXX explicitly; also hint where Boost lives
+          CC="${CC:-gcc-9}" CXX="${CXX:-g++-9}" \
+          ./configure \
+            --host=${HOST_TRIPLET} \
+            --prefix="$DEP" \
+            --with-gui=qt5 \
+            --with-qt-bindir="$DEP/native/bin" \
+            --with-qt-incdir="$DEP/include" \
+            --with-qt-libdir="$DEP/lib" \
+            --with-boost="$DEP" \
+            --with-boost-libdir="$DEP/lib" \
+            --disable-bench --disable-tests \
+            --enable-reduce-exports \
+            --disable-shared --enable-static
+
+
+      - name: Build (Linux)
+        run: |
+          set -e
+          if [ "${{ inputs.verbose_make }}" = "true" ]; then
+            make CC="$CC" CXX="$CXX" -j"$(nproc || echo 2)" V=1
+          else
+            make CC="$CC" CXX="$CXX" -j"$(nproc || echo 2)"
+          fi
+
+      - name: Package + checksums (Linux)
+        run: |
+          set -euo pipefail
+          V=$(git describe --tags --dirty --always || echo untagged)
+          OUTDIR="out-linux"
+          mkdir -p "$OUTDIR"
+          cp -f src/verium* "$OUTDIR/" 2>/dev/null || true
+          cp -f src/qt/verium* "$OUTDIR/" 2>/dev/null || true
+          if [ -z "$(ls -A "$OUTDIR" 2>/dev/null)" ]; then
+            echo "No Linux binaries found in $OUTDIR; exiting."
+            exit 2
+          fi
           PKG="verium-${V}-${HOST_TRIPLET}.tar.gz"
-          mkdir -p out
-          cp -f src/veriumd* out/ 2>/dev/null || true
-          cp -f src/verium-cli* out/ 2>/dev/null || true
-          cp -f src/verium-tx* out/ 2>/dev/null || true
-          cp -f src/qt/verium-qt* out/ 2>/dev/null || true
-          [ -n "$(ls -A out)" ] || { echo "No binaries in out/"; exit 2; }
-          tar -czf "$PKG" -C out .
+          tar -C "$OUTDIR" -czf "$PKG" .
           sha256sum "$PKG" > "${PKG}.SHA256SUMS"
           echo "ART_MAIN=$PKG" >> $GITHUB_ENV
           echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifacts (binaries + checksums)
+        uses: actions/upload-artifact@v4
         with:
-          name: linux-${{ env.HOST_TRIPLET }}
+          name: linux64-${{ env.HOST_TRIPLET }}
           path: |
             ${{ env.ART_MAIN }}
             ${{ env.ART_SUMS }}
+
+      - name: Upload build logs (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-dep-logs
+          path: |
+            depends/work/build/**/config.log
+            depends/work/build/**/config.status
+          if-no-files-found: ignore
