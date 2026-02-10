@@ -72,24 +72,27 @@ jobs:
           --- a/qtbase/src/corelib/tools/qbytearraymatcher.h
           +++ b/qtbase/src/corelib/tools/qbytearraymatcher.h
           @@ -40,6 +40,7 @@
-         #define QBYTEARRAYMATCHER_H
+           #define QBYTEARRAYMATCHER_H
 
-         #include <QtCore/qbytearray.h>
-         +#include <limits>
+           #include <QtCore/qbytearray.h>
+          +#include <limits>
 
-         QT_BEGIN_NAMESPACE
-         PATCH
+           QT_BEGIN_NAMESPACE
+          PATCH
 
-          # 2) Find the qt package mk and append the patch name to its patch list.
-          #    Different forks name the variable differently, so we do a robust "add if not present".
+          # 2) Locate the qt depends recipe (.mk)
           qt_mk=""
           for f in depends/packages/qt.mk depends/packages/qtbase.mk depends/packages/qt5.mk; do
-            [ -f "$f" ] && qt_mk="$f" && break
+            if [ -f "$f" ]; then
+              qt_mk="$f"
+              break
+            fi
           done
+
           if [ -z "$qt_mk" ]; then
-            # fallback: locate any qt*.mk that mentions 5.9.8
-            qt_mk="$(grep -RIl '5\.9\.8' depends/packages | head -n 1 || true)"
+            qt_mk="$(grep -RIl '5\.9\.8' depends/packages 2>/dev/null | head -n 1 || true)"
           fi
+
           if [ -z "$qt_mk" ]; then
             echo "ERROR: Could not locate a Qt depends .mk file under depends/packages/"
             ls -la depends/packages || true
@@ -100,31 +103,20 @@ jobs:
 
           patch_name="qt-5.9.8-include-limits-for-numeric_limits.patch"
 
-          # If already present, don't duplicate
+          # 3) Reference the patch in the recipe if not already present
           if grep -qF "$patch_name" "$qt_mk"; then
-          echo "Patch already referenced in $qt_mk"
+            echo "Patch already referenced in $qt_mk"
           else
-            # Try common patterns first:
-            #   $(package)_patches += ...
-            #   qt_patches += ...
-            #   QT_PATCHES += ...
-            # If none exist, add a line at the end using $(package)_patches (most compatible).
+            # Prefer $(package)_patches if it exists; otherwise append a new line at the end.
             if grep -qE '^\$\((package)\)_patches\s*\+?=' "$qt_mk"; then
-              echo 'Appending to $(package)_patches'
               echo "\$(package)_patches += $patch_name" >> "$qt_mk"
-            elif grep -qE '^(qt|QT)(_patches|_PATCHES|_PATCHES)\s*\+?=' "$qt_mk"; then
-              # best effort append to an existing qt/Qt patches var
-              var="$(grep -E '^(qt|QT)(_patches|_PATCHES|_PATCHES)\s*\+?=' "$qt_mk" | head -n 1 | cut -d= -f1 | tr -d ' ')"
-              echo "Appending to $var"
-              echo "$var += $patch_name" >> "$qt_mk"
             else
-              echo 'No obvious patch var found; adding $(package)_patches += ... at end.'
               echo "\$(package)_patches += $patch_name" >> "$qt_mk"
             fi
           fi
 
-          echo "---- Qt mk patch references (grep)
-
+          echo "---- Confirm patch reference ----"
+          tail -n 50 "$qt_mk" | sed -n '1,50p'
 
 
       - name: Build depends (Win64)
