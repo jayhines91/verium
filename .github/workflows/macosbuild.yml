@@ -16,7 +16,7 @@ defaults:
 
 jobs:
   mac:
-    runs-on: macos-13
+    runs-on: macosmonterey-13
     steps:
       - uses: actions/checkout@v4
         with:
