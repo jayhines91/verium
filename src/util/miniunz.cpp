@@ -18,6 +18,7 @@
 
 #include <util/miniunz.h>
 
+#include <fs.h>
 #include <logging.h>
 #include <sys/stat.h>
 
@@ -46,7 +47,19 @@ int is_file_within_path(const fs::path& file_path, const fs::path& dir_path)
     return std::equal(dir_path.begin(), dir_path.end(), file_path_abs.begin());
 }
 
-int zip_extract_currentfile(unzFile uf, const fs::path& root_file_path, const char * allowed_dir)
+bool zip_get_first_entry_name(unzFile uf, char* buffer, size_t size)
+{
+    if (!buffer || size == 0) return false;
+    buffer[0] = '\0';
+    int err = unzGoToFirstFile(uf);
+    if (err != UNZ_OK) return false;
+    unz_file_info64 file_info = unz_file_info64();
+    err = unzGetCurrentFileInfo64(uf, &file_info, buffer, (unsigned long)size, NULL, 0, NULL, 0);
+    if (err != UNZ_OK) return false;
+    return true;
+}
+
+static int zip_extract_currentfile_impl(unzFile uf, const fs::path& root_file_path, const char * allowed_dir, const char * dest_subdir)
 {
     unz_file_info64 file_info = unz_file_info64();
     FILE* fout = NULL;
@@ -64,7 +77,18 @@ int zip_extract_currentfile(unzFile uf, const fs::path& root_file_path, const ch
         return err;
     }
 
-    boost::filesystem::path file_path = root_file_path / filename_inzip;
+    /* When using dest_subdir, reject path traversal in zip entry names */
+    if (dest_subdir != nullptr && (strstr(filename_inzip, "..") != nullptr))
+    {
+        LogPrintf("invalid zipfile: path traversal not allowed: %s\n", filename_inzip);
+        return UNZ_BADZIPFILE;
+    }
+
+    boost::filesystem::path file_path;
+    if (dest_subdir != nullptr)
+        file_path = root_file_path / dest_subdir / filename_inzip;
+    else
+        file_path = root_file_path / filename_inzip;
     boost::filesystem::path bootstrap_dir_path = root_file_path / allowed_dir;
 
     /* Sanity check to prevent path traversal attacks in case of a malicious zip file */
@@ -75,7 +99,7 @@ int zip_extract_currentfile(unzFile uf, const fs::path& root_file_path, const ch
     }
 
     std::string curr_filename_str = file_path.string();
-    curr_filename = file_path.string().c_str();
+    curr_filename = curr_filename_str.c_str();
 
     int curr_filename_len = curr_filename_str.length();
     if (curr_filename_len > 0)
@@ -84,7 +108,7 @@ int zip_extract_currentfile(unzFile uf, const fs::path& root_file_path, const ch
         if (lastChar == '/' || lastChar == '\\')
         {
             LogPrintf(" extracting: creating dir %s\n", curr_filename);
-            MKDIR(curr_filename);
+            fs::create_directories(file_path);
             return UNZ_OK;
         }
     }
@@ -100,9 +124,10 @@ int zip_extract_currentfile(unzFile uf, const fs::path& root_file_path, const ch
     if (err != UNZ_OK)
         LogPrintf("error %d with zipfile in unzOpenCurrentFilePassword\n", err);
 
-    /* Create the file on disk so we can unzip to it */
+    /* Create parent directories and the file on disk so we can unzip to it */
     if (err == UNZ_OK)
     {
+        fs::create_directories(file_path.parent_path());
         fout = fopen64(curr_filename, "wb");
         /* Some zips don't contain directory alone before file */
         if (fout == NULL)
@@ -145,7 +170,7 @@ int zip_extract_currentfile(unzFile uf, const fs::path& root_file_path, const ch
     return err;
 }
 
-int zip_extract_all(unzFile uf, const fs::path& root_file_path, const char * allowed_dir)
+int zip_extract_all(unzFile uf, const fs::path& root_file_path, const char * allowed_dir, const char * dest_subdir)
 {
     int err = unzGoToFirstFile(uf);
     if (err != UNZ_OK)
@@ -156,7 +181,7 @@ int zip_extract_all(unzFile uf, const fs::path& root_file_path, const char * all
 
     do
     {
-        err = zip_extract_currentfile(uf, root_file_path, allowed_dir);
+        err = zip_extract_currentfile_impl(uf, root_file_path, allowed_dir, dest_subdir);
         if (err != UNZ_OK)
             break;
         err = unzGoToNextFile(uf);

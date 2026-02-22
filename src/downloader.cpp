@@ -104,10 +104,25 @@ void extractBootstrap(const fs::path& target_file_path) {
     if (uf == NULL)
         throw std::runtime_error(strprintf("bootstrap: Cannot open bootstrap archive: %s\n", zipfilename));
 
-    int unzip_err = zip_extract_all(uf, GetDataDir(), "bootstrap");
+    const char * dest_subdir = nullptr;
+    if (!gArgs.GetBoolArg("-testnet", false)) {
+        /* Mainnet only: support zips with top-level blocks/chainstate (extract into bootstrap/ subdir) */
+        char first_entry[256] = {0};
+        if (zip_get_first_entry_name(uf, first_entry, sizeof(first_entry))) {
+            std::string name(first_entry);
+            if (name.find("bootstrap/") != 0) {
+                dest_subdir = "bootstrap";
+                LogPrintf("bootstrap: Zip has top-level entries, extracting into bootstrap/.\n");
+            }
+        }
+    }
+    /* Testnet: always use dest_subdir=nullptr (zip must have bootstrap/ prefix as before) */
+
+    int unzip_err = zip_extract_all(uf, GetDataDir(), "bootstrap", dest_subdir);
     if (unzip_err != UNZ_OK)
         throw std::runtime_error("bootstrap: Unzip failed\n");
 
+    unzClose(uf);
     LogPrintf("bootstrap: Unzip successful\n");
 
     return;
@@ -144,6 +159,13 @@ void downloadBootstrap() {
     LogPrintf("bootstrap: Starting bootstrap process.\n");
 
     boost::filesystem::path pathBootstrapZip = GetDataDir() / "bootstrap_VRM.zip";
+    boost::filesystem::path pathBootstrapStaging = GetDataDir() / "bootstrap";
+
+    /* Remove any existing staging dir so redownload is a clean overwrite */
+    if (boost::filesystem::exists(pathBootstrapStaging)) {
+        LogPrintf("bootstrap: Removing existing bootstrap staging directory for clean extract.\n");
+        boost::filesystem::remove_all(pathBootstrapStaging);
+    }
 
     downloadFile(BOOTSTRAP_URL, pathBootstrapZip);
     extractBootstrap(pathBootstrapZip);
