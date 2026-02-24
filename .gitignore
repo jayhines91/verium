@@ -152,3 +152,9 @@ db4/
 osx_volname
 dist/
 *.background.tiff
+
+# Build output staging directories
+out/
+out-linux/
+release/
+share/man/

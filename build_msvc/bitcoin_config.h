@@ -352,7 +352,7 @@
 #define PACKAGE_TARNAME "verium"
 
 /* Define to the home page for this package. */
-#define PACKAGE_URL "https://vericoin.info/"
+#define PACKAGE_URL "https://vericonomy.com/"
 
 /* Define to the version of this package. */
 #define PACKAGE_VERSION "1.3"

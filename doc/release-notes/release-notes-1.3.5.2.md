@@ -46,10 +46,10 @@ Notable changes
 Testnet enabled
 ---------------
 
-Verium testnet is now fully supported in this release and onward. Use `-testnet`
-or `-chain=test` with veriumd, verium-qt, verium-cli, verium-tx, and verium-wallet
+Verium testnet is now fully supported in this release and onward. Use -testnet
+or -chain=test with veriumd, verium-qt, verium-cli, verium-tx, and verium-wallet
 to connect to the test network. Testnet uses port 36989 (P2P) and 33988 (RPC).
-See `man verium-testnet` for details.
+See verium-testnet(1) for details.
 
 Documentation
 -------------

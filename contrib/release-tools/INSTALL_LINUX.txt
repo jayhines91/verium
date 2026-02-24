@@ -1,0 +1,16 @@
+Verium Linux installation
+========================
+
+Quick start:
+  ./verium-qt          # GUI (or add this directory to PATH first)
+  ./daemon/veriumd     # Daemon
+
+To add a desktop launcher with icon:
+  1. Add the extraction directory to your PATH, or create a symlink:
+       ln -sf $(pwd)/verium-qt ~/bin/verium-qt   # if ~/bin is in PATH
+  2. Install the icon:
+       xdg-icon-resource install --context apps --size 128 share/pixmaps/verium-qt.png verium-qt
+  3. Install the .desktop file:
+       desktop-file-install --dir=$HOME/.local/share/applications share/applications/verium-qt.desktop
+
+The Qt application sets its window icon internally; the steps above add the icon to your application menu.

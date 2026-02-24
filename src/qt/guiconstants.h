@@ -52,7 +52,7 @@ static const int TOOLTIP_WRAP_THRESHOLD = 80;
 
 #define COMMUNITY_EXPLORER_URL "https://explorer-vrm.vericonomy.com/"
 #define COMMUNITY_TWITTER_URL "https://twitter.com/vericonomy"
-#define COMMUNITY_CHAT_URL "https://slack.vericoin.info"
+#define COMMUNITY_CHAT_URL "https://vericonomy.com"
 #define COMMUNITY_WEBSITE_URL "https://vericonomy.com"
 
 /* One gigabyte (GB) in bytes */

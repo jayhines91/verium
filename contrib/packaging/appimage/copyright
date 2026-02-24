@@ -1,6 +1,6 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: Verium
-Upstream-Contact: Vericonomy Developers <dev@vericoin.info>
+Upstream-Contact: Vericonomy Developers <dev@vericonomy.com>
 Source: https://github.com/VeriumReserve/verium
 
 Files: *

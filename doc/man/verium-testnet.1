@@ -1,0 +1,120 @@
+.\" Verium testnet manual page
+.TH VERIUM-TESTNET "1" "February 2025" "Verium 1.3.5.2" "User Commands"
+.SH NAME
+verium-testnet \- guide to using the Verium test network
+.SH SYNOPSIS
+.B veriumd \-testnet
+.br
+.B verium-qt \-testnet
+.br
+.B verium-cli \-testnet
+.I <command>
+.br
+.B verium-tx \-testnet
+.I <command>
+.br
+.B verium-wallet \-testnet
+.I <command>
+.SH DESCRIPTION
+Verium supports a public test network (testnet) for development and testing without
+using real VRM. Testnet is enabled in Verium 1.3.5.2 and onward.
+.PP
+Testnet uses separate network parameters, a different blockchain, and test-only coins
+that have no real-world value. This allows developers and users to experiment with
+wallets, transactions, and mining without risk.
+.SH USAGE
+.SS Starting in testnet mode
+To use testnet, add the
+.B \-testnet
+(or
+.BR \-chain=test )
+flag when starting any Verium component:
+.PP
+.B veriumd \-testnet
+.RS
+Start the Verium daemon on testnet. Data is stored in
+.I ~/.verium/testnet3
+(see
+.BR \-datadir ).
+.RE
+.PP
+.B verium-qt \-testnet
+.RS
+Start the Verium GUI wallet on testnet. The window title will indicate "testnet"
+to avoid confusion with mainnet.
+.RE
+.PP
+.B verium-cli \-testnet getblockchaininfo
+.RS
+Query the testnet node via RPC. You must run
+.B veriumd \-testnet
+first, or specify
+.B \-rpcconnect
+to connect to a remote testnet node.
+.RE
+.SS Configuration file
+Add to your
+.I verium.conf
+(in the appropriate datadir):
+.PP
+.B testnet=1
+.PP
+Or use a testnet-specific config:
+.PP
+.B veriumd \-datadir=\fI~/.verium/testnet3\fR \-conf=verium-testnet.conf
+.PP
+With
+.I verium-testnet.conf
+containing:
+.B testnet=1
+.SH NETWORK PARAMETERS
+.TP
+.B P2P port
+36989 (mainnet uses 36988)
+.TP
+.B RPC port
+33988 (mainnet uses 33987)
+.TP
+.B Data directory
+.I ~/.verium/testnet3
+(by default, when using
+.B \-testnet
+with default datadir)
+.TP
+.B Address prefixes
+Testnet uses different address version bytes; addresses are not interchangeable
+between mainnet and testnet.
+.SH OBTAINING TEST COINS AND BOOTSTRAP
+Testnet VRM has no value. For information on obtaining testnet coins, bootstrap
+data, or other testnet resources, reach out in the Verium communication portal
+(e.g. Telegram) or check the project wiki (https://docs.vericonomy.com).
+.PP
+Do not use mainnet addresses or wallets with testnet. Always keep mainnet and
+testnet data separate.
+.SH COMMON OPTIONS
+All Verium commands support
+.B \-testnet
+and
+.BR \-chain=test .
+They are equivalent.
+.PP
+When using
+.BR verium-cli ,
+.BR verium-tx ,
+or
+.BR verium-wallet ,
+you must pass
+.B \-testnet
+if your daemon or node is running on testnet, so the client connects to the
+correct RPC port (33988).
+.SH SEE ALSO
+.BR veriumd (1),
+.BR verium-qt (1),
+.BR verium-cli (1),
+.BR verium-tx (1),
+.BR verium-wallet (1)
+.SH COPYRIGHT
+Copyright (C) 2016-2025 The Verium developers
+.PP
+Distributed under the MIT software license.
+See <https://opensource.org/licenses/MIT>

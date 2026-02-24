@@ -267,7 +267,7 @@ BitcoinGUI::BitcoinGUI(interfaces::Node& node, const PlatformStyle *_platformSty
     m_app_nap_inhibitor = new CAppNapInhibitor;
 #endif
 
-    // Apply Verium 1.3.5 color palette stylesheet (original dark blue theme)
+    // Apply Verium 1.3.5.2 color palette stylesheet (original dark blue theme)
     QFile f(":/style");
     f.open(QFile::ReadOnly | QFile::Text);
     QTextStream ts(&f);
