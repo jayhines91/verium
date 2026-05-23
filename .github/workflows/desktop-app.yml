@@ -2,7 +2,7 @@ name: Build Verium desktop app (Tauri)
 
 on:
   push:
-    branches: [main, master, testnet]
+    branches: [main, master, testnet, tippy-gui-changes-modern-template]
     tags:
       - "desktop-v*"
     paths:
@@ -37,8 +37,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: macos-13
             target: x86_64-apple-darwin
-          - os: macos-14
-            target: aarch64-apple-darwin
+          # Apple Silicon: use the Intel .dmg via Rosetta until arm64 veriumd is on CDN.
           - os: windows-2022
             target: x86_64-pc-windows-msvc
 

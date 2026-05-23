@@ -105,6 +105,22 @@ fn detect_sidecar_binary() -> Option<PathBuf> {
         return Some(adjacent);
     }
 
+    // Some installs keep the triple-suffixed name next to the host binary.
+    if let Ok(entries) = std::fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            let matches_ext = if cfg!(target_os = "windows") {
+                fname.ends_with(".exe")
+            } else {
+                !fname.contains('.') || fname.ends_with(".bin")
+            };
+            if fname.starts_with("veriumd-") && matches_ext && p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+
     // Dev runs: Tauri's `dev`/`build --debug` pipeline keeps the triple suffix.
     if let Ok(rustc_triple) = std::env::var("TARGET") {
         let triple_name = if cfg!(target_os = "windows") {
@@ -149,6 +165,11 @@ fn detect_sidecar_binary() -> Option<PathBuf> {
     None
 }
 
+/// True when the installer shipped a bundled `veriumd` next to this executable.
+pub fn bundled_sidecar_available() -> bool {
+    detect_sidecar_binary().is_some()
+}
+
 pub fn detect_binary() -> DaemonBinaryStatus {
     // Sidecar wins — that's the shipped configuration.
     if let Some(sidecar) = detect_sidecar_binary() {
@@ -164,26 +185,26 @@ pub fn detect_binary() -> DaemonBinaryStatus {
     }
 
     let windows = detect_windows_binary();
-    let wsl_path = detect_wsl_veriumd_binary();
-    let wsl_found = wsl_path.is_some();
-
     if windows.found {
         return DaemonBinaryStatus {
-            wsl_found,
-            wsl_path,
+            wsl_found: false,
+            wsl_path: None,
             manageable: true,
             runtime: "windows".into(),
             ..windows
         };
     }
 
-    if wsl_found {
+    // WSL is a dev-only fallback — never probe it on every Settings poll when
+    // a native binary is already in use (avoids flashing wsl.exe consoles).
+    #[cfg(target_os = "windows")]
+    if let Some(wsl_path) = detect_wsl_veriumd_binary() {
         return DaemonBinaryStatus {
             found: true,
-            path: wsl_path.clone(),
+            path: Some(wsl_path.clone()),
             source: DaemonBinarySource::Wsl,
             wsl_found: true,
-            wsl_path,
+            wsl_path: Some(wsl_path),
             manageable: true,
             runtime: "wsl".into(),
         };

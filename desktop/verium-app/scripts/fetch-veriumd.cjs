@@ -105,20 +105,42 @@ function defaultVersion() {
 }
 
 /**
- * Build the platform-specific archive URL.
- * The actual filenames on files.vericonomy.com may need adjustment when a
- * new release ships; override with VERIUMD_DOWNLOAD_URL if needed.
+ * Build platform-specific archive URLs (newest CDN layout first, then fallbacks).
+ * Files live under https://files.vericonomy.com/vrm/releases/<version>/
  */
-function archiveUrlFor(triple, version) {
-  if (process.env.VERIUMD_DOWNLOAD_URL) return process.env.VERIUMD_DOWNLOAD_URL;
-  const base =
+function archiveUrlsFor(triple, version) {
+  if (process.env.VERIUMD_DOWNLOAD_URL) return [process.env.VERIUMD_DOWNLOAD_URL];
+  const baseRoot =
     process.env.VERIUMD_DOWNLOAD_BASE ||
     "https://files.vericonomy.com/vrm/releases/";
-  const v = version ?? "latest";
-  if (isWindowsTriple(triple)) return `${base}verium-${v}-win64.zip`;
-  if (isMacTriple(triple)) return `${base}verium-${v}-osx64.zip`;
-  if (triple.includes("aarch64")) return `${base}verium-${v}-aarch64-linux.tar.gz`;
-  return `${base}verium-${v}-x86_64-linux.tar.gz`;
+  const v = version ?? "1.3.5.2";
+  const vBase = `${baseRoot}${v}/`;
+  const legacy = `${baseRoot}1.3.5/`;
+
+  if (isWindowsTriple(triple)) {
+    return [
+      `${vBase}verium-x86_64-w64.zip`,
+      `${vBase}verium-${v}-x86_64-w64.zip`,
+      `${legacy}verium-1.3.5-x86_64-w64.zip`,
+    ];
+  }
+  if (isMacTriple(triple)) {
+    // CDN ships Intel macOS builds only; Apple Silicon CI cross-compiles to x86_64.
+    return [
+      `${vBase}verium-${v}-macos-intel.tar.gz`,
+      `${legacy}verium-1.3.5-x86_64-apple-darwin.zip`,
+    ];
+  }
+  if (triple.includes("aarch64") && triple.includes("linux")) {
+    return [
+      `${vBase}verium-${v}-aarch64-linux-gnu.tar.gz`,
+      `${legacy}verium-1.3.5-aarch64-linux-gnu.tar.gz`,
+    ];
+  }
+  return [
+    `${vBase}verium-${v}-x86_64-pc-linux-gnu.tar.gz`,
+    `${legacy}verium-1.3.5-x86_64-pc-linux-gnu.tar.gz`,
+  ];
 }
 
 function sidecarPath(triple) {
@@ -267,21 +289,30 @@ async function main() {
     return;
   }
 
-  // Path 2: download archive from CDN
+  // Path 2: download archive from CDN (try known filenames until one works)
   const version = defaultVersion();
-  const url = archiveUrlFor(triple, version);
-  log(`Downloading ${url}`);
-  const buf = await fetchToBuffer(url);
-  if (url.endsWith(".zip")) {
-    extractZip(buf, dest, isWindowsTriple(triple));
-  } else if (url.endsWith(".tar.gz") || url.endsWith(".tgz")) {
-    extractTarGz(buf, dest);
-  } else {
-    // Assume raw binary
-    fs.writeFileSync(dest, buf);
-    if (!isWindowsTriple(triple)) fs.chmodSync(dest, 0o755);
+  const urls = archiveUrlsFor(triple, version);
+  let lastErr;
+  for (const url of urls) {
+    try {
+      log(`Downloading ${url}`);
+      const buf = await fetchToBuffer(url);
+      if (url.endsWith(".zip")) {
+        extractZip(buf, dest, isWindowsTriple(triple));
+      } else if (url.endsWith(".tar.gz") || url.endsWith(".tgz")) {
+        extractTarGz(buf, dest);
+      } else {
+        fs.writeFileSync(dest, buf);
+        if (!isWindowsTriple(triple)) fs.chmodSync(dest, 0o755);
+      }
+      log(`Sidecar installed: ${dest}`);
+      return;
+    } catch (e) {
+      lastErr = e;
+      log(`Failed: ${e.message}`);
+    }
   }
-  log(`Sidecar installed: ${dest}`);
+  throw lastErr ?? new Error("No veriumd download URL succeeded");
 }
 
 main().catch((e) => {

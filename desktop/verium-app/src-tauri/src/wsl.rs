@@ -60,6 +60,7 @@ impl WslExec {
 
     fn base_command(&self) -> Command {
         let mut cmd = Command::new("wsl.exe");
+        hide_console_window(&mut cmd);
         if let Some(d) = &self.distro {
             cmd.args(["-d", d.as_str()]);
         }
@@ -249,8 +250,20 @@ fn wsl_unc_path(distro: &str, linux_path: &str) -> String {
     format!(r"\\wsl.localhost\{distro}\{trimmed}")
 }
 
+#[cfg(windows)]
+fn hide_console_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_console_window(_cmd: &mut Command) {}
+
 fn list_wsl_distros() -> AppResult<Vec<String>> {
-    let output = Command::new("wsl.exe")
+    let mut cmd = Command::new("wsl.exe");
+    hide_console_window(&mut cmd);
+    let output = cmd
         .args(["-l", "-q"])
         .output()
         .map_err(|e| AppError::other(format!("failed to run wsl.exe: {e}")))?;

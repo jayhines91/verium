@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::daemon;
 use crate::error::{AppError, AppResult};
-use crate::wsl::{detect_wsl_datadirs, normalize_wsl_unc_path};
+use crate::wsl::{detect_wsl_datadirs, is_wsl_unc_path, normalize_wsl_unc_path};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
@@ -120,7 +121,7 @@ fn config_from_saved(saved: SavedDaemonConfig) -> DaemonConfig {
 }
 
 fn config_from_wsl_autodetect() -> Option<DaemonConfig> {
-    if !cfg!(target_os = "windows") {
+    if !cfg!(target_os = "windows") || daemon::bundled_sidecar_available() {
         return None;
     }
     let candidates = detect_wsl_datadirs().ok()?;
@@ -140,6 +141,14 @@ pub fn load_or_default_config() -> AppResult<DaemonConfig> {
     } else {
         DaemonConfig::default()
     };
+    // Shipped builds bundle veriumd natively — ignore leftover dev WSL datadir paths.
+    if daemon::bundled_sidecar_available() && is_wsl_unc_path(&cfg.datadir) {
+        tracing::info!(
+            "bundled sidecar: using native datadir instead of {}",
+            cfg.datadir.display()
+        );
+        cfg.datadir = default_datadir();
+    }
     refresh_config_paths(&mut cfg)?;
     Ok(cfg)
 }

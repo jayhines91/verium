@@ -46,7 +46,7 @@ export function Settings() {
   const binary = useQuery({
     queryKey: ["detect-veriumd"],
     queryFn: tauriDetectVeriumd,
-    refetchInterval: 30_000,
+    enabled: advancedOpen,
   });
 
   const prefs = useUserPreferences((s) => s.prefs);

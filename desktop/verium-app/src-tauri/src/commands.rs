@@ -11,7 +11,7 @@ use crate::config::{
     rpc_auth_diagnostics, save_app_daemon_config, wallet_dat_exists, wallet_dat_path,
     write_verium_conf_overrides, DaemonConfig, PartialDaemonConfig, RpcAuthDiagnostics,
 };
-use crate::daemon::{detect_binary, DaemonBinaryStatus};
+use crate::daemon::{bundled_sidecar_available, detect_binary, DaemonBinaryStatus};
 use crate::error::{AppError, AppResult, is_rpc_warmup};
 use crate::explorer_api::{
     fetch_blocks, fetch_chain_tips, fetch_extraction, fetch_explorer_peers, fetch_network_stats,
@@ -1165,7 +1165,7 @@ fn default_wsl_repo_root() -> &'static str {
 }
 
 async fn ensure_wsl_veriumd_running(cfg: &DaemonConfig) {
-    if !is_wsl_unc_path(&cfg.datadir) {
+    if bundled_sidecar_available() || !is_wsl_unc_path(&cfg.datadir) {
         return;
     }
     let lines = tail_debug_log(&cfg.datadir, 80).await.unwrap_or_default();

@@ -13,6 +13,7 @@
     "tauri:dev:raw": "tauri dev",
     "tauri:dev:msvc": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tauri-dev.ps1",
     "tauri:build": "tauri build",
+    "tauri:build:msvc": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tauri-build.ps1",
     "fetch:veriumd": "node scripts/fetch-veriumd.cjs",
     "fetch:veriumd:if-missing": "node scripts/fetch-veriumd.cjs --skip-if-present",
     "fetch:veriumd:stub": "node scripts/fetch-veriumd.cjs --stub --force",

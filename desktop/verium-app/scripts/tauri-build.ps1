@@ -1,4 +1,4 @@
-# Load MSVC + Rust into PATH, then run `tauri dev`.
+# Load MSVC + Rust into PATH, then run `tauri build`.
 # Use when regular PowerShell/Cursor terminal cannot find cargo or link.exe.
 
 $ErrorActionPreference = "Stop"
@@ -7,4 +7,4 @@ Set-Location $root
 
 . (Join-Path $PSScriptRoot "load-win-build-env.ps1")
 
-npm run tauri:dev:raw
+npx tauri build
