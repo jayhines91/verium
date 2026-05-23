@@ -5,6 +5,8 @@
 #ifndef BITCOIN_QT_GUICONSTANTS_H
 #define BITCOIN_QT_GUICONSTANTS_H
 
+#include <qt/themetokens.h>
+
 #include <cstdint>
 
 /* Milliseconds between model updates */
@@ -18,23 +20,17 @@ static const int STATUSBAR_ICONSIZE = 16;
 
 static const bool DEFAULT_SPLASHSCREEN = true;
 
-/* Invalid field background style */
-#define STYLE_INVALID "background:#FF8080"
+/* Invalid field — use property class invalid on QLineEdit where possible */
+#define STYLE_INVALID "background-color: rgba(233, 58, 93, 0.25); border: 1px solid #e93a5d;"
 
-/* Transaction list -- unconfirmed transaction */
-#define COLOR_UNCONFIRMED QColor(81, 177, 242)
-/* Transaction list -- negative amount */
-#define COLOR_NEGATIVE QColor(233, 58, 93)
-/* Transaction list -- positive amount */
-#define COLOR_POSITIVE QColor(53, 155, 55)
-/* Transaction list -- bare address (without label) */
-#define COLOR_BAREADDRESS QColor(140, 140, 140)
-/* Transaction list -- TX status decoration - open until date */
+/* Transaction list colors (theme-aware) */
+#define COLOR_UNCONFIRMED (ThemeTokens::paletteForCurrentTheme().txUnconfirmed)
+#define COLOR_NEGATIVE (ThemeTokens::paletteForCurrentTheme().txNegative)
+#define COLOR_POSITIVE (ThemeTokens::paletteForCurrentTheme().txPositive)
+#define COLOR_BAREADDRESS (ThemeTokens::paletteForCurrentTheme().txBareAddress)
 #define COLOR_TX_STATUS_OPENUNTILDATE QColor(64, 64, 255)
-/* Transaction list -- TX status decoration - danger, tx needs attention */
-#define COLOR_TX_STATUS_DANGER QColor(200, 100, 100)
-/* Transaction list -- TX status decoration - default color */
-#define COLOR_BLACK QColor(0, 0, 0)
+#define COLOR_TX_STATUS_DANGER (ThemeTokens::paletteForCurrentTheme().danger)
+#define COLOR_BLACK (ThemeTokens::paletteForCurrentTheme().textPrimary)
 
 /* Tooltips longer than this (in characters) are converted into rich text,
    so that they can be word-wrapped.

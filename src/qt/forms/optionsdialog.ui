@@ -666,6 +666,37 @@
         </layout>
        </item>
        <item>
+        <layout class="QHBoxLayout" name="horizontalLayout_theme_Display">
+         <item>
+          <widget class="QLabel" name="themeLabel">
+           <property name="text">
+            <string>&amp;Theme:</string>
+           </property>
+           <property name="buddy">
+            <cstring>theme</cstring>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="theme">
+           <property name="toolTip">
+            <string>Choose the wallet appearance. Applied immediately; saved when you click OK.</string>
+           </property>
+           <item>
+            <property name="text">
+             <string>Dark</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Light</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
         <layout class="QHBoxLayout" name="horizontalLayout_3_Display">
          <item>
           <widget class="QLabel" name="thirdPartyTxUrlsLabel">

@@ -1,0 +1,5 @@
+target/
+gen/schemas
+Cargo.lock
+binaries/veriumd-*
+!binaries/.gitkeep

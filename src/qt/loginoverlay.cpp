@@ -74,7 +74,7 @@ void LoginOverlay::showHide(bool hide, bool userRequested)
     setGeometry(0, hide ? 0 : height(), width(), height());
 
     QPropertyAnimation* animation = new QPropertyAnimation(this, "pos");
-    animation->setDuration(400);
+    animation->setDuration(220);
     animation->setStartValue(QPoint(0, hide ? 0 : this->height()));
     animation->setEndValue(QPoint(0, hide ? this->height() : 0));
     animation->setEasingCurve(QEasingCurve::OutQuad);

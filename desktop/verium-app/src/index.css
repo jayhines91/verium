@@ -1,0 +1,203 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Verium desktop theme tokens
+ * Palettes aligned with the Qt UI (src/qt/themetokens.cpp, src/qt/res/theme-*.qss)
+ * and the vericonomy.com brand. Tokens store space-separated RGB triplets so
+ * Tailwind can compose alpha via `rgb(var(--token) / <alpha-value>)`.
+ *
+ * Dark = default (:root). Light = `.light` on <html> (set by theme-boot.js).
+ */
+
+:root {
+  --bg: 7 10 15;
+  --bg-subtle: 11 16 24;
+  --bg-panel: 26 34 48;
+  --fg: 226 232 240;
+  --fg-muted: 148 163 184;
+  --fg-subtle: 100 116 139;
+  --border: 30 41 59;
+  --border-strong: 51 65 85;
+  --accent: 65 139 202;
+  --accent-fg: 240 249 255;
+  --success: 53 155 55;
+  --warning: 245 158 11;
+  --danger: 233 58 93;
+}
+
+.light {
+  --bg: 238 241 246;
+  --bg-subtle: 248 250 252;
+  --bg-panel: 255 255 255;
+  --fg: 15 23 42;
+  --fg-muted: 71 85 105;
+  --fg-subtle: 100 116 139;
+  --border: 226 232 240;
+  --border-strong: 203 213 225;
+  --accent: 65 139 202;
+  --accent-fg: 255 255 255;
+  --success: 22 132 41;
+  --warning: 217 119 6;
+  --danger: 220 38 76;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--border-strong));
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+/* Celebratory "you mined" animations */
+@keyframes you-mined-shimmer {
+  0% {
+    background-position: 200% center;
+  }
+  100% {
+    background-position: -200% center;
+  }
+}
+
+@keyframes you-mined-glow {
+  0%,
+  100% {
+    box-shadow: inset 3px 0 0 rgb(var(--accent)), 0 0 0 rgb(var(--accent) / 0);
+  }
+  50% {
+    box-shadow: inset 3px 0 0 rgb(var(--accent)), 0 0 18px rgb(var(--accent) / 0.14);
+  }
+}
+
+@keyframes you-mined-badge-sparkle {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.04);
+    filter: brightness(1.08);
+  }
+}
+
+@keyframes you-mined-banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes you-mined-trophy-bounce {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-4deg);
+  }
+  50% {
+    transform: translateY(-3px) rotate(4deg);
+  }
+}
+
+@keyframes you-mined-confetti-fall {
+  0% {
+    transform: translateY(-10px) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(40px) rotate(180deg);
+    opacity: 0;
+  }
+}
+
+.you-mined-row-fresh {
+  animation: you-mined-glow 2.8s ease-in-out infinite;
+}
+
+.you-mined-row-fresh::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 40%,
+    rgb(var(--accent) / 0.1) 50%,
+    transparent 60%
+  );
+  background-size: 200% 100%;
+  animation: you-mined-shimmer 3.5s ease-in-out infinite;
+}
+
+.you-mined-badge-fresh {
+  animation: you-mined-badge-sparkle 2s ease-in-out infinite;
+}
+
+.you-mined-banner {
+  animation: you-mined-banner-in 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.you-mined-trophy-bounce {
+  animation: you-mined-trophy-bounce 1.2s ease-in-out infinite;
+}
+
+.you-mined-confetti::before,
+.you-mined-confetti::after {
+  content: "";
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  opacity: 0;
+}
+
+.you-mined-confetti::before {
+  top: 12px;
+  left: 18%;
+  background: rgb(var(--accent));
+  animation: you-mined-confetti-fall 2.2s ease-out infinite;
+}
+
+.you-mined-confetti::after {
+  top: 8px;
+  right: 22%;
+  background: rgb(var(--border-strong));
+  animation: you-mined-confetti-fall 2.6s ease-out 0.4s infinite;
+}
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.toast-enter {
+  animation: toast-enter 0.25s ease-out;
+}

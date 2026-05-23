@@ -13,12 +13,14 @@
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
+#include <qt/thememanager.h>
 
 #include <interfaces/node.h>
 #include <validation.h> // for DEFAULT_SCRIPTCHECK_THREADS and MAX_SCRIPTCHECK_THREADS
 #include <netbase.h>
 #include <txdb.h> // for -dbcache defaults
 
+#include <QComboBox>
 #include <QDataWidgetMapper>
 #include <QDir>
 #include <QIntValidator>
@@ -41,7 +43,7 @@ OptionsDialog::OptionsDialog(QWidget *parent, bool enableWallet) :
     ui->threadsScriptVerif->setMinimum(-GetNumCores());
     ui->threadsScriptVerif->setMaximum(MAX_SCRIPTCHECK_THREADS);
     ui->pruneWarning->setVisible(false);
-    ui->pruneWarning->setStyleSheet("QLabel { color: red; }");
+    ui->pruneWarning->setProperty("class", "status-warning");
 
     ui->pruneSize->setEnabled(false);
     connect(ui->prune, &QPushButton::toggled, ui->pruneSize, &QWidget::setEnabled);
@@ -187,6 +189,9 @@ void OptionsDialog::setModel(OptionsModel *_model)
     /* Display */
     connect(ui->lang, static_cast<void (QValueComboBox::*)()>(&QValueComboBox::valueChanged), [this]{ showRestartWarning(); });
     connect(ui->thirdPartyTxUrls, &QLineEdit::textChanged, [this]{ showRestartWarning(); });
+    connect(ui->theme, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, &OptionsDialog::on_theme_currentIndexChanged);
+
+    ui->theme->setCurrentIndex(ThemeManager::instance().currentTheme() == ThemeTokens::Theme::Dark ? 0 : 1);
 }
 
 void OptionsDialog::setCurrentTab(OptionsDialog::Tab tab)
@@ -194,6 +199,7 @@ void OptionsDialog::setCurrentTab(OptionsDialog::Tab tab)
     QWidget *tab_widget = nullptr;
     if (tab == OptionsDialog::Tab::TAB_NETWORK) tab_widget = ui->tabNetwork;
     if (tab == OptionsDialog::Tab::TAB_MAIN) tab_widget = ui->tabMain;
+    if (tab == OptionsDialog::Tab::TAB_DISPLAY) tab_widget = ui->tabDisplay;
     if (tab_widget && ui->tabWidget->currentWidget() != tab_widget) {
         ui->tabWidget->setCurrentWidget(tab_widget);
     }
@@ -277,8 +283,16 @@ void OptionsDialog::on_openBitcoinConfButton_clicked()
 void OptionsDialog::on_okButton_clicked()
 {
     mapper->submit();
+    ThemeManager::instance().saveToSettings();
     accept();
     updateDefaultProxyNets();
+}
+
+void OptionsDialog::on_theme_currentIndexChanged(int index)
+{
+    ThemeManager::instance().setTheme(index == 0 ? ThemeTokens::Theme::Dark : ThemeTokens::Theme::Light);
+    ThemeManager::instance().apply(qApp);
+    Q_EMIT themeChanged();
 }
 
 void OptionsDialog::on_cancelButton_clicked()
@@ -306,7 +320,9 @@ void OptionsDialog::togglePruneWarning(bool enabled)
 
 void OptionsDialog::showRestartWarning(bool fPersistent)
 {
-    ui->statusLabel->setStyleSheet("QLabel { color: red; }");
+    ui->statusLabel->setProperty("class", "status-error");
+    ui->statusLabel->style()->unpolish(ui->statusLabel);
+    ui->statusLabel->style()->polish(ui->statusLabel);
 
     if(fPersistent)
     {
@@ -341,7 +357,9 @@ void OptionsDialog::updateProxyValidationState()
     else
     {
         setOkButtonState(false);
-        ui->statusLabel->setStyleSheet("QLabel { color: red; }");
+        ui->statusLabel->setProperty("class", "status-error");
+        ui->statusLabel->style()->unpolish(ui->statusLabel);
+        ui->statusLabel->style()->polish(ui->statusLabel);
         ui->statusLabel->setText(tr("The supplied proxy address is invalid."));
     }
 }

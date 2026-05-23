@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+*.local
+.vite
+.cache
+
+# Editor
+.vscode
+.idea
+.DS_Store
+Thumbs.db

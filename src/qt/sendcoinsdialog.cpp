@@ -27,6 +27,8 @@
 #include <policy/fees.h>
 #include <wallet/fees.h>
 
+#include <array>
+
 #include <QFontMetrics>
 #include <QScrollBar>
 #include <QSettings>
@@ -725,7 +727,7 @@ void SendCoinsDialog::coinControlChangeEdited(const QString& text)
     {
         // Default to no change address until verified
         CoinControlDialog::coinControl()->destChange = CNoDestination();
-        ui->labelCoinControlChangeLabel->setStyleSheet("QLabel{color:red;}");
+        GUIUtil::setPropertyClass(ui->labelCoinControlChangeLabel, "status-error");
 
         const CTxDestination dest = DecodeDestination(text.toStdString());
 
@@ -751,13 +753,13 @@ void SendCoinsDialog::coinControlChangeEdited(const QString& text)
                 else
                 {
                     ui->lineEditCoinControlChange->setText("");
-                    ui->labelCoinControlChangeLabel->setStyleSheet("QLabel{color:black;}");
+                    ui->labelCoinControlChangeLabel->setProperty("class", QVariant());
                     ui->labelCoinControlChangeLabel->setText("");
                 }
             }
             else // Known change address
             {
-                ui->labelCoinControlChangeLabel->setStyleSheet("QLabel{color:black;}");
+                ui->labelCoinControlChangeLabel->setProperty("class", QVariant());
 
                 // Query label
                 QString associatedLabel = model->getAddressTableModel()->labelForAddress(text);

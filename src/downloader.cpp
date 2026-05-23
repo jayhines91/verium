@@ -53,7 +53,9 @@ void downloadFile(std::string url, const fs::path& target_file_path) {
     errbuf[0] = 0;
 
     curl_easy_setopt(curlHandle, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curlHandle, CURLOPT_USERAGENT, "Verium/1.3");
     curl_easy_setopt(curlHandle, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curlHandle, CURLOPT_CONNECTTIMEOUT, 60L);
     curl_easy_setopt(curlHandle, CURLOPT_NOPROGRESS, 0);
     curl_easy_setopt(curlHandle, CURLOPT_XFERINFODATA, xferinfo_data);
     curl_easy_setopt(curlHandle, CURLOPT_XFERINFOFUNCTION, xferinfo);

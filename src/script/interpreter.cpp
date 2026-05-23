@@ -1292,6 +1292,9 @@ uint256 SignatureHash(const CScript& scriptCode_, const T& txTo, unsigned int nI
     return Hash(ss.begin(), ss.end());
 }
 
+template uint256 SignatureHash(const CScript& scriptCode, const CTransaction& txTo, unsigned int nIn, int nHashType, const CAmount& amount, SigVersion sigversion, const PrecomputedTransactionData* cache);
+template uint256 SignatureHash(const CScript& scriptCode, const CMutableTransaction& txTo, unsigned int nIn, int nHashType, const CAmount& amount, SigVersion sigversion, const PrecomputedTransactionData* cache);
+
 template <class T>
 bool GenericTransactionSignatureChecker<T>::VerifySignature(const std::vector<unsigned char>& vchSig, const CPubKey& pubkey, const uint256& sighash) const
 {

@@ -42,8 +42,8 @@ WalletView::WalletView(const PlatformStyle *_platformStyle, QWidget *parent):
 
     transactionsPage = new QWidget(this);
     QVBoxLayout *vbox = new QVBoxLayout();
-    vbox->setContentsMargins(9,4,9,4);
-    vbox->setSpacing(6);
+    vbox->setContentsMargins(20, 16, 20, 16);
+    vbox->setSpacing(12);
     QHBoxLayout *hbox_buttons = new QHBoxLayout();
     transactionView = new TransactionView(platformStyle, this);
     vbox->addWidget(transactionView);
@@ -186,22 +186,22 @@ void WalletView::processNewTransaction(const QModelIndex& parent, int start, int
 
 void WalletView::gotoOverviewPage()
 {
-    setCurrentWidget(overviewPage);
+    GUIUtil::switchStackedPage(this, overviewPage);
 }
 
 void WalletView::gotoHistoryPage()
 {
-    setCurrentWidget(transactionsPage);
+    GUIUtil::switchStackedPage(this, transactionsPage);
 }
 
 void WalletView::gotoReceiveCoinsPage()
 {
-    setCurrentWidget(receiveCoinsPage);
+    GUIUtil::switchStackedPage(this, receiveCoinsPage);
 }
 
 void WalletView::gotoSendCoinsPage(QString addr)
 {
-    setCurrentWidget(sendCoinsPage);
+    GUIUtil::switchStackedPage(this, sendCoinsPage);
 
     if (!addr.isEmpty())
         sendCoinsPage->setAddress(addr);
@@ -209,7 +209,7 @@ void WalletView::gotoSendCoinsPage(QString addr)
 
 void WalletView::gotoCommunityPage()
 {
-    setCurrentWidget(communityPage);
+    GUIUtil::switchStackedPage(this, communityPage);
 }
 
 void WalletView::gotoSignMessageTab(QString addr)

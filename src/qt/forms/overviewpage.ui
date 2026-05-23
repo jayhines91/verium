@@ -15,10 +15,16 @@
   </property>
   <layout class="QVBoxLayout" name="topLayout">
    <property name="topMargin">
-    <number>4</number>
+    <number>16</number>
    </property>
    <property name="bottomMargin">
-    <number>9</number>
+    <number>16</number>
+   </property>
+   <property name="leftMargin">
+    <number>16</number>
+   </property>
+   <property name="rightMargin">
+    <number>16</number>
    </property>
    <item>
     <layout class="QGridLayout" name="topBoxes">
@@ -714,9 +720,6 @@
             <property name="toolTip">
              <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Click to start/stop mining&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
             </property>
-            <property name="styleSheet">
-             <string notr="true">QPushButton { background: white;}</string>
-            </property>
             <property name="text">
              <string/>
             </property>
@@ -1003,9 +1006,6 @@
     <widget class="QLabel" name="labelAlerts">
      <property name="visible">
       <bool>false</bool>
-     </property>
-     <property name="styleSheet">
-      <string notr="true">QLabel { background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop:0 #F0D0A0, stop:1 #F8D488); color:#000000; }</string>
      </property>
      <property name="wordWrap">
       <bool>true</bool>

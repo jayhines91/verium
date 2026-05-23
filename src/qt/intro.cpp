@@ -12,6 +12,7 @@
 
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
+#include <qt/thememanager.h>
 
 #include <interfaces/node.h>
 #include <util/system.h>
@@ -161,11 +162,8 @@ Intro::Intro(QWidget *parent, uint64_t blockchain_size, uint64_t chain_state_siz
     // QString strPath(QCoreApplication::applicationDirPath() + "/res/style.qss");
     // QFile f(strPath);
 
-    QFile f(":/style");
-    f.open(QFile::ReadOnly | QFile::Text);
-    QTextStream ts(&f);
-    setStyleSheet(ts.readAll());
-    f.close();
+    ThemeManager::instance().loadFromSettings();
+    ThemeManager::instance().apply(this);
 
     startThread();
 }
@@ -274,7 +272,7 @@ void Intro::setStatus(int status, const QString &message, quint64 bytesAvailable
         break;
     case FreespaceChecker::ST_ERROR:
         ui->errorMessage->setText(tr("Error") + ": " + message);
-        ui->errorMessage->setStyleSheet("QLabel { color: #800000 }");
+        GUIUtil::setPropertyClass(ui->errorMessage, "status-error");
         break;
     }
     /* Indicate number of bytes available */
@@ -286,11 +284,11 @@ void Intro::setStatus(int status, const QString &message, quint64 bytesAvailable
         if(bytesAvailable < requiredSpace * GB_BYTES)
         {
             freeString += " " + tr("(of %n GB needed)", "", requiredSpace);
-            ui->freeSpace->setStyleSheet("QLabel { color: #800000 }");
+            GUIUtil::setPropertyClass(ui->freeSpace, "status-error");
             ui->prune->setChecked(true);
         } else if (bytesAvailable / GB_BYTES - requiredSpace < 10) {
             freeString += " " + tr("(%n GB needed for full chain)", "", requiredSpace);
-            ui->freeSpace->setStyleSheet("QLabel { color: #999900 }");
+            GUIUtil::setPropertyClass(ui->freeSpace, "status-warning");
             ui->prune->setChecked(true);
         } else {
             ui->freeSpace->setStyleSheet("");

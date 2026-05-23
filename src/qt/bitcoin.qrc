@@ -1,6 +1,8 @@
 <!DOCTYPE RCC><RCC version="1.0">
     <qresource prefix="/">
-        <file alias="style">res/style.qss</file>
+        <file alias="style">res/theme-dark.qss</file>
+        <file alias="theme-dark">res/theme-dark.qss</file>
+        <file alias="theme-light">res/theme-light.qss</file>
     </qresource>
     <qresource prefix="/icons">
         <file alias="add">res/icons/add.png</file>

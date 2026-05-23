@@ -36,6 +36,11 @@
 
 #include <QAbstractItemView>
 #include <QApplication>
+#include <QGraphicsOpacityEffect>
+#include <QGuiApplication>
+#include <QPropertyAnimation>
+#include <QScreen>
+#include <QStackedWidget>
 #include <QClipboard>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -958,6 +963,73 @@ int TextWidth(const QFontMetrics& fm, const QString& text)
 #else
     return fm.width(text);
 #endif
+}
+
+void fadeIn(QWidget* widget, int durationMs)
+{
+    if (!widget) return;
+    auto* effect = new QGraphicsOpacityEffect(widget);
+    widget->setGraphicsEffect(effect);
+    auto* anim = new QPropertyAnimation(effect, "opacity", widget);
+    anim->setDuration(durationMs);
+    anim->setStartValue(0.0);
+    anim->setEndValue(1.0);
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void setPropertyClass(QWidget* widget, const char* className)
+{
+    if (!widget) return;
+    widget->setProperty("class", className);
+    widget->style()->unpolish(widget);
+    widget->style()->polish(widget);
+}
+
+void ensureWidgetOnScreen(QWidget* widget)
+{
+    if (!widget) return;
+
+    QRect available;
+    const auto screens = QGuiApplication::screens();
+    if (screens.isEmpty()) {
+        if (QScreen* primary = QGuiApplication::primaryScreen()) {
+            available = primary->availableGeometry();
+        }
+    } else {
+        for (QScreen* screen : screens) {
+            available = available.united(screen->availableGeometry());
+        }
+    }
+    if (available.isNull()) return;
+
+    const QRect geo = widget->frameGeometry();
+    const QRect visible = geo.intersected(available);
+    const bool centerOffScreen = !available.contains(geo.center());
+    const bool mostlyHidden = visible.width() < geo.width() / 2 || visible.height() < geo.height() / 2;
+
+    if (centerOffScreen || mostlyHidden) {
+        widget->move(available.center() - geo.center());
+    }
+}
+
+void switchStackedPage(QStackedWidget* stack, QWidget* page, int durationMs)
+{
+    if (!stack || !page || stack->currentWidget() == page) {
+        if (stack && page) stack->setCurrentWidget(page);
+        return;
+    }
+    QWidget* outgoing = stack->currentWidget();
+    if (outgoing) {
+        auto* outEffect = new QGraphicsOpacityEffect(outgoing);
+        outgoing->setGraphicsEffect(outEffect);
+        auto* outAnim = new QPropertyAnimation(outEffect, "opacity", outgoing);
+        outAnim->setDuration(durationMs / 2);
+        outAnim->setStartValue(1.0);
+        outAnim->setEndValue(0.0);
+        outAnim->start(QAbstractAnimation::DeleteWhenStopped);
+    }
+    stack->setCurrentWidget(page);
+    fadeIn(page, durationMs);
 }
 
 } // namespace GUIUtil

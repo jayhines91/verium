@@ -43,6 +43,7 @@ public:
     enum Tab {
         TAB_MAIN,
         TAB_NETWORK,
+        TAB_DISPLAY,
     };
 
     void setModel(OptionsModel *model);
@@ -65,9 +66,11 @@ private Q_SLOTS:
     void updateProxyValidationState();
     /* query the networks, for which the default proxy is used */
     void updateDefaultProxyNets();
+    void on_theme_currentIndexChanged(int index);
 
 Q_SIGNALS:
     void proxyIpChecks(QValidatedLineEdit *pUiProxyIp, int nProxyPort);
+    void themeChanged();
 
 private:
     Ui::OptionsDialog *ui;

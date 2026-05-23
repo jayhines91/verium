@@ -1,0 +1,577 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { ExplorerLink } from "@/components/ExplorerLink";
+import { MiningProfitCard } from "@/components/MiningProfitCard";
+import { RevenuePeriodToggle } from "@/components/RevenuePeriodToggle";
+import { WalletUnlockGate } from "@/components/WalletUnlockGate";
+import { EXPLORER_PROFITABILITY } from "@/lib/verium-links";
+import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { useUserPreferences } from "@/lib/user-preferences";
+import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
+import {
+  buildNetworkStats,
+  estimateDailyMining,
+  estimateHoursPerBlock,
+  formatSessionDuration,
+  networkHashToKhm,
+  networkSharePercent,
+  revenuePeriodLabel,
+  scaleDailyValue,
+  suggestedThreadCount,
+  type RevenuePeriod,
+} from "@/lib/mining-revenue";
+import {
+  rpcGetBlockchainInfo,
+  rpcGetMinerState,
+  rpcGetMiningInfo,
+  rpcGetWalletInfo,
+  rpcMinerStart,
+  rpcMinerStop,
+} from "@/lib/rpc/client";
+import { formatNumber, formatVrm } from "@/lib/utils";
+import {
+  playBlockMinedSound,
+  unlockBlockMinedAudio,
+} from "@/lib/block-mined-sound";
+import {
+  clearMiningStoppedByUser,
+  markMiningStoppedByUser,
+} from "@/lib/mining-session";
+
+interface HashSample {
+  t: number;
+  hashrate: number;
+}
+
+const MAX_SAMPLES = 60;
+const SAMPLE_MIN_MS = 5_000;
+
+function clampMiningThreads(value: number, fallback = 2): number {
+  const n = Number.isFinite(value) ? value : fallback;
+  return Math.max(1, Math.min(64, Math.round(n)));
+}
+
+export function Mining() {
+  const queryClient = useQueryClient();
+  const prefs = useUserPreferences((s) => s.prefs);
+  const updatePrefs = useUserPreferences((s) => s.update);
+  const suggested = suggestedThreadCount();
+  const savedThreads = clampMiningThreads(
+    prefs.auto_mine_threads ?? suggested,
+    suggested,
+  );
+  const [samples, setSamples] = useState<HashSample[]>([]);
+  const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>("day");
+  const lastSampleRef = useRef<{ t: number; hr: number } | null>(null);
+
+  const mining = useQuery({
+    queryKey: ["getmininginfo"],
+    queryFn: rpcGetMiningInfo,
+    refetchInterval: 4_000,
+  });
+  const minerState = useQuery({
+    queryKey: ["get_miner_state"],
+    queryFn: rpcGetMinerState,
+    refetchInterval: 4_000,
+  });
+  const blockchain = useQuery({
+    queryKey: ["getblockchaininfo"],
+    queryFn: rpcGetBlockchainInfo,
+    refetchInterval: 10_000,
+  });
+  const wallet = useQuery({
+    queryKey: ["getwalletinfo"],
+    queryFn: rpcGetWalletInfo,
+    refetchInterval: 10_000,
+  });
+  const daemonStatus = useDaemonStatus();
+  const explorerEnabled = useQuery({
+    queryKey: ["explorer-api-enabled"],
+    queryFn: isExplorerApiEnabled,
+    staleTime: Infinity,
+  });
+  const explorerStats = useQuery({
+    queryKey: ["explorer-stats"],
+    queryFn: fetchExplorerStats,
+    enabled: explorerEnabled.data === true,
+    refetchInterval: 30_000,
+    retry: 0,
+  });
+
+  useEffect(() => {
+    if (!mining.data) return;
+    const hr = mining.data.hashrate;
+    const now = Date.now();
+    const last = lastSampleRef.current;
+    if (last && hr === last.hr && now - last.t < SAMPLE_MIN_MS) {
+      return;
+    }
+    lastSampleRef.current = { t: now, hr };
+    setSamples((prev) =>
+      [...prev, { t: now, hashrate: hr }].slice(-MAX_SAMPLES),
+    );
+  }, [mining.data]);
+
+  const start = useMutation({
+    mutationFn: () => rpcMinerStart(savedThreads),
+    onSuccess: (state) => {
+      clearMiningStoppedByUser();
+      queryClient.setQueryData(["get_miner_state"], state);
+      queryClient.invalidateQueries({ queryKey: ["getmininginfo"] });
+    },
+  });
+  const stop = useMutation({
+    mutationFn: rpcMinerStop,
+    onSuccess: (state) => {
+      markMiningStoppedByUser();
+      queryClient.setQueryData(["get_miner_state"], state);
+      queryClient.invalidateQueries({ queryKey: ["getmininginfo"] });
+    },
+  });
+
+  const ibd = blockchain.data?.initialblockdownload;
+  const syncStalled = daemonStatus.data?.sync_stalled === true;
+  const active = minerState.data?.active ?? false;
+  const displayThreads =
+    active && minerState.data ? minerState.data.threads : savedThreads;
+  const networkStats = buildNetworkStats(explorerStats.data, mining.data);
+  const localHashrate = mining.data?.hashrate ?? 0;
+  const networkHash = networkStats?.networkHash;
+  const networkKhm =
+    networkHash != null ? networkHashToKhm(networkHash) : undefined;
+  const share = networkSharePercent(localHashrate, networkHash);
+  const estBlockRate = estimateHoursPerBlock(localHashrate, networkStats);
+  const dailyEstimate =
+    networkStats && localHashrate > 0
+      ? estimateDailyMining({
+          localHashrateHm: localHashrate,
+          networkHashrateHs: networkStats.networkHash!,
+          blocksPerHour: networkStats.blocksPerHour!,
+          blockReward: networkStats.blockReward!,
+          priceUsd: networkStats.priceUsd,
+          priceBtc: networkStats.priceBtc,
+        })
+      : null;
+
+  const sessionAvg = useMemo(() => {
+    const started = minerState.data?.started_at;
+    if (!started) return null;
+    const cutoff = started * 1000;
+    const relevant = samples.filter((s) => s.t >= cutoff);
+    if (relevant.length === 0) return localHashrate;
+    return relevant.reduce((a, s) => a + s.hashrate, 0) / relevant.length;
+  }, [samples, minerState.data?.started_at, localHashrate]);
+
+  const immature = wallet.data?.immature_balance ?? 0;
+
+  return (
+    <WalletUnlockGate
+      title="Unlock to mine"
+      description="Enter your wallet passphrase to access mining controls and start the built-in CPU miner."
+    >
+      <div className="flex flex-col gap-4">
+        {syncStalled && (
+          <div className="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+            Sync is stalled — rebuild WSL veriumd from the banner at the top.
+          </div>
+        )}
+        {ibd && !syncStalled && (
+          <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+            Mining is disabled while the node is syncing (
+            {blockchain.data?.blocks?.toLocaleString() ?? "…"} blocks).
+          </div>
+        )}
+
+        <Card className="relative">
+          <CardHeader className="flex-row items-center justify-between gap-4">
+            <div>
+              <CardTitle>CPU miner</CardTitle>
+            </div>
+            <div className="flex flex-col items-end gap-2">
+              <Badge tone={active ? "success" : "neutral"}>
+                {active ? "Running" : "Stopped"}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4 pb-[4.75rem]">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-fg-muted">
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={prefs.auto_mine_on_open === true}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    if (checked) clearMiningStoppedByUser();
+                    void updatePrefs({ auto_mine_on_open: checked });
+                  }}
+                  className="h-3.5 w-3.5 rounded accent-accent"
+                />
+                Auto-mine on open
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={prefs.play_sound_on_block_mined === true}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    void unlockBlockMinedAudio();
+                    void updatePrefs({ play_sound_on_block_mined: checked });
+                    if (checked) void playBlockMinedSound();
+                  }}
+                  className="h-3.5 w-3.5 rounded accent-accent"
+                />
+                Play sound when block mined
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="text-sm text-fg-muted">Threads</label>
+              <input
+                type="number"
+                min={1}
+                max={64}
+                value={displayThreads}
+                onChange={(e) =>
+                  void updatePrefs({
+                    auto_mine_threads: clampMiningThreads(
+                      Number(e.target.value),
+                      savedThreads,
+                    ),
+                  })
+                }
+                disabled={active}
+                className="h-9 w-20 rounded-md border border-border bg-bg-subtle px-3 text-sm tabular-nums outline-none focus:border-accent disabled:opacity-50"
+              />
+              <span className="text-xs text-fg-subtle">
+                Max Recommended: {suggested}
+              </span>
+            </div>
+            {(start.error || stop.error) && (
+              <div className="max-w-[calc(100%-12rem)] text-xs text-danger">
+                {String(start.error ?? stop.error)}
+              </div>
+            )}
+          </CardContent>
+          <div className="absolute bottom-5 right-5">
+            {active ? (
+              <Button
+                variant="danger"
+                size="lg"
+                onClick={() => stop.mutate()}
+                disabled={stop.isPending}
+                className="h-12 min-w-[11.5rem] px-8 text-base font-semibold shadow-md"
+              >
+                Stop mining
+              </Button>
+            ) : (
+              <Button
+                size="lg"
+                onClick={() => start.mutate()}
+                disabled={start.isPending || ibd || syncStalled}
+                className="h-12 min-w-[11.5rem] px-8 text-base font-semibold shadow-md"
+              >
+                Start mining
+              </Button>
+            )}
+          </div>
+        </Card>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Hashrate</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold tabular-nums">
+                {mining.data ? formatNumber(mining.data.hashrate, 2) : "—"}{" "}
+                <span className="text-sm font-normal text-fg-subtle">H/m</span>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Network hashrate</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold tabular-nums">
+                {networkKhm != null ? formatNumber(networkKhm, 2) : "—"}{" "}
+                <span className="text-sm font-normal text-fg-subtle">kH/m</span>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Difficulty</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold tabular-nums">
+                {networkStats?.blockReward != null && mining.data
+                  ? formatNumber(
+                      networkStats.source === "explorer"
+                        ? (explorerStats.data?.difficulty ??
+                            mining.data.difficulty)
+                        : mining.data.difficulty,
+                      4,
+                    )
+                  : "—"}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Est. next block</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold tabular-nums">
+                {estBlockRate != null
+                  ? `${formatNumber(estBlockRate, 1)} h`
+                  : "—"}
+              </div>
+              <div className="mt-1 text-xs text-fg-subtle">
+                reward{" "}
+                {networkStats?.blockReward != null
+                  ? formatNumber(networkStats.blockReward, 4)
+                  : "—"}{" "}
+                VRM
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {share != null && localHashrate > 0 && (
+          <div className="rounded-lg border border-border bg-bg-subtle/50 px-4 py-3">
+            <div className="mb-1 flex justify-between text-sm">
+              <span className="text-fg-muted">Your network share</span>
+              <span className="font-semibold tabular-nums">
+                {formatNumber(share, 2)}%
+              </span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-bg-panel">
+              <div
+                className="h-full rounded-full bg-accent transition-[width]"
+                style={{ width: `${Math.min(100, share)}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {dailyEstimate && localHashrate > 0 && (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-fg-muted">
+                Solo revenue estimates by period
+              </p>
+              <RevenuePeriodToggle
+                value={revenuePeriod}
+                onChange={setRevenuePeriod}
+              />
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Estimated revenue (solo)</CardTitle>
+                <CardDescription>
+                  {networkStats?.source === "explorer"
+                    ? "Live network stats from explorer."
+                    : "Network stats from local node — USD/BTC need explorer prices."}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
+                  <div>
+                    <div className="text-xs uppercase text-fg-subtle">
+                      VRM / {revenuePeriodLabel(revenuePeriod)}
+                    </div>
+                    <div className="text-xl font-semibold tabular-nums">
+                      {formatNumber(
+                        scaleDailyValue(
+                          dailyEstimate.vrmPerDay,
+                          revenuePeriod,
+                        ),
+                        4,
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-xs text-fg-subtle">
+                      ~
+                      {formatNumber(
+                        scaleDailyValue(
+                          dailyEstimate.blocksPerDay,
+                          revenuePeriod,
+                        ),
+                        3,
+                      )}{" "}
+                      blocks
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-fg-subtle">
+                      USD / {revenuePeriodLabel(revenuePeriod)}
+                    </div>
+                    <div className="text-xl font-semibold tabular-nums">
+                      {dailyEstimate.usdPerDay != null
+                        ? `$${formatNumber(
+                            scaleDailyValue(
+                              dailyEstimate.usdPerDay,
+                              revenuePeriod,
+                            ),
+                            4,
+                          )}`
+                        : "—"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-fg-subtle">
+                      BTC / {revenuePeriodLabel(revenuePeriod)}
+                    </div>
+                    <div className="text-xl font-semibold tabular-nums">
+                      {dailyEstimate.btcPerDay != null
+                        ? formatNumber(
+                            scaleDailyValue(
+                              dailyEstimate.btcPerDay,
+                              revenuePeriod,
+                            ),
+                            8,
+                          )
+                        : "—"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-fg-subtle">
+                      Est. block time
+                    </div>
+                    <div className="text-xl font-semibold tabular-nums">
+                      {dailyEstimate.hoursPerBlock != null
+                        ? `${formatNumber(dailyEstimate.hoursPerBlock, 1)} h`
+                        : "—"}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <MiningProfitCard
+              dailyEstimate={dailyEstimate}
+              period={revenuePeriod}
+            />
+          </>
+        )}
+
+        {active && minerState.data?.started_at && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Session</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-3 gap-4 text-sm">
+              <div>
+                <div className="text-xs text-fg-subtle">Uptime</div>
+                <div className="font-semibold tabular-nums">
+                  {formatSessionDuration(minerState.data.started_at)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-fg-subtle">Avg hashrate</div>
+                <div className="font-semibold tabular-nums">
+                  {sessionAvg != null
+                    ? `${formatNumber(sessionAvg, 0)} H/m`
+                    : "—"}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-fg-subtle">Threads</div>
+                <div className="font-semibold tabular-nums">
+                  {minerState.data.threads}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {immature > 0 && (
+          <div className="rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm">
+            Pending from recent blocks:{" "}
+            <strong>{formatVrm(immature, 4)}</strong> (immature)
+          </div>
+        )}
+
+        <Card>
+          <CardHeader className="flex-row items-start justify-between">
+            <div>
+              <CardTitle>Local hashrate over time</CardTitle>
+              <CardDescription>Updated every few seconds.</CardDescription>
+            </div>
+            <ExplorerLink
+              target={{ kind: "raw", url: EXPLORER_PROFITABILITY }}
+              label="Profitability calculator"
+            />
+          </CardHeader>
+          <CardContent className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={samples}>
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="rgb(var(--border))"
+                />
+                <XAxis
+                  dataKey="t"
+                  tickFormatter={(t) => new Date(t).toLocaleTimeString()}
+                  stroke="rgb(var(--fg-subtle))"
+                  fontSize={11}
+                />
+                <YAxis stroke="rgb(var(--fg-subtle))" fontSize={11} />
+                <Tooltip
+                  labelFormatter={(t) =>
+                    new Date(t as number).toLocaleTimeString()
+                  }
+                  contentStyle={{
+                    backgroundColor: "rgb(var(--bg-panel))",
+                    border: "1px solid rgb(var(--border))",
+                    borderRadius: 6,
+                    fontSize: 12,
+                  }}
+                />
+                {sessionAvg != null && sessionAvg > 0 && (
+                  <ReferenceLine
+                    y={sessionAvg}
+                    stroke="rgb(var(--fg-subtle))"
+                    strokeDasharray="4 4"
+                    label={{
+                      value: "avg",
+                      position: "insideTopRight",
+                      fontSize: 10,
+                    }}
+                  />
+                )}
+                <Line
+                  type="monotone"
+                  dataKey="hashrate"
+                  stroke="rgb(var(--accent))"
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </WalletUnlockGate>
+  );
+}

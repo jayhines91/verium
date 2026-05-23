@@ -32,6 +32,7 @@ class QDateTime;
 class QFont;
 class QLineEdit;
 class QProgressDialog;
+class QStackedWidget;
 class QUrl;
 class QWidget;
 QT_END_NAMESPACE
@@ -265,6 +266,18 @@ namespace GUIUtil
      * In Qt 5.11 the QFontMetrics::horizontalAdvance() was introduced.
      */
     int TextWidth(const QFontMetrics& fm, const QString& text);
+
+    /** Fade widget in (opacity 0 -> 1). */
+    void fadeIn(QWidget* widget, int durationMs = 200);
+
+    /** Switch stacked widget page with a short fade. */
+    void switchStackedPage(QStackedWidget* stack, QWidget* page, int durationMs = 180);
+
+    /** Apply a QSS property class and re-polish (e.g. status-error). */
+    void setPropertyClass(QWidget* widget, const char* className);
+
+    /** Move widget onto a visible screen if geometry restore placed it off-screen. */
+    void ensureWidgetOnScreen(QWidget* widget);
 } // namespace GUIUtil
 
 #endif // BITCOIN_QT_GUIUTIL_H

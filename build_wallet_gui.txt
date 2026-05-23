@@ -1,0 +1,3 @@
+cd /root/verium
+mkdir -p /root/verium-main-dev
+./src/qt/verium-qt -datadir=/root/verium-main-dev

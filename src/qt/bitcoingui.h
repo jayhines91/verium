@@ -33,7 +33,6 @@ class OptionsModel;
 class PlatformStyle;
 class RPCConsole;
 class SendCoinsRecipient;
-class MoveWindowControl;
 class UnitDisplayStatusBarControl;
 class WalletController;
 class WalletFrame;
@@ -159,7 +158,6 @@ private:
     QAction* m_open_wallet_action{nullptr};
     QMenu* m_open_wallet_menu{nullptr};
     QAction* m_close_wallet_action{nullptr};
-    QAction* m_wallet_selector_action = nullptr;
 
     QComboBox* m_wallet_selector = nullptr;
 
@@ -263,6 +261,7 @@ private:
     void updateWindowTitle();
 
 public Q_SLOTS:
+    void refreshTheme();
 #ifdef ENABLE_WALLET
     /** Switch to overview (home) page */
     void gotoOverviewPage();
@@ -291,8 +290,6 @@ public Q_SLOTS:
     void closeOrMinimizeEvent();
     /** Show about dialog */
     void aboutClicked();
-    /** XXX: FOR DEVELOPMENT
-    void refreshStyle(); */
     /** Show debug window */
     void showDebugWindow();
     /** Show debug window and set focus to the console */
@@ -329,25 +326,6 @@ public Q_SLOTS:
     void setTrayIconVisible(bool);
 
     void showModalOverlay();
-};
-
-class MoveWindowControl : public QToolButton
-{
-    Q_OBJECT
-
-public:
-    explicit MoveWindowControl(QWidget *parent = nullptr);
-
-protected:
-    /** So that it responds to left-button clicks */
-    void mousePressEvent(QMouseEvent *event);
-    void mouseMoveEvent(QMouseEvent *event);
-    void mouseReleaseEvent(QMouseEvent *event);
-
-private:
-    QPointF initPosition;
-    bool m_dragging;
-
 };
 
 class UnitDisplayStatusBarControl : public QLabel

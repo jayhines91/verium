@@ -1,0 +1,26 @@
+{
+  "$comment": "Curated from https://docs.vericonomy.com/en/Downloads. Used as the source of truth when files.vericonomy.com/vrm/VERSION_VRM.json is stale. Refresh on every release.",
+  "schema_version": 1,
+  "latest": {
+    "version": "1.3.5.2",
+    "release_date": "2026-02-24",
+    "channel": "maintenance",
+    "notes_url": "https://docs.vericonomy.com/en/Downloads",
+    "downloads": {
+      "windows_x64_setup": "https://docs.vericonomy.com/en/Downloads",
+      "windows_x64_zip": "https://docs.vericonomy.com/en/Downloads",
+      "macos": "https://docs.vericonomy.com/en/Downloads",
+      "linux_x64": "https://docs.vericonomy.com/en/Downloads"
+    }
+  },
+  "previous": [
+    {
+      "version": "1.3.5",
+      "notes_url": "https://docs.vericonomy.com/en/Downloads"
+    },
+    {
+      "version": "1.3.1",
+      "notes_url": "https://docs.vericonomy.com/en/Downloads"
+    }
+  ]
+}
