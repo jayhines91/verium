@@ -95,6 +95,33 @@ pub fn detect_chain_corruption(lines: &[String]) -> Option<String> {
     None
 }
 
+const DATADIR_LOCK_MARKERS: &[&str] = &[
+    "Cannot obtain a lock on data directory",
+    "Verium is probably already running",
+];
+
+/// True when a recent debug.log line shows another veriumd holds the datadir lock.
+pub fn detect_datadir_lock_conflict(lines: &[String]) -> Option<String> {
+    let now = Utc::now();
+    for line in lines.iter().rev().take(40) {
+        if !DATADIR_LOCK_MARKERS.iter().any(|m| line.contains(m)) {
+            continue;
+        }
+        if let Some(ts) = parse_log_timestamp(line) {
+            let age = now.signed_duration_since(ts).num_seconds();
+            if age > CORRUPTION_MAX_AGE_SECS {
+                continue;
+            }
+        }
+        return Some(
+            "Another Verium instance is already using this data directory. \
+             Quit Verium-Qt or any other veriumd using the same folder, then try again."
+                .into(),
+        );
+    }
+    None
+}
+
 pub async fn clear_debug_log(datadir: &Path) -> AppResult<()> {
     let path = datadir.join("debug.log");
     if path.exists() {

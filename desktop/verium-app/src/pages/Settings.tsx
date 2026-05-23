@@ -43,16 +43,16 @@ export function Settings() {
   const restart = useMutation({ mutationFn: tauriRestartDaemon });
   const updates = useMutation({ mutationFn: tauriCheckForUpdates });
 
+  const prefs = useUserPreferences((s) => s.prefs);
+  const updatePrefs = useUserPreferences((s) => s.update);
+  const { mode: themeMode, setMode: setThemeMode } = useTheme();
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
   const binary = useQuery({
     queryKey: ["detect-veriumd"],
     queryFn: tauriDetectVeriumd,
     enabled: advancedOpen,
   });
-
-  const prefs = useUserPreferences((s) => s.prefs);
-  const updatePrefs = useUserPreferences((s) => s.update);
-  const { mode: themeMode, setMode: setThemeMode } = useTheme();
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   return (
     <div className="flex flex-col gap-6">

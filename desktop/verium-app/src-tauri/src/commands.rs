@@ -18,7 +18,10 @@ use crate::explorer_api::{
     fetch_transactions, ExplorerBlock, ExplorerChainTip, ExplorerExtractionEntry, ExplorerPeerEntry,
     ExplorerStats, ExplorerTransaction, EXPLORER_API_ENABLED, EXPLORER_LOGO_URL,
 };
-use crate::logs::{detect_chain_corruption, detect_sync_stall, is_timestamp_rule_failure, tail_debug_log};
+use crate::logs::{
+    detect_chain_corruption, detect_datadir_lock_conflict, detect_sync_stall,
+    is_timestamp_rule_failure, tail_debug_log,
+};
 use crate::prefs::{self, PartialUserPreferences, UserPreferences};
 use crate::state::{AppState, MinerLocalState};
 use crate::updates::{check_for_updates as run_update_check, UpdateInfo};
@@ -42,12 +45,34 @@ async fn stop_inner(state: &AppState) -> AppResult<()> {
     Ok(())
 }
 
+async fn rpc_reachable(cfg: &DaemonConfig) -> bool {
+    let Ok(client) = crate::rpc::RpcClient::from_config(cfg) else {
+        return false;
+    };
+    match client
+        .call::<Value>("getblockchaininfo", json!([]))
+        .await
+    {
+        Ok(_) => true,
+        Err(AppError::Rpc { code, .. }) if is_rpc_warmup(code) => true,
+        _ => false,
+    }
+}
+
 async fn start_inner(state: &AppState) -> AppResult<()> {
     let cfg = state.config().await;
     if is_wsl_unc_path(&cfg.datadir) {
         wsl_start_veriumd_if_stopped_datadir(&cfg.datadir, default_wsl_repo_root())?;
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         return Ok(());
+    }
+    if rpc_reachable(&cfg).await {
+        tracing::info!("start: veriumd already running for this datadir");
+        return Ok(());
+    }
+    let lines = tail_debug_log(&cfg.datadir, 40).await.unwrap_or_default();
+    if let Some(message) = detect_datadir_lock_conflict(&lines) {
+        return Err(AppError::other(message));
     }
     let _pid = state.daemon().start(&cfg).await?;
     Ok(())
@@ -1072,6 +1097,8 @@ pub async fn restart_after_encrypt(
             "Wallet encrypted, but the daemon did not come back online. Try restarting the app."
                 .into()
         },
+        datadir_locked: false,
+        already_running: false,
     })
 }
 
@@ -1225,22 +1252,93 @@ async fn wait_for_rpc(state: &AppState, max_attempts: u32) -> bool {
 pub struct EnsureConnectResult {
     pub connected: bool,
     pub message: String,
+    pub datadir_locked: bool,
+    pub already_running: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VeriumdRuntimeStatus {
+    pub rpc_connected: bool,
+    pub datadir_locked: bool,
+    pub message: String,
+    pub hint: Option<String>,
+}
+
+#[tauri::command]
+pub async fn detect_veriumd_runtime(
+    state: State<'_, AppState>,
+) -> AppResult<VeriumdRuntimeStatus> {
+    let cfg = state.config_fresh().await?;
+    if rpc_reachable(&cfg).await {
+        return Ok(VeriumdRuntimeStatus {
+            rpc_connected: true,
+            datadir_locked: false,
+            message: "A veriumd node is already running on the configured RPC port.".into(),
+            hint: Some(
+                "Continue setup to unlock your existing wallet — you do not need to start another node."
+                    .into(),
+            ),
+        });
+    }
+
+    let lines = tail_debug_log(&cfg.datadir, 40).await.unwrap_or_default();
+    if let Some(message) = detect_datadir_lock_conflict(&lines) {
+        return Ok(VeriumdRuntimeStatus {
+            rpc_connected: false,
+            datadir_locked: true,
+            message,
+            hint: Some(
+                "Quit Verium-Qt, the legacy wallet, or any terminal veriumd using the same data folder."
+                    .into(),
+            ),
+        });
+    }
+
+    Ok(VeriumdRuntimeStatus {
+        rpc_connected: false,
+        datadir_locked: false,
+        message: "No veriumd instance detected.".into(),
+        hint: None,
+    })
 }
 
 #[tauri::command]
 pub async fn ensure_daemon_connected(state: State<'_, AppState>) -> AppResult<EnsureConnectResult> {
     let cfg = state.config_fresh().await?;
+    if rpc_reachable(&cfg).await {
+        return Ok(EnsureConnectResult {
+            connected: true,
+            message: "Connected to the running veriumd node.".into(),
+            datadir_locked: false,
+            already_running: true,
+        });
+    }
     ensure_wsl_veriumd_running(&cfg).await;
     // veriumd can take 10–30s to open RPC while verifying blocks after start.
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     let connected = wait_for_rpc(state.inner(), 45).await;
+    if connected {
+        return Ok(EnsureConnectResult {
+            connected: true,
+            message: "Connected to veriumd.".into(),
+            datadir_locked: false,
+            already_running: false,
+        });
+    }
+
+    let lines = tail_debug_log(&cfg.datadir, 40).await.unwrap_or_default();
+    let datadir_locked = detect_datadir_lock_conflict(&lines).is_some();
+    let message = if datadir_locked {
+        detect_datadir_lock_conflict(&lines).unwrap_or_default()
+    } else {
+        "Could not reach veriumd. Check Settings or debug.log in your data directory.".into()
+    };
+
     Ok(EnsureConnectResult {
-        connected,
-        message: if connected {
-            "Connected to veriumd.".into()
-        } else {
-            "Could not reach veriumd. Check Settings or debug.log in your data directory.".into()
-        },
+        connected: false,
+        message,
+        datadir_locked,
+        already_running: false,
     })
 }
 

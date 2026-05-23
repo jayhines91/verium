@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 interface WalletCreateFormProps {
   onCreated?: (result: WalletCreateResult) => void;
+  onAlreadyEncrypted?: () => void;
   className?: string;
 }
 
@@ -25,6 +26,7 @@ const STRENGTH_BARS: Array<{ label: string; tone: string }> = [
 
 export function WalletCreateForm({
   onCreated,
+  onAlreadyEncrypted,
   className,
 }: WalletCreateFormProps) {
   const [passphrase, setPassphrase] = useState("");
@@ -51,7 +53,13 @@ export function WalletCreateForm({
       setConfirm("");
       onCreated?.(result);
     },
-    onError: () => setPhase(""),
+    onError: (err) => {
+      setPhase("");
+      const message = String(err);
+      if (message.toLowerCase().includes("encrypted wallet")) {
+        onAlreadyEncrypted?.();
+      }
+    },
   });
 
   const disabled =
@@ -148,7 +156,14 @@ export function WalletCreateForm({
 
       {create.error && (
         <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
-          {String(create.error)}
+          {String(create.error).toLowerCase().includes("encrypted wallet") ? (
+            <>
+              This wallet is already encrypted. Use the unlock form with your
+              existing passphrase instead of creating a new wallet.
+            </>
+          ) : (
+            String(create.error)
+          )}
         </div>
       )}
 

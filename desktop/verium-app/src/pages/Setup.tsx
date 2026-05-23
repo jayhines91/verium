@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
+  AlertTriangle,
   CheckCircle2,
   Circle,
   Cog,
@@ -21,14 +22,20 @@ import {
 import { Button } from "@/components/ui/Button";
 import {
   rpcGetConfig,
+  rpcGetWalletInfo,
   rpcSetConfig,
   tauriDetectVeriumd,
+  tauriDetectVeriumdRuntime,
   tauriEnsureDaemonConnected,
   tauriEnsureFirstRun,
   tauriStartDaemon,
   tauriWalletFileStatus,
 } from "@/lib/rpc/client";
 import { useUserPreferences } from "@/lib/user-preferences";
+import {
+  resolveWalletSetupMode,
+  walletSetupModeLabel,
+} from "@/lib/wallet-setup";
 import { DaemonConnectionPanel } from "@/components/DaemonConnectionPanel";
 import { BootstrapDialog } from "@/components/BootstrapDialog";
 import { WalletCreateForm } from "@/components/WalletCreateForm";
@@ -63,6 +70,12 @@ export function Setup() {
     queryKey: ["detect-veriumd"],
     queryFn: tauriDetectVeriumd,
   });
+  const runtime = useQuery({
+    queryKey: ["detect-veriumd-runtime"],
+    queryFn: tauriDetectVeriumdRuntime,
+    refetchInterval: step === "daemon" ? 4_000 : false,
+    enabled: step === "daemon",
+  });
   const walletFile = useQuery({
     queryKey: ["wallet-file-status"],
     queryFn: tauriWalletFileStatus,
@@ -70,11 +83,35 @@ export function Setup() {
     enabled: step === "wallet" || step === "daemon",
   });
 
+  const { data: nodeStatus } = useDaemonStatus();
+  const connected = Boolean(nodeStatus?.connected);
+
+  const walletInfo = useQuery({
+    queryKey: ["getwalletinfo"],
+    queryFn: rpcGetWalletInfo,
+    enabled: step === "wallet" && connected,
+    retry: 1,
+  });
+
+  const walletSetupMode = resolveWalletSetupMode(
+    connected,
+    walletInfo.isLoading,
+    walletInfo.data,
+    walletFile.data?.exists,
+  );
+
   useEffect(() => {
     if (config.data && !datadirDraft) {
       setDatadirDraft(config.data.datadir);
     }
   }, [config.data, datadirDraft]);
+
+  useEffect(() => {
+    if (step !== "wallet") return;
+    if (walletSetupMode === "ready") {
+      setStep("bootstrap");
+    }
+  }, [step, walletSetupMode]);
 
   const saveConfig = useMutation({
     mutationFn: rpcSetConfig,
@@ -96,12 +133,15 @@ export function Setup() {
     },
   });
 
-  const { data: nodeStatus } = useDaemonStatus();
-
   const finish = async () => {
     await updatePrefs({ setup_completed: true });
     navigate("/dashboard");
   };
+
+  const showRunningWarning =
+    runtime.data?.rpc_connected ||
+    runtime.data?.datadir_locked ||
+    nodeStatus?.connected;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg p-8 text-fg">
@@ -111,8 +151,8 @@ export function Setup() {
             Set up Verium
           </CardTitle>
           <CardDescription>
-            Three minutes — start the bundled node, create an encrypted wallet,
-            optionally seed the chain.
+            Three minutes — start the bundled node, unlock or encrypt your
+            wallet, optionally seed the chain.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
@@ -143,9 +183,9 @@ export function Setup() {
               <p>
                 Welcome. This wallet ships with a bundled{" "}
                 <span className="font-mono">veriumd</span> node — there is
-                nothing else to install. Your data lives in a standard folder
-                under your user profile, and your passphrase never leaves this
-                machine.
+                nothing else to install. If you already use Verium-Qt, your
+                existing wallet and chain data in the same data folder will
+                carry over — just unlock with your existing passphrase.
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <FeatureTile
@@ -186,6 +226,34 @@ export function Setup() {
                 </div>
               </div>
 
+              {showRunningWarning && (
+                <div
+                  className={
+                    runtime.data?.datadir_locked
+                      ? "rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
+                      : "rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-fg-muted"
+                  }
+                >
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div className="flex flex-col gap-1">
+                      <div className="font-medium text-fg">
+                        {runtime.data?.datadir_locked
+                          ? "Another Verium instance is running"
+                          : "Verium node already running"}
+                      </div>
+                      <p>
+                        {runtime.data?.message ??
+                          "A veriumd node is already responding on this RPC port."}
+                      </p>
+                      {runtime.data?.hint && (
+                        <p className="text-fg-subtle">{runtime.data.hint}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {binary.isLoading ? (
                 <div className="flex items-center gap-2 text-fg-muted">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" /> Looking for
@@ -216,13 +284,17 @@ export function Setup() {
               <div className="flex flex-wrap gap-2">
                 <Button
                   onClick={() => startDaemon.mutate()}
-                  disabled={startDaemon.isPending || !binary.data?.manageable}
+                  disabled={
+                    startDaemon.isPending ||
+                    !binary.data?.manageable ||
+                    runtime.data?.datadir_locked
+                  }
                 >
                   {startDaemon.isPending
                     ? "Starting…"
                     : "Start node and continue"}
                 </Button>
-                {nodeStatus?.connected && (
+                {(nodeStatus?.connected || runtime.data?.rpc_connected) && (
                   <Button
                     variant="secondary"
                     size="md"
@@ -255,30 +327,51 @@ export function Setup() {
           {step === "wallet" && (
             <div className="flex flex-col gap-4">
               <div className="rounded-md border border-border bg-bg-subtle p-3 text-xs text-fg-muted">
-                {walletFile.data?.exists ? (
-                  <>
-                    Found an existing wallet at{" "}
-                    <span className="font-mono">{walletFile.data.path}</span>.
-                  </>
-                ) : (
-                  <>
-                    No wallet yet. We'll create one in{" "}
-                    <span className="font-mono">
-                      {walletFile.data?.path ?? "your data directory"}
-                    </span>
-                    .
-                  </>
+                {walletFile.data?.path && (
+                  <div className="break-all font-mono text-[11px]">
+                    {walletFile.data.path}
+                  </div>
+                )}
+                <p className="mt-1">{walletSetupModeLabel(walletSetupMode)}</p>
+                {walletInfo.data && walletSetupMode === "needs_unlock" && (
+                  <p className="mt-1 text-fg">
+                    Balance: {walletInfo.data.balance.toFixed(8)} VRM
+                    {walletInfo.data.txcount > 0
+                      ? ` · ${walletInfo.data.txcount} transactions`
+                      : ""}
+                  </p>
                 )}
               </div>
 
-              {walletFile.data?.exists ? (
+              {walletSetupMode === "loading" && (
+                <div className="flex items-center gap-2 text-sm text-fg-muted">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Checking wallet…
+                </div>
+              )}
+
+              {walletSetupMode === "offline" && (
+                <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-fg-muted">
+                  Go back to <strong>Start node</strong> and connect to
+                  veriumd before setting up your wallet.
+                </div>
+              )}
+
+              {walletSetupMode === "needs_unlock" && (
                 <WalletUnlockForm
-                  title="Unlock existing wallet"
-                  description="A wallet already exists in this data directory. Enter your passphrase to continue."
+                  title="Unlock your existing wallet"
+                  description="Enter the passphrase from your previous Verium wallet. Your coins, addresses, and transaction history stay exactly as they are."
                   onUnlocked={() => setStep("bootstrap")}
                 />
-              ) : (
-                <WalletCreateForm onCreated={() => setStep("bootstrap")} />
+              )}
+
+              {walletSetupMode === "needs_encrypt" && (
+                <WalletCreateForm
+                  onCreated={() => setStep("bootstrap")}
+                  onAlreadyEncrypted={() => {
+                    void walletInfo.refetch();
+                  }}
+                />
               )}
             </div>
           )}

@@ -57,6 +57,7 @@ impl DaemonManager {
         let mut cmd = Command::new(bin);
         cmd.arg(format!("-datadir={}", cfg.datadir.display()))
             .arg("-server=1")
+            .arg("-checklevel=0")
             .arg(format!("-rpcport={}", cfg.rpc_port))
             .arg(format!("-rpcbind={}", cfg.rpc_host));
         if cfg.chain == "test" {

@@ -79,6 +79,7 @@ pub fn run() {
             commands::check_for_updates,
             commands::open_external_url,
             commands::detect_veriumd,
+            commands::detect_veriumd_runtime,
             commands::wallet_file_status,
             commands::ensure_first_run,
             commands::restart_after_encrypt,

@@ -443,6 +443,19 @@ export async function tauriCheckForUpdates(): Promise<UpdateInfo> {
 export interface EnsureConnectResult {
   connected: boolean;
   message: string;
+  datadir_locked?: boolean;
+  already_running?: boolean;
+}
+
+export interface VeriumdRuntimeStatus {
+  rpc_connected: boolean;
+  datadir_locked: boolean;
+  message: string;
+  hint?: string;
+}
+
+export async function tauriDetectVeriumdRuntime(): Promise<VeriumdRuntimeStatus> {
+  return invoke<VeriumdRuntimeStatus>("detect_veriumd_runtime");
 }
 
 export async function tauriEnsureDaemonConnected(): Promise<EnsureConnectResult> {
