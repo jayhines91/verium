@@ -15,6 +15,7 @@ import { Setup } from "@/pages/Setup";
 import { SignVerify } from "@/pages/SignVerify";
 import { Resources } from "@/pages/Resources";
 import { useUserPreferences } from "@/lib/user-preferences";
+import { useWebAudioGestureUnlock } from "@/lib/web-audio";
 import { useAutoMine } from "@/hooks/useAutoMine";
 import { useBlockMinedSound } from "@/hooks/useBlockMinedSound";
 import { useBlockMinedWatcher } from "@/hooks/useBlockMinedWatcher";
@@ -44,6 +45,7 @@ function SetupRedirect() {
 export default function App() {
   const load = useUserPreferences((s) => s.load);
   const updatePrefs = useUserPreferences((s) => s.update);
+  const prefs = useUserPreferences((s) => s.prefs);
   const { data: status } = useDaemonStatus();
   useAutoMine();
   useTheme();
@@ -51,6 +53,10 @@ export default function App() {
   useBlockMinedSound();
   useIncomingVrmWatcher();
   useIncomingVrmNotifications();
+  useWebAudioGestureUnlock(
+    prefs.play_sound_on_block_mined === true ||
+      prefs.notify_on_vrm_received !== false,
+  );
 
   useEffect(() => {
     void load();

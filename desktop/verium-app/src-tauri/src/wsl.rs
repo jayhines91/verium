@@ -407,11 +407,12 @@ pub fn restart_wsl_veriumd_datadir(datadir: &Path, repo_root: &str) -> AppResult
     start_wsl_veriumd_datadir(datadir, repo_root, VeriumdStartMode::Normal)
 }
 
-pub fn wsl_start_veriumd_if_stopped_datadir(datadir: &Path, repo_root: &str) -> AppResult<()> {
+pub fn wsl_start_veriumd_if_stopped_datadir(datadir: &Path, repo_root: &str) -> AppResult<bool> {
     if wsl_veriumd_running_datadir(datadir) {
-        return Ok(());
+        return Ok(false);
     }
-    start_wsl_veriumd_datadir(datadir, repo_root, VeriumdStartMode::Normal)
+    start_wsl_veriumd_datadir(datadir, repo_root, VeriumdStartMode::Normal)?;
+    Ok(true)
 }
 
 pub fn wsl_veriumd_running_datadir(datadir: &Path) -> bool {

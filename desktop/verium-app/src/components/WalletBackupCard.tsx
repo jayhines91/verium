@@ -29,8 +29,10 @@ export function WalletBackupCard() {
 
   const backup = useMutation({
     mutationFn: async () => {
+      const defaultPath =
+        fileStatus.data?.suggested_backup_path ?? defaultBackupName();
       const dest = await saveDialog({
-        defaultPath: defaultBackupName(),
+        defaultPath,
         filters: [{ name: "Wallet file", extensions: ["dat"] }],
       });
       if (!dest) return null;
@@ -69,6 +71,19 @@ export function WalletBackupCard() {
                 ? fileStatus.data.path
                 : `${fileStatus.data.path} (not present)`}
             </div>
+            {fileStatus.data.note && (
+              <p className="mt-1.5 text-fg-muted">{fileStatus.data.note}</p>
+            )}
+            {fileStatus.data.backup_folder && (
+              <p className="mt-1.5 text-fg-muted">
+                Backups save to{" "}
+                <span className="font-mono text-[11px]">
+                  {fileStatus.data.backup_folder}
+                </span>{" "}
+                by default — use a new filename, not{" "}
+                <span className="font-mono">wallet.dat</span>.
+              </p>
+            )}
           </div>
         )}
 
@@ -176,5 +191,8 @@ function defaultBackupName(): string {
   const yyyy = date.getFullYear();
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
-  return `verium-wallet-${yyyy}${mm}${dd}.dat`;
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  return `verium-wallet-${yyyy}${mm}${dd}-${hh}${min}${ss}.dat`;
 }

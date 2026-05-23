@@ -352,6 +352,9 @@ export async function rpcRaw(
 export interface WalletFileStatus {
   exists: boolean;
   path: string;
+  note?: string | null;
+  backup_folder: string;
+  suggested_backup_path: string;
 }
 
 export async function tauriWalletFileStatus(): Promise<WalletFileStatus> {

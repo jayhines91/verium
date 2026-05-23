@@ -8,7 +8,9 @@ use crate::addressbook::{self, AddressBookEntry};
 use crate::bootstrap::{import_bootstrap as run_import_bootstrap, BootstrapResult};
 use crate::config::{
     apply_partial_to_config, ensure_first_run_config, generate_rpc_password, refresh_config_paths,
-    rpc_auth_diagnostics, save_app_daemon_config, wallet_dat_exists, wallet_dat_path,
+    rpc_auth_diagnostics, save_app_daemon_config, is_live_wallet_destination,
+    path_for_veriumd_rpc, resolve_wallet_dat_path, suggested_wallet_backup_path,
+    wallet_backup_dir, wallet_dat_exists, wallet_dat_path,
     write_verium_conf_overrides, DaemonConfig, PartialDaemonConfig, RpcAuthDiagnostics,
 };
 use crate::daemon::{bundled_sidecar_available, detect_binary, DaemonBinaryStatus};
@@ -40,9 +42,51 @@ async fn stop_inner(state: &AppState) -> AppResult<()> {
         wsl_stop_veriumd_force_datadir(&cfg.datadir);
     } else if let Ok(client) = state.rpc_client().await {
         let _ = client.call_no_result("stop", json!([])).await;
+        state
+            .daemon()
+            .wait_for_child_exit(std::time::Duration::from_secs(30))
+            .await;
     }
-    state.daemon().record_pid(None).await;
+    state.daemon().force_kill_child().await;
+    state.daemon().clear_tracking().await;
     Ok(())
+}
+
+/// Stop veriumd when the wallet exits so the data directory lock is released.
+pub async fn shutdown_daemon_on_app_exit(state: &AppState) {
+    let cfg = match state.config_fresh().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("shutdown: config load failed: {e}");
+            return;
+        }
+    };
+
+    let managed = state.daemon().is_managed().await;
+    let bundled = bundled_sidecar_available();
+    let wsl = is_wsl_unc_path(&cfg.datadir);
+    let rpc_up = rpc_reachable(&cfg).await;
+
+    let should_stop = if bundled {
+        // Shipped wallet owns node lifecycle (Setup: "starts and stops the daemon for you").
+        rpc_up || managed
+    } else {
+        managed
+    };
+
+    if !should_stop {
+        tracing::debug!("shutdown: leaving veriumd running");
+        return;
+    }
+
+    tracing::info!("shutdown: stopping veriumd");
+    if let Err(e) = stop_inner(state).await {
+        tracing::warn!("shutdown: stop failed: {e}");
+    }
+
+    if wsl && wsl_veriumd_running_datadir(&cfg.datadir) {
+        wsl_stop_veriumd_force_datadir(&cfg.datadir);
+    }
 }
 
 async fn rpc_reachable(cfg: &DaemonConfig) -> bool {
@@ -62,7 +106,9 @@ async fn rpc_reachable(cfg: &DaemonConfig) -> bool {
 async fn start_inner(state: &AppState) -> AppResult<()> {
     let cfg = state.config().await;
     if is_wsl_unc_path(&cfg.datadir) {
-        wsl_start_veriumd_if_stopped_datadir(&cfg.datadir, default_wsl_repo_root())?;
+        if wsl_start_veriumd_if_stopped_datadir(&cfg.datadir, default_wsl_repo_root())? {
+            state.daemon().mark_managed().await;
+        }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         return Ok(());
     }
@@ -519,11 +565,72 @@ pub async fn wallet_backup(
     if destination_path.is_empty() {
         return Err(AppError::other("destination_path must not be empty"));
     }
-    state
-        .rpc_client()
-        .await?
-        .call_no_result("backupwallet", json!([destination_path.clone()]))
-        .await?;
+    let cfg = state.config().await;
+    let dest = std::path::PathBuf::from(&destination_path);
+    if is_live_wallet_destination(&cfg, &dest) {
+        return Err(AppError::other(
+            "Cannot save over the live wallet.dat file. Pick a different name — for example verium-wallet-YYYYMMDD-HHMMSS.dat in the backups folder.",
+        ));
+    }
+    if let Some(parent) = dest.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+
+    let backup_dir = wallet_backup_dir(&cfg)?;
+    let snapshot = backup_dir.join(format!(
+        ".snapshot-{}.dat",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let snapshot_for_rpc = path_for_veriumd_rpc(&snapshot);
+    tracing::info!(
+        "wallet backup: snapshot {} -> {}",
+        snapshot_for_rpc,
+        dest.display()
+    );
+
+    let client = state.rpc_client().await?;
+    let rpc_result = client
+        .call_no_result("backupwallet", json!([snapshot_for_rpc]))
+        .await;
+
+    if rpc_result.is_ok() && snapshot.is_file() {
+        // Preferred path: veriumd flushed Berkeley DB and wrote the snapshot.
+    } else {
+        if let Err(AppError::Rpc { message, .. }) = &rpc_result {
+            tracing::warn!("wallet backup: backupwallet rpc failed: {message}");
+        } else if rpc_result.is_ok() {
+            tracing::warn!(
+                "wallet backup: backupwallet returned ok but snapshot missing at {}",
+                snapshot.display()
+            );
+        }
+        let live = resolve_wallet_dat_path(&cfg).ok_or_else(|| {
+            AppError::other("No wallet.dat found on disk to copy.")
+        })?;
+        std::fs::copy(&live, &dest).map_err(|e| {
+            AppError::other(format!(
+                "Could not copy wallet.dat to {}: {e}. If the node just started, wait a moment and try again.",
+                dest.display()
+            ))
+        })?;
+        let _ = std::fs::remove_file(&snapshot);
+        return Ok(WalletBackupResult {
+            success: true,
+            destination: destination_path,
+            message: "Wallet backup saved (live file copy while the node is running).".into(),
+        });
+    }
+
+    std::fs::copy(&snapshot, &dest).map_err(|e| {
+        AppError::other(format!(
+            "Could not copy wallet backup to {}: {e}",
+            dest.display()
+        ))
+    })?;
+    let _ = std::fs::remove_file(&snapshot);
+
     Ok(WalletBackupResult {
         success: true,
         destination: destination_path,
@@ -1049,14 +1156,43 @@ pub async fn detect_veriumd() -> AppResult<DaemonBinaryStatus> {
 pub struct WalletFileStatus {
     pub exists: bool,
     pub path: String,
+    /// When the wallet file lives outside the legacy `<datadir>/wallet.dat` path.
+    pub note: Option<String>,
+    /// Folder opened by the backup save dialog (`<datadir>/backups`).
+    pub backup_folder: String,
+    /// Default filename + folder for the save dialog.
+    pub suggested_backup_path: String,
 }
 
 #[tauri::command]
 pub async fn wallet_file_status(state: State<'_, AppState>) -> AppResult<WalletFileStatus> {
     let cfg = state.config_fresh().await?;
+    let resolved = resolve_wallet_dat_path(&cfg);
+    let default_path = wallet_dat_path(&cfg);
+    let exists = wallet_dat_exists(&cfg);
+    let path = resolved
+        .unwrap_or(default_path)
+        .display()
+        .to_string();
+    let backup_folder = wallet_backup_dir(&cfg)?
+        .display()
+        .to_string();
+    let suggested_backup_path = suggested_wallet_backup_path(&cfg)?
+        .display()
+        .to_string();
+    let note = if exists {
+        None
+    } else {
+        Some(
+            "No wallet.dat found on disk yet. If the wallet is unlocked in the app, use Back up wallet.dat — veriumd exports the live wallet file.".into(),
+        )
+    };
     Ok(WalletFileStatus {
-        exists: wallet_dat_exists(&cfg),
-        path: wallet_dat_path(&cfg).display().to_string(),
+        exists,
+        path,
+        note,
+        backup_folder,
+        suggested_backup_path,
     })
 }
 
@@ -1191,7 +1327,7 @@ fn default_wsl_repo_root() -> &'static str {
     DEFAULT_WSL_REPO_ROOT
 }
 
-async fn ensure_wsl_veriumd_running(cfg: &DaemonConfig) {
+async fn ensure_wsl_veriumd_running(state: &AppState, cfg: &DaemonConfig) {
     if bundled_sidecar_available() || !is_wsl_unc_path(&cfg.datadir) {
         return;
     }
@@ -1206,15 +1342,19 @@ async fn ensure_wsl_veriumd_running(cfg: &DaemonConfig) {
     let repo = default_wsl_repo_root();
     if wsl_rpc_credentials_stale_datadir(&cfg.datadir).unwrap_or(false) {
         tracing::info!("ensure: restarting WSL veriumd (stale RPC credentials)");
-        if let Err(e) = restart_wsl_veriumd_datadir(&cfg.datadir, repo) {
-            tracing::warn!("ensure: wsl restart failed: {e}");
+        if restart_wsl_veriumd_datadir(&cfg.datadir, repo).is_ok() {
+            state.daemon().mark_managed().await;
+        } else {
+            tracing::warn!("ensure: wsl restart failed");
         }
         return;
     }
     if !wsl_veriumd_running_datadir(&cfg.datadir) {
         tracing::info!("ensure: starting WSL veriumd");
-        if let Err(e) = wsl_start_veriumd_if_stopped_datadir(&cfg.datadir, repo) {
-            tracing::warn!("ensure: wsl start failed: {e}");
+        match wsl_start_veriumd_if_stopped_datadir(&cfg.datadir, repo) {
+            Ok(started) if started => state.daemon().mark_managed().await,
+            Ok(_) => {}
+            Err(e) => tracing::warn!("ensure: wsl start failed: {e}"),
         }
     }
 }
@@ -1313,7 +1453,7 @@ pub async fn ensure_daemon_connected(state: State<'_, AppState>) -> AppResult<En
             already_running: true,
         });
     }
-    ensure_wsl_veriumd_running(&cfg).await;
+    ensure_wsl_veriumd_running(state.inner(), &cfg).await;
     // veriumd can take 10–30s to open RPC while verifying blocks after start.
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     let connected = wait_for_rpc(state.inner(), 45).await;
@@ -1352,7 +1492,7 @@ pub async fn startup_daemon_connect(state: &AppState) {
         }
     };
 
-    ensure_wsl_veriumd_running(&cfg).await;
+    ensure_wsl_veriumd_running(state, &cfg).await;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     if !wait_for_rpc(state, 45).await {
         tracing::warn!("startup: veriumd not reachable after waiting");

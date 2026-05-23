@@ -105,6 +105,15 @@ pub fn run() {
             commands::address_book_delete,
             commands::diagnostic_bundle,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    tauri::async_runtime::block_on(commands::shutdown_daemon_on_app_exit(
+                        state.inner(),
+                    ));
+                }
+            }
+        });
 }

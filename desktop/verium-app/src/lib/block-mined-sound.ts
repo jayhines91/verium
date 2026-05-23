@@ -1,32 +1,22 @@
+import {
+  getSharedAudioContext,
+  unlockSharedWebAudio,
+} from "@/lib/web-audio";
+
 /** Pleasant three-note chime when you find a block (Web Audio — no asset file). */
-
-let audioContext: AudioContext | null = null;
-
-function getAudioContext(): AudioContext | null {
-  if (typeof window === "undefined") return null;
-  if (!audioContext || audioContext.state === "closed") {
-    audioContext = new AudioContext();
-  }
-  return audioContext;
-}
 
 /** Call after user gesture so autoplay policies allow sound later. */
 export async function unlockBlockMinedAudio(): Promise<void> {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  if (ctx.state === "suspended") {
-    await ctx.resume();
-  }
+  await unlockSharedWebAudio();
 }
 
 export async function playBlockMinedSound(): Promise<void> {
-  const ctx = getAudioContext();
+  const ctx = getSharedAudioContext();
   if (!ctx) return;
 
   try {
-    if (ctx.state === "suspended") {
-      await ctx.resume();
-    }
+    await unlockSharedWebAudio();
+    if (ctx.state !== "running") return;
 
     const now = ctx.currentTime;
     const notes = [523.25, 659.25, 783.99]; // C5 · E5 · G5

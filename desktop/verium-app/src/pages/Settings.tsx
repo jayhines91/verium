@@ -27,6 +27,14 @@ import {
 } from "@/lib/rpc/client";
 import { useUserPreferences } from "@/lib/user-preferences";
 import {
+  playBlockMinedSound,
+  unlockBlockMinedAudio,
+} from "@/lib/block-mined-sound";
+import {
+  playReceivedVrmSound,
+  unlockReceivedVrmAudio,
+} from "@/lib/received-vrm-sound";
+import {
   DEFAULT_ADDRESS_EXPLORER_TEMPLATE,
   DEFAULT_BLOCK_EXPLORER_TEMPLATE,
   DEFAULT_TX_EXPLORER_TEMPLATE,
@@ -85,7 +93,10 @@ export function Settings() {
               type="checkbox"
               checked={prefs.notify_on_vrm_received !== false}
               onChange={(e) => {
-                void updatePrefs({ notify_on_vrm_received: e.target.checked });
+                const checked = e.target.checked;
+                void unlockReceivedVrmAudio();
+                void updatePrefs({ notify_on_vrm_received: checked });
+                if (checked) void playReceivedVrmSound();
               }}
               className="h-4 w-4 rounded border-border accent-accent"
             />
@@ -144,11 +155,12 @@ export function Settings() {
             <input
               type="checkbox"
               checked={prefs.play_sound_on_block_mined === true}
-              onChange={(e) =>
-                void updatePrefs({
-                  play_sound_on_block_mined: e.target.checked,
-                })
-              }
+              onChange={(e) => {
+                const checked = e.target.checked;
+                void unlockBlockMinedAudio();
+                void updatePrefs({ play_sound_on_block_mined: checked });
+                if (checked) void playBlockMinedSound();
+              }}
               className="h-4 w-4 rounded border-border accent-accent"
             />
             <span>Play chime when this wallet finds a block</span>

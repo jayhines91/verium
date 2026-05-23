@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::AppHandle;
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
 use crate::config::DaemonConfig;
@@ -42,14 +43,17 @@ pub struct DaemonBinaryStatus {
 #[derive(Clone)]
 pub struct DaemonManager {
     _app: AppHandle,
-    child_pid: Arc<Mutex<Option<u32>>>,
+    child: Arc<Mutex<Option<Child>>>,
+    /// True when this wallet session started (or restarted) the node.
+    managed: Arc<Mutex<bool>>,
 }
 
 impl DaemonManager {
     pub fn new(app: AppHandle) -> Self {
         Self {
             _app: app,
-            child_pid: Arc::new(Mutex::new(None)),
+            child: Arc::new(Mutex::new(None)),
+            managed: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -65,16 +69,50 @@ impl DaemonManager {
         if cfg.chain == "test" {
             cmd.arg("-testnet");
         }
+        cmd.current_dir(&cfg.datadir);
         let child = cmd
             .spawn()
             .map_err(|e| AppError::other(format!("failed to spawn veriumd: {e}")))?;
         let pid = child.id().unwrap_or(0);
-        *self.child_pid.lock().await = Some(pid);
+        *self.child.lock().await = Some(child);
+        *self.managed.lock().await = true;
         Ok(pid)
     }
 
+    pub async fn mark_managed(&self) {
+        *self.managed.lock().await = true;
+    }
+
+    pub async fn is_managed(&self) -> bool {
+        *self.managed.lock().await
+    }
+
+    pub async fn clear_tracking(&self) {
+        *self.managed.lock().await = false;
+        *self.child.lock().await = None;
+    }
+
     pub async fn record_pid(&self, pid: Option<u32>) {
-        *self.child_pid.lock().await = pid;
+        if pid.is_none() {
+            self.clear_tracking().await;
+        }
+    }
+
+    pub async fn wait_for_child_exit(&self, timeout: Duration) {
+        let mut child = self.child.lock().await;
+        if let Some(ref mut process) = *child {
+            tokio::select! {
+                _ = process.wait() => {}
+                _ = tokio::time::sleep(timeout) => {}
+            }
+        }
+    }
+
+    pub async fn force_kill_child(&self) {
+        if let Some(mut process) = self.child.lock().await.take() {
+            let _ = process.start_kill();
+            let _ = process.wait().await;
+        }
     }
 }
 

@@ -189,19 +189,90 @@ pub fn ensure_first_run_config(cfg: &mut DaemonConfig) -> AppResult<bool> {
     Ok(true)
 }
 
-pub fn wallet_dat_path(cfg: &DaemonConfig) -> PathBuf {
+fn chain_datadir(cfg: &DaemonConfig) -> PathBuf {
     let mut p = cfg.datadir.clone();
     if cfg.chain == "test" {
         p.push("testnet3");
     } else if cfg.chain == "regtest" {
         p.push("regtest");
     }
-    p.push("wallet.dat");
     p
 }
 
+/// Matches veriumd's `GetWalletDir()` — uses `<datadir>/wallets` when that folder exists.
+fn wallet_dir(cfg: &DaemonConfig) -> PathBuf {
+    let base = chain_datadir(cfg);
+    let wallets = base.join("wallets");
+    if wallets.is_dir() {
+        wallets
+    } else {
+        base
+    }
+}
+
+/// Locate the active wallet file on disk (legacy root or `wallets/` layout).
+pub fn resolve_wallet_dat_path(cfg: &DaemonConfig) -> Option<PathBuf> {
+    let base = chain_datadir(cfg);
+    let candidates = [
+        base.join("wallet.dat"),
+        base.join("wallets").join("wallet.dat"),
+    ];
+    for path in candidates {
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let wallets_root = base.join("wallets");
+    if wallets_root.is_dir() {
+        if let Ok(entries) = fs::read_dir(&wallets_root) {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join("wallet.dat");
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn wallet_dat_path(cfg: &DaemonConfig) -> PathBuf {
+    resolve_wallet_dat_path(cfg).unwrap_or_else(|| wallet_dir(cfg).join("wallet.dat"))
+}
+
 pub fn wallet_dat_exists(cfg: &DaemonConfig) -> bool {
-    wallet_dat_path(cfg).exists()
+    resolve_wallet_dat_path(cfg).is_some()
+}
+
+/// `<datadir>/backups` — default folder for wallet exports (never the live wallet path).
+pub fn wallet_backup_dir(cfg: &DaemonConfig) -> AppResult<PathBuf> {
+    let dir = chain_datadir(cfg).join("backups");
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+pub fn default_wallet_backup_filename() -> String {
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    format!("verium-wallet-{stamp}.dat")
+}
+
+pub fn suggested_wallet_backup_path(cfg: &DaemonConfig) -> AppResult<PathBuf> {
+    Ok(wallet_backup_dir(cfg)?.join(default_wallet_backup_filename()))
+}
+
+/// Absolute path string for `backupwallet` (forward slashes work on Windows too).
+pub fn path_for_veriumd_rpc(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// True when `dest` would overwrite the loaded wallet file.
+pub fn is_live_wallet_destination(cfg: &DaemonConfig, dest: &Path) -> bool {
+    let Some(live) = resolve_wallet_dat_path(cfg) else {
+        return false;
+    };
+    let dest_key = dest.to_string_lossy().to_ascii_lowercase();
+    let live_key = live.to_string_lossy().to_ascii_lowercase();
+    dest_key == live_key
 }
 
 pub fn apply_partial_to_config(base: &DaemonConfig, partial: &PartialDaemonConfig) -> DaemonConfig {

@@ -100,8 +100,8 @@ before promoting the GitHub Release out of draft.
 ## 12. Smoke tests
 
 - [ ] App reload (Ctrl+R / Cmd+R) keeps the wallet unlocked.
-- [ ] Close the wallet window, re-open — daemon does not relaunch a
-      second instance.
+- [ ] Close the wallet window — veriumd stops and releases the data directory lock.
+- [ ] Re-open the wallet and start the node — only one veriumd instance runs.
 - [ ] Lock wallet, restart machine, re-open — wallet is locked again and
       unlocks with the passphrase.
 
