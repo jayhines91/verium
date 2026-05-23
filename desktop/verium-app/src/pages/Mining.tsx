@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import {
   CartesianGrid,
   Line,
@@ -56,6 +57,11 @@ import {
   clearMiningStoppedByUser,
   markMiningStoppedByUser,
 } from "@/lib/mining-session";
+import { isMinerBooting, miningInfoRefetchMs } from "@/lib/mining-boot";
+import {
+  MinerBootBadge,
+  MinerHashrateDisplay,
+} from "@/components/MinerBootIndicator";
 
 interface HashSample {
   t: number;
@@ -83,15 +89,21 @@ export function Mining() {
   const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>("day");
   const lastSampleRef = useRef<{ t: number; hr: number } | null>(null);
 
-  const mining = useQuery({
-    queryKey: ["getmininginfo"],
-    queryFn: rpcGetMiningInfo,
-    refetchInterval: 4_000,
-  });
   const minerState = useQuery({
     queryKey: ["get_miner_state"],
     queryFn: rpcGetMinerState,
     refetchInterval: 4_000,
+  });
+  const minerActive = minerState.data?.active ?? false;
+  const minerStartedAt = minerState.data?.started_at;
+
+  const mining = useQuery({
+    queryKey: ["getmininginfo"],
+    queryFn: rpcGetMiningInfo,
+    refetchInterval: (query) => {
+      const hr = query.state.data?.hashrate ?? 0;
+      return miningInfoRefetchMs(minerActive, hr, minerStartedAt, 4_000);
+    },
   });
   const blockchain = useQuery({
     queryKey: ["getblockchaininfo"],
@@ -150,11 +162,18 @@ export function Mining() {
 
   const ibd = blockchain.data?.initialblockdownload;
   const syncStalled = daemonStatus.data?.sync_stalled === true;
-  const active = minerState.data?.active ?? false;
+  const active = minerActive;
+  const localHashrate = mining.data?.hashrate ?? 0;
+  const minerBooting = isMinerBooting(
+    active,
+    localHashrate,
+    minerStartedAt,
+    start.isPending,
+    stop.isPending,
+  );
   const displayThreads =
     active && minerState.data ? minerState.data.threads : savedThreads;
   const networkStats = buildNetworkStats(explorerStats.data, mining.data);
-  const localHashrate = mining.data?.hashrate ?? 0;
   const networkHash = networkStats?.networkHash;
   const networkKhm =
     networkHash != null ? networkHashToKhm(networkHash) : undefined;
@@ -201,15 +220,32 @@ export function Mining() {
           </div>
         )}
 
+        {minerBooting && (
+          <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-fg">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" />
+            <span>
+              Miner is starting — spinning up {displayThreads} thread
+              {displayThreads === 1 ? "" : "s"}. Hashrate should appear within a
+              few seconds.
+            </span>
+          </div>
+        )}
+
         <Card className="relative">
           <CardHeader className="flex-row items-center justify-between gap-4">
             <div>
               <CardTitle>CPU miner</CardTitle>
             </div>
             <div className="flex flex-col items-end gap-2">
-              <Badge tone={active ? "success" : "neutral"}>
-                {active ? "Running" : "Stopped"}
-              </Badge>
+              {minerBooting || active ? (
+                <MinerBootBadge
+                  booting={minerBooting}
+                  active={active}
+                  activeLabel="Running"
+                />
+              ) : (
+                <Badge tone="neutral">Stopped</Badge>
+              )}
             </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-4 pb-[4.75rem]">
@@ -279,7 +315,14 @@ export function Mining() {
                 disabled={stop.isPending}
                 className="h-12 min-w-[11.5rem] px-8 text-base font-semibold shadow-md"
               >
-                Stop mining
+                {stop.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Stopping…
+                  </>
+                ) : (
+                  "Stop mining"
+                )}
               </Button>
             ) : (
               <Button
@@ -288,7 +331,14 @@ export function Mining() {
                 disabled={start.isPending || ibd || syncStalled}
                 className="h-12 min-w-[11.5rem] px-8 text-base font-semibold shadow-md"
               >
-                Start mining
+                {start.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Starting…
+                  </>
+                ) : (
+                  "Start mining"
+                )}
               </Button>
             )}
           </div>
@@ -300,10 +350,19 @@ export function Mining() {
               <CardTitle>Hashrate</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-semibold tabular-nums">
-                {mining.data ? formatNumber(mining.data.hashrate, 2) : "—"}{" "}
-                <span className="text-sm font-normal text-fg-subtle">H/m</span>
-              </div>
+              {minerBooting ? (
+                <MinerHashrateDisplay
+                  booting
+                  value=""
+                  className="text-2xl font-semibold"
+                  spinnerClassName="h-6 w-6"
+                />
+              ) : (
+                <div className="text-2xl font-semibold tabular-nums">
+                  {mining.data ? formatNumber(mining.data.hashrate, 2) : "—"}{" "}
+                  <span className="text-sm font-normal text-fg-subtle">H/m</span>
+                </div>
+              )}
             </CardContent>
           </Card>
           <Card>
@@ -523,6 +582,12 @@ export function Mining() {
             />
           </CardHeader>
           <CardContent className="h-64">
+            {minerBooting && samples.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-fg-muted">
+                <Loader2 className="h-8 w-8 animate-spin text-accent" />
+                Waiting for first hashrate sample…
+              </div>
+            ) : (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={samples}>
                 <CartesianGrid
@@ -569,6 +634,7 @@ export function Mining() {
                 />
               </LineChart>
             </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
       </div>

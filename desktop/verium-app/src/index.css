@@ -201,3 +201,32 @@ body {
 .toast-enter {
   animation: toast-enter 0.25s ease-out;
 }
+
+/* CPU miner widget — soft status glow */
+@keyframes mining-glow {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.88);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+}
+
+.mining-glow-pulse {
+  animation: mining-glow 2.6s ease-in-out infinite;
+}
+
+.mining-glow-pulse-slow {
+  animation: mining-glow 3.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mining-glow-pulse,
+  .mining-glow-pulse-slow {
+    animation: none;
+    opacity: 0.45;
+  }
+}

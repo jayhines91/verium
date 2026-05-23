@@ -1,8 +1,9 @@
 import { Link } from "react-router-dom";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Pickaxe, Users, Wallet } from "lucide-react";
+import { ChevronRight, Loader2, Pickaxe, Users, Wallet } from "lucide-react";
 import { ExplorerLink } from "@/components/ExplorerLink";
+import { MiningPickaxeAnimation } from "@/components/MiningPickaxeAnimation";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import { BLOCK_AGE_TICK_MS, resolveTipBlock } from "@/lib/block-tip";
 import {
@@ -10,6 +11,7 @@ import {
   fetchExplorerStats,
   isExplorerApiEnabled,
 } from "@/lib/explorer-api";
+import { isMinerBooting, miningInfoRefetchMs } from "@/lib/mining-boot";
 import {
   averageBlockTimeMinutes,
   buildNetworkStats,
@@ -56,47 +58,65 @@ function MetaDivider() {
 
 interface QuickTileProps {
   to: string;
-  icon: typeof Pickaxe;
+  icon?: typeof Pickaxe;
+  iconNode?: ReactNode;
   label: string;
   value: string;
   hint?: string;
   active?: boolean;
+  booting?: boolean;
 }
 
 function QuickTile({
   to,
   icon: Icon,
+  iconNode,
   label,
   value,
   hint,
   active,
+  booting,
 }: QuickTileProps) {
   return (
     <Link
       to={to}
       className={cn(
         "group flex min-w-[7.5rem] flex-col gap-1 rounded-lg border px-3 py-2.5 transition-colors",
-        active
-          ? "border-success/35 bg-success/8 hover:bg-success/12"
-          : "border-border/80 bg-bg-panel/60 hover:border-border-strong hover:bg-bg-panel",
+        booting
+          ? "border-warning/35 bg-warning/8 hover:bg-warning/12"
+          : active
+            ? "border-success/35 bg-success/8 hover:bg-success/12"
+            : "border-border/80 bg-bg-panel/60 hover:border-border-strong hover:bg-bg-panel",
       )}
     >
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-          <Icon
-            className={cn(
-              "h-3.5 w-3.5",
-              active ? "text-success" : "text-fg-muted",
-            )}
-          />
+          {iconNode ?? (
+            Icon && (
+              <Icon
+                className={cn(
+                  "h-3.5 w-3.5",
+                  booting
+                    ? "text-warning"
+                    : active
+                      ? "text-success"
+                      : "text-fg-muted",
+                )}
+              />
+            )
+          )}
           {label}
         </span>
-        <ChevronRight className="h-3.5 w-3.5 text-fg-subtle opacity-0 transition-opacity group-hover:opacity-100" />
+        {booting ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-warning" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 text-fg-subtle opacity-0 transition-opacity group-hover:opacity-100" />
+        )}
       </div>
       <div
         className={cn(
           "truncate text-sm font-semibold tabular-nums",
-          active ? "text-success" : "text-fg",
+          booting ? "text-warning" : active ? "text-success" : "text-fg",
         )}
       >
         {value}
@@ -146,20 +166,25 @@ export function DashboardHero() {
     queryFn: rpcGetPeerInfo,
     refetchInterval: 5_000,
   });
+  const minerState = useQuery({
+    queryKey: ["get_miner_state"],
+    queryFn: rpcGetMinerState,
+    refetchInterval: 5_000,
+  });
+  const minerActive = minerState.data?.active ?? false;
+  const minerStartedAt = minerState.data?.started_at;
   const mining = useQuery({
     queryKey: ["getmininginfo"],
     queryFn: rpcGetMiningInfo,
-    refetchInterval: 5_000,
+    refetchInterval: (query) => {
+      const hr = query.state.data?.hashrate ?? 0;
+      return miningInfoRefetchMs(minerActive, hr, minerStartedAt, 5_000);
+    },
   });
   const wallet = useQuery({
     queryKey: ["getwalletinfo"],
     queryFn: rpcGetWalletInfo,
     refetchInterval: 10_000,
-  });
-  const minerState = useQuery({
-    queryKey: ["get_miner_state"],
-    queryFn: rpcGetMinerState,
-    refetchInterval: 5_000,
   });
   const explorerEnabled = useQuery({
     queryKey: ["explorer-api-enabled"],
@@ -204,7 +229,8 @@ export function DashboardHero() {
     blocks != null && explorerHeight != null
       ? blocks - explorerHeight
       : undefined;
-  const active = minerState.data?.active ?? false;
+  const active = minerActive;
+  const minerBooting = isMinerBooting(active, localHash, minerStartedAt);
   const immature = wallet.data?.immature_balance ?? 0;
 
   useEffect(() => {
@@ -249,11 +275,19 @@ export function DashboardHero() {
           ? `+${heightDelta} vs explorer`
           : `${heightDelta} vs explorer`;
 
-  const miningValue = active
-    ? `${formatNumber(localHash, 0)} H/m`
-    : localHash > 0
-      ? `${formatNumber(localHash, 0)} H/m idle`
-      : "Idle";
+  const miningValue = minerBooting
+    ? "Starting…"
+    : active
+      ? `${formatNumber(localHash, 0)} H/m`
+      : localHash > 0
+        ? `${formatNumber(localHash, 0)} H/m idle`
+        : "Idle";
+
+  const miningHint = minerBooting
+    ? "Spinning up"
+    : active
+      ? "Active"
+      : undefined;
 
   const walletHint =
     immature > 0
@@ -357,11 +391,18 @@ export function DashboardHero() {
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:gap-2.5">
           <QuickTile
             to="/mining"
-            icon={Pickaxe}
+            iconNode={
+              <MiningPickaxeAnimation
+                active={active && !minerBooting}
+                booting={minerBooting}
+                size="xs"
+              />
+            }
             label="Mining"
             value={miningValue}
-            hint={active ? "Active" : undefined}
-            active={active}
+            hint={miningHint}
+            active={active && !minerBooting}
+            booting={minerBooting}
           />
           <QuickTile
             to="/wallet"

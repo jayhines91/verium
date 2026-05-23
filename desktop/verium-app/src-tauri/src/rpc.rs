@@ -107,9 +107,9 @@ impl RpcClient {
                 message: err.message,
             });
         }
-        let result = parsed
-            .result
-            .ok_or_else(|| AppError::Other("rpc response missing result".into()))?;
+        // Many wallet RPCs (`walletpassphrase`, `walletlock`, `addnode`, …) return
+        // `"result": null` on success. serde maps that to `None` — not an error.
+        let result = parsed.result.unwrap_or(Value::Null);
         Ok(serde_json::from_value(result)?)
     }
 

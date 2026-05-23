@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Pickaxe } from "lucide-react";
+import type { ReactNode } from "react";
+import { MiningPickaxeAnimation } from "@/components/MiningPickaxeAnimation";
 import {
   Card,
   CardContent,
@@ -9,7 +10,10 @@ import {
   CardTitle,
 } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
+import {
+  MinerBootBadge,
+  MinerHashrateDisplay,
+} from "@/components/MinerBootIndicator";
 import {
   buildNetworkStats,
   estimateDailyMining,
@@ -17,6 +21,7 @@ import {
   formatSessionDuration,
   networkSharePercent,
 } from "@/lib/mining-revenue";
+import { isMinerBooting, miningInfoRefetchMs } from "@/lib/mining-boot";
 import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
 import {
   rpcGetMinerState,
@@ -27,15 +32,20 @@ import {
 import { formatNumber, formatVrm } from "@/lib/utils";
 
 export function YourMiningPanel() {
-  const mining = useQuery({
-    queryKey: ["getmininginfo"],
-    queryFn: rpcGetMiningInfo,
-    refetchInterval: 5_000,
-  });
   const minerState = useQuery({
     queryKey: ["get_miner_state"],
     queryFn: rpcGetMinerState,
     refetchInterval: 5_000,
+  });
+  const minerActive = minerState.data?.active ?? false;
+  const minerStartedAt = minerState.data?.started_at;
+  const mining = useQuery({
+    queryKey: ["getmininginfo"],
+    queryFn: rpcGetMiningInfo,
+    refetchInterval: (query) => {
+      const hr = query.state.data?.hashrate ?? 0;
+      return miningInfoRefetchMs(minerActive, hr, minerStartedAt, 5_000);
+    },
   });
   const wallet = useQuery({
     queryKey: ["getwalletinfo"],
@@ -67,7 +77,12 @@ export function YourMiningPanel() {
       (t) => t.category === "generate" || t.category === "immature",
     ).length ?? 0;
   const immature = wallet.data?.immature_balance ?? 0;
-  const active = minerState.data?.active ?? false;
+  const active = minerActive;
+  const minerBooting = isMinerBooting(
+    active,
+    localHashrate,
+    minerStartedAt,
+  );
   const share = networkSharePercent(localHashrate, networkStats?.networkHash);
   const estBlockH = estimateHoursPerBlock(localHashrate, networkStats);
   const daily =
@@ -82,22 +97,35 @@ export function YourMiningPanel() {
       : null;
 
   const miningAny =
-    active || localHashrate > 0 || blocksFound > 0 || immature > 0;
+    minerBooting ||
+    active ||
+    localHashrate > 0 ||
+    blocksFound > 0 ||
+    immature > 0;
 
   return (
     <Card>
       <CardHeader className="flex-row items-start justify-between">
         <div>
           <CardTitle className="flex items-center gap-2">
-            <Pickaxe className="h-4 w-4" /> Your mining
+            <MiningPickaxeAnimation
+              active={active && !minerBooting}
+              booting={minerBooting}
+            />
+            Your mining
           </CardTitle>
           <CardDescription>
             Solo CPU mining activity on this wallet.
           </CardDescription>
         </div>
-        {active && <Badge tone="success">Mining</Badge>}
+        <MinerBootBadge booting={minerBooting} active={active} />
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+        {minerBooting && (
+          <div className="rounded-md border border-accent/30 bg-accent/10 px-3 py-2 text-xs text-fg-muted">
+            Miner is starting — hashrate should appear within a few seconds.
+          </div>
+        )}
         {!miningAny ? (
           <div className="flex flex-col gap-3 rounded-md border border-dashed border-border px-4 py-5 text-center">
             <p className="text-sm text-fg-muted">
@@ -117,9 +145,17 @@ export function YourMiningPanel() {
             <Stat
               label="Hashrate"
               value={
-                localHashrate > 0
-                  ? `${formatNumber(localHashrate, 0)} H/m`
-                  : "—"
+                minerBooting ? (
+                  <MinerHashrateDisplay
+                    booting
+                    value=""
+                    className="font-semibold"
+                  />
+                ) : localHashrate > 0 ? (
+                  `${formatNumber(localHashrate, 0)} H/m`
+                ) : (
+                  "—"
+                )
               }
             />
             <Stat
@@ -155,7 +191,7 @@ export function YourMiningPanel() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-md border border-border bg-bg-subtle/50 px-3 py-2">
       <div className="text-xs uppercase text-fg-subtle">{label}</div>

@@ -1,9 +1,13 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Pickaxe, TrendingUp, Wallet } from "lucide-react";
+import { TrendingUp, Wallet } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Badge } from "@/components/ui/Badge";
 import { ExplorerLink } from "@/components/ExplorerLink";
+import { MiningPickaxeAnimation } from "@/components/MiningPickaxeAnimation";
+import {
+  MinerBootBadge,
+  MinerHashrateDisplay,
+} from "@/components/MinerBootIndicator";
 import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
 import { EXPLORER_HOME } from "@/lib/verium-links";
 import {
@@ -11,6 +15,7 @@ import {
   estimateDailyMining,
   networkSharePercent,
 } from "@/lib/mining-revenue";
+import { isMinerBooting, miningInfoRefetchMs } from "@/lib/mining-boot";
 import {
   rpcGetMinerState,
   rpcGetMiningInfo,
@@ -41,15 +46,20 @@ export function DashboardStrip() {
     queryFn: rpcGetWalletInfo,
     refetchInterval: 10_000,
   });
-  const mining = useQuery({
-    queryKey: ["getmininginfo"],
-    queryFn: rpcGetMiningInfo,
-    refetchInterval: 5_000,
-  });
   const minerState = useQuery({
     queryKey: ["get_miner_state"],
     queryFn: rpcGetMinerState,
     refetchInterval: 5_000,
+  });
+  const minerActive = minerState.data?.active ?? false;
+  const minerStartedAt = minerState.data?.started_at;
+  const mining = useQuery({
+    queryKey: ["getmininginfo"],
+    queryFn: rpcGetMiningInfo,
+    refetchInterval: (query) => {
+      const hr = query.state.data?.hashrate ?? 0;
+      return miningInfoRefetchMs(minerActive, hr, minerStartedAt, 5_000);
+    },
   });
   const txs = useQuery({
     queryKey: ["listtransactions", "dashboard-strip"],
@@ -76,7 +86,12 @@ export function DashboardStrip() {
     txs.data?.filter(
       (t) => t.category === "generate" || t.category === "immature",
     ).length ?? 0;
-  const active = minerState.data?.active ?? false;
+  const active = minerActive;
+  const minerBooting = isMinerBooting(
+    active,
+    localHashrate,
+    minerStartedAt,
+  );
   const daily =
     networkStats && localHashrate > 0
       ? estimateDailyMining({
@@ -175,18 +190,28 @@ export function DashboardStrip() {
       <Card>
         <CardHeader className="flex-row items-center justify-between pb-2 pt-4">
           <CardTitle className="flex items-center gap-2 text-base normal-case">
-            <Pickaxe className="h-4 w-4" /> Your mining
+            <MiningPickaxeAnimation
+              active={active && !minerBooting}
+              booting={minerBooting}
+            />
+            Your mining
           </CardTitle>
-          {active && <Badge tone="success">Mining</Badge>}
+          <MinerBootBadge booting={minerBooting} active={active} />
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-3 pb-4 pt-0 text-sm">
           <MiniStat label="Blocks found" value={formatNumber(blocksFound, 0)} />
-          <MiniStat
-            label="Hashrate"
-            value={
-              localHashrate > 0 ? `${formatNumber(localHashrate, 0)} H/m` : "—"
-            }
-          />
+          <div>
+            <div className="text-xs text-fg-subtle">Hashrate</div>
+            <MinerHashrateDisplay
+              booting={minerBooting}
+              value={
+                localHashrate > 0
+                  ? `${formatNumber(localHashrate, 0)} H/m`
+                  : "—"
+              }
+              className="font-semibold tabular-nums"
+            />
+          </div>
           <MiniStat
             label="Network share"
             value={share != null ? `${formatNumber(share, 2)}%` : "—"}
