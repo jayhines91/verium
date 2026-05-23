@@ -33,8 +33,6 @@ struct VersionFeed {
     version: Option<String>,
     #[serde(default)]
     title: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

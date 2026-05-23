@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 
 use crate::config::DaemonConfig;
 use crate::error::{AppError, AppResult};
+#[cfg(target_os = "windows")]
 use crate::wsl::detect_wsl_veriumd_binary;
 
 #[derive(Debug, Clone, Serialize)]
@@ -19,6 +20,7 @@ pub enum DaemonBinarySource {
     AdjacentToApp,
     Path,
     SystemDefault,
+    #[cfg(target_os = "windows")]
     Wsl,
     None,
 }
@@ -73,10 +75,6 @@ impl DaemonManager {
 
     pub async fn record_pid(&self, pid: Option<u32>) {
         *self.child_pid.lock().await = pid;
-    }
-
-    pub async fn pid(&self) -> Option<u32> {
-        *self.child_pid.lock().await
     }
 }
 

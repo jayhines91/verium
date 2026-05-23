@@ -20,9 +20,6 @@ pub enum AppError {
     #[error("invalid config: {0}")]
     Config(String),
 
-    #[error("not implemented: {0}")]
-    NotImplemented(&'static str),
-
     #[error("{0}")]
     Other(String),
 }

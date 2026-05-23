@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::config::DaemonConfig;
 use crate::error::{AppError, AppResult};
@@ -56,16 +56,6 @@ impl RpcClient {
         let auth = resolve_auth(cfg)?;
         let http = Client::builder().timeout(timeout).build()?;
         Ok(Self { http, url, auth })
-    }
-
-    pub fn with_wallet(&self, wallet: &str) -> Self {
-        let base = self.url.trim_end_matches('/').to_string();
-        let url = format!("{base}/wallet/{wallet}");
-        Self {
-            http: self.http.clone(),
-            url,
-            auth: self.auth.clone(),
-        }
     }
 
     pub async fn call<T: for<'de> Deserialize<'de>>(
@@ -125,11 +115,6 @@ impl RpcClient {
 
     pub async fn call_no_result(&self, method: &str, params: Value) -> AppResult<()> {
         let _: Value = self.call(method, params).await?;
-        Ok(())
-    }
-
-    pub async fn ping(&self) -> AppResult<()> {
-        let _: Value = self.call("uptime", json!([])).await?;
         Ok(())
     }
 }

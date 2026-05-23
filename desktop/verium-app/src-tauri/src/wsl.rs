@@ -346,10 +346,6 @@ pub fn wsl_stop_veriumd_force_datadir(datadir: &Path) {
     }
 }
 
-pub fn wsl_stop_veriumd_force(linux_datadir: &str) {
-    wsl_stop_veriumd_force_datadir(Path::new(linux_datadir));
-}
-
 fn resolve_wsl_repo(repo_root: &str) -> String {
     if wsl_executable_exists(&format!("{repo_root}/src/veriumd")) {
         repo_root.to_string()
@@ -411,19 +407,11 @@ pub fn restart_wsl_veriumd_datadir(datadir: &Path, repo_root: &str) -> AppResult
     start_wsl_veriumd_datadir(datadir, repo_root, VeriumdStartMode::Normal)
 }
 
-pub fn restart_wsl_veriumd(linux_datadir: &str, repo_root: &str) -> AppResult<()> {
-    restart_wsl_veriumd_datadir(Path::new(linux_datadir), repo_root)
-}
-
 pub fn wsl_start_veriumd_if_stopped_datadir(datadir: &Path, repo_root: &str) -> AppResult<()> {
     if wsl_veriumd_running_datadir(datadir) {
         return Ok(());
     }
     start_wsl_veriumd_datadir(datadir, repo_root, VeriumdStartMode::Normal)
-}
-
-pub fn wsl_start_veriumd_if_stopped(linux_datadir: &str, repo_root: &str) -> AppResult<()> {
-    wsl_start_veriumd_if_stopped_datadir(Path::new(linux_datadir), repo_root)
 }
 
 pub fn wsl_veriumd_running_datadir(datadir: &Path) -> bool {
@@ -444,10 +432,6 @@ except subprocess.CalledProcessError:
     ctx.status("python3", &["-c", &script])
         .map(|s| s.success())
         .unwrap_or(false)
-}
-
-pub fn wsl_veriumd_running(linux_datadir: &str) -> bool {
-    wsl_veriumd_running_datadir(Path::new(linux_datadir))
 }
 
 /// True when verium.conf was modified after the WSL veriumd for this datadir started.
@@ -484,10 +468,6 @@ print("1" if conf_mtime > start_mtime + 1 else "0")
         return Ok(false);
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim() == "1")
-}
-
-pub fn wsl_rpc_credentials_stale(linux_datadir: &str) -> AppResult<bool> {
-    wsl_rpc_credentials_stale_datadir(Path::new(linux_datadir))
 }
 
 /// Run a python3 script in WSL with the correct distro/user for a datadir.

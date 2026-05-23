@@ -93,6 +93,7 @@ pub fn run() {
             commands::fetch_explorer_chain_tips,
             commands::fetch_explorer_peers_cmd,
             commands::get_explorer_logo_url,
+            commands::is_explorer_api_enabled,
             commands::get_wsl_restart_hint,
             commands::restart_wsl_veriumd_cmd,
             commands::detect_wsl_datadirs_cmd,

@@ -76,12 +76,4 @@ impl AppState {
         let cfg = self.config_fresh().await?;
         RpcClient::from_config(&cfg)
     }
-
-    pub async fn rpc_client_with_timeout(
-        &self,
-        timeout: std::time::Duration,
-    ) -> AppResult<RpcClient> {
-        let cfg = self.config_fresh().await?;
-        RpcClient::from_config_with_timeout(&cfg, timeout)
-    }
 }

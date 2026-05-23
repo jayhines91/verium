@@ -121,11 +121,3 @@ pub fn detect_datadir_lock_conflict(lines: &[String]) -> Option<String> {
     }
     None
 }
-
-pub async fn clear_debug_log(datadir: &Path) -> AppResult<()> {
-    let path = datadir.join("debug.log");
-    if path.exists() {
-        tokio::fs::write(&path, "").await?;
-    }
-    Ok(())
-}

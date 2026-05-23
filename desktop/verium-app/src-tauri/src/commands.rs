@@ -16,7 +16,7 @@ use crate::error::{AppError, AppResult, is_rpc_warmup};
 use crate::explorer_api::{
     fetch_blocks, fetch_chain_tips, fetch_extraction, fetch_explorer_peers, fetch_network_stats,
     fetch_transactions, ExplorerBlock, ExplorerChainTip, ExplorerExtractionEntry, ExplorerPeerEntry,
-    ExplorerStats, ExplorerTransaction, EXPLORER_API_ENABLED, EXPLORER_LOGO_URL,
+    ExplorerStats, ExplorerTransaction, EXPLORER_API_ENABLED, explorer_logo_url,
 };
 use crate::logs::{
     detect_chain_corruption, detect_datadir_lock_conflict, detect_sync_stall,
@@ -1158,7 +1158,7 @@ pub async fn fetch_explorer_peers_cmd() -> AppResult<Vec<ExplorerPeerEntry>> {
 
 #[tauri::command]
 pub fn get_explorer_logo_url() -> String {
-    EXPLORER_LOGO_URL.to_string()
+    explorer_logo_url()
 }
 
 #[tauri::command]

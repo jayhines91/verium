@@ -9,9 +9,15 @@ use crate::error::{AppError, AppResult};
 pub const EXPLORER_API_ENABLED: bool = true;
 
 pub const EXPLORER_BASE: &str = "https://explorer-vrm.vericonomy.com";
-pub const EXPLORER_LOGO_URL: &str =
-    "https://explorer-vrm.vericonomy.com/assets/images/logo.png";
-pub const EXPLORER_REST: &str = "https://explorer-vrm.vericonomy.com/rest/api/1";
+
+fn explorer_api_url(path: &str) -> String {
+    let path = path.trim_start_matches('/');
+    format!("{EXPLORER_BASE}/rest/api/1/{path}")
+}
+
+pub fn explorer_logo_url() -> String {
+    format!("{EXPLORER_BASE}/assets/images/logo.png")
+}
 
 const CACHE_TTL: Duration = Duration::from_secs(30);
 
@@ -165,20 +171,20 @@ pub async fn fetch_network_stats() -> AppResult<ExplorerStats> {
 
     let mining = get_json(
         &client,
-        &format!("{EXPLORER_REST}/rpc/getmininginfo"),
+        &explorer_api_url("rpc/getmininginfo"),
     )
     .await?;
 
     let supply_info = get_json(
         &client,
-        &format!("{EXPLORER_REST}/rpc/gettxoutsetinfo"),
+        &explorer_api_url("rpc/gettxoutsetinfo"),
     )
     .await
     .ok();
 
     let price_info = get_json(
         &client,
-        &format!("{EXPLORER_REST}/coingecko/price"),
+        &explorer_api_url("coingecko/price"),
     )
     .await
     .ok();
@@ -251,7 +257,7 @@ pub async fn fetch_explorer_peers() -> AppResult<Vec<ExplorerPeerEntry>> {
     }
 
     let client = http_client()?;
-    let versions = get_json(&client, &format!("{EXPLORER_REST}/peer?limit=50")).await?;
+    let versions = get_json(&client, &explorer_api_url("peer?limit=50")).await?;
     let versions = versions
         .as_array()
         .ok_or_else(|| AppError::other("peer versions response is not an array"))?;
@@ -274,7 +280,7 @@ pub async fn fetch_explorer_peers() -> AppResult<Vec<ExplorerPeerEntry>> {
             .and_then(parse_u64)
             .unwrap_or(0);
 
-        let detail = get_json(&client, &format!("{EXPLORER_REST}/peer/{version_id}")).await?;
+        let detail = get_json(&client, &explorer_api_url(&format!("peer/{version_id}"))).await?;
         let Some(peer_list) = detail.get("peers").and_then(|p| p.as_array()) else {
             continue;
         };
@@ -326,7 +332,7 @@ pub async fn fetch_blocks(limit: u32) -> AppResult<Vec<ExplorerBlock>> {
         cached
     } else {
         let client = http_client()?;
-        let url = format!("{EXPLORER_REST}/block?limit=100");
+        let url = explorer_api_url("block?limit=100");
         let value = get_json(&client, &url).await?;
         let arr = value
             .as_array()
@@ -381,7 +387,7 @@ pub async fn fetch_transactions(limit: u32) -> AppResult<Vec<ExplorerTransaction
     }
 
     let client = http_client()?;
-    let url = format!("{EXPLORER_REST}/transaction?limit={limit}");
+    let url = explorer_api_url(&format!("transaction?limit={limit}"));
     let value = get_json(&client, &url).await?;
     let arr = value
         .as_array()
@@ -418,7 +424,7 @@ pub async fn fetch_extraction(limit: u32) -> AppResult<Vec<ExplorerExtractionEnt
     }
 
     let client = http_client()?;
-    let url = format!("{EXPLORER_REST}/extraction?limit={limit}");
+    let url = explorer_api_url(&format!("extraction?limit={limit}"));
     let value = get_json(&client, &url).await?;
     let arr = value
         .as_array()
@@ -449,7 +455,7 @@ pub async fn fetch_chain_tips() -> AppResult<Vec<ExplorerChainTip>> {
     }
 
     let client = http_client()?;
-    let url = format!("{EXPLORER_REST}/chain");
+    let url = explorer_api_url("chain");
     let value = get_json(&client, &url).await?;
     let arr = value
         .as_array()
