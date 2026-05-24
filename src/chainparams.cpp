@@ -83,6 +83,7 @@ public:
         // Let's start with VIP (Verium Improvement Protocol)
         // XXX: Use it and set a correct value
         consensus.VIP1Height = 520000; // Change Min Fee
+        consensus.nTimeRulesActivationHeight = std::numeric_limits<int>::max();
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.
@@ -163,6 +164,9 @@ public:
 
         // VIP (Verium Improvement Protocol) - same as mainnet for now
         consensus.VIP1Height = 520000;
+        // Testnet-only consensus activation point for stricter timestamp rules.
+        // Keep disabled while evaluating behavior with existing chaindata.
+        consensus.nTimeRulesActivationHeight = std::numeric_limits<int>::max();
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.

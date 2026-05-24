@@ -27,6 +27,9 @@ struct Params {
 
     /** VIP */
     int VIP1Height;
+
+    /** Activation height for stricter timestamp consensus checks (INT_MAX disables). */
+    int nTimeRulesActivationHeight;
 };
 } // namespace Consensus
 
