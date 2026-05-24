@@ -14,6 +14,7 @@ import {
   rpcWalletSignMessage,
   rpcWalletVerifyMessage,
 } from "@/lib/rpc/client";
+import { useActiveCoin } from "@/lib/coin/context";
 
 export function SignVerify() {
   return (
@@ -30,11 +31,12 @@ export function SignVerify() {
 }
 
 function SignCard() {
+  const coin = useActiveCoin();
   const [address, setAddress] = useState("");
   const [message, setMessage] = useState("");
 
   const sign = useMutation({
-    mutationFn: () => rpcWalletSignMessage(address.trim(), message),
+    mutationFn: () => rpcWalletSignMessage(coin, address.trim(), message),
   });
 
   return (
@@ -105,13 +107,14 @@ function SignCard() {
 }
 
 function VerifyCard() {
+  const coin = useActiveCoin();
   const [address, setAddress] = useState("");
   const [signature, setSignature] = useState("");
   const [message, setMessage] = useState("");
 
   const verify = useMutation({
     mutationFn: () =>
-      rpcWalletVerifyMessage(address.trim(), signature.trim(), message),
+      rpcWalletVerifyMessage(coin, address.trim(), signature.trim(), message),
   });
 
   return (

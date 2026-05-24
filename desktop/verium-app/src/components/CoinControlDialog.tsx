@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Coins, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { rpcWalletListUnspent } from "@/lib/rpc/client";
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { cn, formatNumber } from "@/lib/utils";
 
 interface CoinControlDialogProps {
@@ -31,9 +33,10 @@ export function CoinControlDialog({
   onClose,
   onApply,
 }: CoinControlDialogProps) {
+  const coin = useActiveCoin();
   const utxos = useQuery({
-    queryKey: ["listunspent"],
-    queryFn: () => rpcWalletListUnspent(1, 9_999_999),
+    queryKey: coinQueryKey(coin, "listunspent"),
+    queryFn: () => rpcWalletListUnspent(coin, 1, 9_999_999),
     enabled: open,
   });
 

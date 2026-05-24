@@ -1,3 +1,5 @@
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -10,7 +12,6 @@ import {
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { YourMiningPanel } from "@/components/YourMiningPanel";
 import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
-import { EXPLORER_HOME } from "@/lib/verium-links";
 import { networkHashToKhm } from "@/lib/mining-revenue";
 import { rpcGetMiningInfo, rpcGetWalletInfo } from "@/lib/rpc/client";
 import { formatNumber, formatVrm } from "@/lib/utils";
@@ -27,14 +28,15 @@ interface DashboardSidebarProps {
 }
 
 export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
+  const coin = useActiveCoin();
   const wallet = useQuery({
-    queryKey: ["getwalletinfo"],
-    queryFn: rpcGetWalletInfo,
+    queryKey: coinQueryKey(coin, "getwalletinfo"),
+    queryFn: () => rpcGetWalletInfo(coin),
     refetchInterval: 10_000,
   });
   const mining = useQuery({
-    queryKey: ["getmininginfo"],
-    queryFn: rpcGetMiningInfo,
+    queryKey: coinQueryKey(coin, "getmininginfo"),
+    queryFn: () => rpcGetMiningInfo(coin),
     refetchInterval: 10_000,
   });
   const explorerEnabled = useQuery({
@@ -43,8 +45,8 @@ export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
     staleTime: Infinity,
   });
   const stats = useQuery({
-    queryKey: ["explorer-stats"],
-    queryFn: fetchExplorerStats,
+    queryKey: coinQueryKey(coin, "explorer-stats"),
+    queryFn: () => fetchExplorerStats(coin),
     enabled: explorerEnabled.data === true,
     refetchInterval: 60_000,
     retry: 0,
@@ -105,7 +107,7 @@ export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
         <Card>
           <CardHeader className="flex-row items-start justify-between pb-2">
             <CardTitle className="text-base">Market</CardTitle>
-            <ExplorerLink target={{ kind: "raw", url: EXPLORER_HOME }} label="Explorer" />
+            <ExplorerLink coin={coin} target={{ kind: "home" }} label="Explorer" />
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-2 text-sm">
             <MiniStat label="VRM" value={formatUsd(stats.data?.price_usd)} />

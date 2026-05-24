@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import { rpcListTransactions, type TransactionItem } from "@/lib/rpc/client";
 
@@ -37,6 +38,7 @@ const POLL_MS = 10_000;
 const BATCH_DEBOUNCE_MS = 800;
 const SEEN_STORAGE_KEY = "verium-notified-receive-txids";
 const MAX_SEEN_TXIDS = 2_000;
+const VERIUM = "verium" as const;
 
 function isIncomingReceive(tx: TransactionItem): boolean {
   return tx.category === "receive" && tx.amount > 0;
@@ -87,20 +89,16 @@ function mergeReceiveEvent(
   });
 }
 
-/**
- * Polls wallet receive transactions and emits batched events for new incoming
- * VRM. Mount once near the app root.
- */
 export function useIncomingVrmWatcher(): void {
-  const { data: status } = useDaemonStatus();
+  const { data: status } = useDaemonStatus(VERIUM);
   const seen = useRef<Set<string>>(loadSeenTxids());
   const initialized = useRef(false);
   const pending = useRef<IncomingVrmEvent[]>([]);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const txs = useQuery({
-    queryKey: ["listtransactions", "incoming-vrm-watcher"],
-    queryFn: () => rpcListTransactions(200, 0),
+    queryKey: coinQueryKey(VERIUM, "listtransactions", "incoming-vrm-watcher"),
+    queryFn: () => rpcListTransactions(VERIUM, 200, 0),
     refetchInterval: POLL_MS,
     retry: 0,
     enabled: status?.connected === true,

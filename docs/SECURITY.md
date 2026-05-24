@@ -11,8 +11,10 @@ covered separately by the core repository.
 | Private keys (`wallet.dat`) | `<data-dir>/wallet.dat` | Yes — AES-256 with your passphrase, performed by `veriumd` |
 | Chain state, blocks | `<data-dir>/blocks/`, `<data-dir>/chainstate/` | No (public chain data) |
 | RPC credentials | `<data-dir>/verium.conf` | No — auto-generated, randomized per install |
-| App preferences | `<config-dir>/Verium/desktop-app/prefs.json` | No |
-| Address book | `<config-dir>/Verium/desktop-app/addressbook.json` | No |
+| App preferences | Encrypted blob in `<config-dir>/Verium/desktop-app/secure/` | Yes — AES-256-GCM, key in OS keychain |
+| Address book | Encrypted blob in `secure/` | Yes |
+| Receive request history | Encrypted blob in `secure/` | Yes |
+| 2FA secrets, audit log, backup hashes | Encrypted blob in `secure/` | Yes |
 | RPC console history | Browser `localStorage` inside the WebView | No |
 
 Default `<data-dir>`:
@@ -21,68 +23,81 @@ Default `<data-dir>`:
 - macOS: `~/Library/Application Support/Verium`
 - Linux: `~/.verium`
 
-## What the wallet does NOT store
+## Recovery (BIP39)
 
-- Your passphrase. It is held in memory only while the wallet is unlocked
-  and never persisted by the desktop app. `walletpassphrase` is invoked
-  with the user-provided string and immediately discarded by the React form.
-- Telemetry or analytics. No outbound network calls are made except:
-  - `veriumd` peer connections (P2P, you control this via the node).
-  - JSON-RPC calls to `127.0.0.1` (the bundled daemon).
-  - Optional calls to `https://explorer-vrm.vericonomy.com/` and
-    `https://files.vericonomy.com/` for price, blocks, bootstrap snapshot,
-    and the version-feed update check.
+- New wallets can generate a 24-word BIP39 recovery phrase during setup.
+- The phrase is verified word-by-word before HD seed is applied via `sethdseed`.
+- **Limitation:** The mnemonic only covers keys derived after HD upgrade. Pre-existing imported private keys are not covered unless re-imported.
+- Optional Shamir 2-of-3 social recovery splits the mnemonic into shares (`VRMSHARE-*` format).
+
+## Two-factor authentication (TOTP)
+
+- TOTP (RFC 6238) gates sensitive actions: send above threshold, change passphrase, show recovery phrase, `dumpprivkey`, restore wallet, edit `verium.conf`.
+- 10 single-use recovery codes are generated at enrollment (hashed at rest).
+- Disabling 2FA triggers a 24-hour cooling-off period.
+
+## App unlock PIN
+
+- Optional 6+ digit PIN gates the UI before the wallet shell renders.
+- PIN hash stored encrypted; verified via Argon2id.
+
+## Auto-lock
+
+- Configurable idle timeout, lock-on-blur, and lock-on-sleep.
+- Triggers `walletlock` RPC when conditions are met.
+
+## Hardware wallets
+
+- Watch-only xpub import via `importpubkey`.
+- Sends use PSBT flow: `walletcreatefundedpsbt` → device sign → `finalizepsbt` → `sendrawtransaction`.
+- Trezor/Ledger USB detection is best-effort; manual xpub import is always available.
+- Coldcard air-gapped signing via PSBT file/QR.
+
+## Multisig
+
+- 2-of-N multisig via `addmultisigaddress` + PSBT cosigner routing.
+- Cosigner labels stored in encrypted address book.
+
+## Spending controls
+
+- Clipboard hijack detection re-checks pasted addresses at send time.
+- Daily spend caps, first-send-to-new-address confirmation, address allowlist mode.
+- Look-alike address warnings for similar prefixes/suffixes.
+
+## Backups
+
+- Scheduled local backups with SHA-256 hash verification.
+- Encrypted cloud backup (`.vbackup`) with a separate backup password (Argon2id + AES-GCM).
+- Backup health card on Dashboard nags when backups are stale.
+
+## Audit log
+
+- Append-only Ed25519-signed log of sensitive operations.
+- Exportable as signed JSON from Settings → Security.
+
+## Installer verification
+
+- Release builds can embed `release-hashes.json` for app + sidecar SHA-256 verification.
+- CI can sign artifacts with Sigstore cosign (see `.github/workflows/desktop-app.yml`).
 
 ## Passphrase handling
 
-- Required for any signing operation (`sendtoaddress`, `signmessage`,
-  `dumpprivkey`).
-- `encryptwallet` is intentionally a one-time setup step. After encryption,
-  `veriumd` traditionally exits and the app restarts it automatically.
-- Passphrase change uses `walletpassphrasechange`. The old passphrase is
-  required.
-- The unlock duration preset only controls the RPC `walletpassphrase`
-  timeout that `veriumd` honors. Closing the wallet does not lock the
-  daemon — re-opening it shows the unlock form again only if the timer is
-  still active.
+- Required for any signing operation (`sendtoaddress`, `signmessage`, `dumpprivkey`).
+- "Forever" unlock stores passphrase in OS keychain (Windows Credential Manager, macOS Keychain, Linux Secret Service).
+- Passphrase never written to disk by the desktop app.
 
 ## RPC exposure
 
-- RPC binds to `127.0.0.1` only by default. The auto-generated
-  `verium.conf` does not include `rpcallowip` for any non-loopback address.
-- Credentials are 128-bit random UUIDs (no leading "verium" username on
-  generated installs); you can rotate them from **Settings → Advanced →
-  Daemon connection → Create RPC login**.
-
-## Sidecar binary
-
-- The bundled `veriumd` is the same binary you would download from
-  [files.vericonomy.com/vrm/releases](https://files.vericonomy.com/vrm/releases/).
-- It is fetched at build time by `scripts/fetch-veriumd.cjs` and signed by
-  the wider Tauri bundling process (no separate signature is applied today).
-- v1 releases are **unsigned**. Verify provenance by downloading only from
-  the GitHub Releases page of this repository.
+- RPC binds to `127.0.0.1` only by default.
+- Credentials are 128-bit random UUIDs.
 
 ## Reporting vulnerabilities
 
-If you believe you have found a security issue:
+Email **security@vericonomy.com** — do not open public GitHub issues for security bugs.
 
-1. Do **not** open a public GitHub issue.
-2. Email **security@vericonomy.com** with a description, reproduction
-   steps, and your PGP key if you have one.
-3. We aim to respond within 72 hours and to ship a fix in the next patch
-   release.
+## Known limitations
 
-We will credit reporters in the relevant CHANGELOG entry unless you ask
-to remain anonymous.
-
-## Known limitations (v1)
-
-- Installers are not code-signed; expect Windows SmartScreen / macOS
-  Gatekeeper warnings.
-- No auto-update mechanism — you must download new releases manually.
-- The RPC console is intentionally power-user only; arbitrary RPC calls
-  can move funds and have no extra confirmation step beyond the wallet
-  unlock.
-- Hardware wallets are not supported.
-- Tor / proxy support is whatever you already configure for `veriumd`.
+- Installers may not be code-signed on all platforms; verify hashes from official releases.
+- UI-layer 2FA/PIN does not stop an attacker with disk access who runs their own `veriumd` — the wallet passphrase is the root of trust on disk.
+- Ledger support uses manual xpub import; Verium BIP44 coin type is unregistered.
+- Regtest is disabled in chain parameters.

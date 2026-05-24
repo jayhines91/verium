@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import {
   rpcSetConfig,
-  tauriDetectVeriumd,
+  tauriDetectDaemon,
   tauriDetectWslDatadirs,
   tauriEnsureDaemonConnected,
   tauriGetWslRestartHint,
@@ -20,14 +20,17 @@ import {
   type RpcTestResult,
   type WslDatadirCandidate,
 } from "@/lib/rpc/client";
+import { coinQueryKey, type CoinId } from "@/lib/coin/profile";
 
 interface DaemonConnectionPanelProps {
+  coin: CoinId;
   config: DaemonConfig | undefined;
   mode?: "settings" | "wizard";
   onConnected?: () => void;
 }
 
 export function DaemonConnectionPanel({
+  coin,
   config,
   mode = "settings",
   onConnected,
@@ -47,8 +50,8 @@ export function DaemonConnectionPanel({
   const [wslRestartCmd, setWslRestartCmd] = useState<string | null>(null);
 
   const binary = useQuery({
-    queryKey: ["detect-veriumd"],
-    queryFn: tauriDetectVeriumd,
+    queryKey: coinQueryKey(coin, "detect-daemon"),
+    queryFn: () => tauriDetectDaemon(coin),
   });
 
   useEffect(() => {
@@ -77,26 +80,32 @@ export function DaemonConnectionPanel({
   });
 
   const test = useMutation({
-    mutationFn: () => tauriTestRpcConnection(partialWithPassword()),
+    mutationFn: () => tauriTestRpcConnection(coin, partialWithPassword()),
     onSuccess: (result) => {
       setTestResult(result);
       if (result.ok) {
-        void queryClient.invalidateQueries({ queryKey: ["daemon-status"] });
+        void queryClient.invalidateQueries({
+          queryKey: coinQueryKey(coin, "daemon-status"),
+        });
         onConnected?.();
       }
     },
   });
 
   const save = useMutation({
-    mutationFn: () => rpcSetConfig(partialWithPassword()),
+    mutationFn: () => rpcSetConfig(coin, partialWithPassword()),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["daemon-config"] });
-      void queryClient.invalidateQueries({ queryKey: ["daemon-status"] });
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "daemon-config"),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "daemon-status"),
+      });
     },
   });
 
   const setupCreds = useMutation({
-    mutationFn: () => tauriSetupRpcCredentials(partialWithPassword()),
+    mutationFn: () => tauriSetupRpcCredentials(coin, partialWithPassword()),
     onSuccess: (result) => {
       setGeneratedCreds({
         user: result.rpc_user,
@@ -109,14 +118,16 @@ export function DaemonConnectionPanel({
       }));
       setRpcPassword(result.rpc_password);
       setPasswordTouched(false);
-      void queryClient.invalidateQueries({ queryKey: ["daemon-config"] });
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "daemon-config"),
+      });
       setTimeout(() => test.mutate(), 5500);
     },
   });
 
-  const start = useMutation({ mutationFn: tauriStartDaemon });
+  const start = useMutation({ mutationFn: () => tauriStartDaemon(coin) });
   const restart = useMutation({
-    mutationFn: tauriRestartDaemon,
+    mutationFn: () => tauriRestartDaemon(coin),
     onSuccess: () => {
       setTimeout(() => test.mutate(), 2500);
     },
@@ -145,8 +156,8 @@ export function DaemonConnectionPanel({
   async function applyWslAndSetup(uncPath: string) {
     await useWslDatadir(uncPath);
     const partial = { ...partialWithPassword(), datadir: uncPath };
-    await rpcSetConfig(partial);
-    const creds = await tauriSetupRpcCredentials(partial);
+    await rpcSetConfig(coin, partial);
+    const creds = await tauriSetupRpcCredentials(coin, partial);
     setGeneratedCreds({ user: creds.rpc_user, password: creds.rpc_password });
     setRpcPassword(creds.rpc_password);
     setDraft((d) => ({ ...d, datadir: uncPath, rpc_user: creds.rpc_user }));
@@ -167,7 +178,7 @@ export function DaemonConnectionPanel({
     if (mode !== "wizard" || !config?.datadir) return;
     void (async () => {
       try {
-        await tauriEnsureDaemonConnected();
+        await tauriEnsureDaemonConnected(coin);
         test.mutate();
       } catch {
         test.mutate();

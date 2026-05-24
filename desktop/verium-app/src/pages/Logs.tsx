@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pause, Play, Radio, RefreshCcw, Square } from "lucide-react";
+import { Pause, Play, RefreshCcw, Square } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -9,11 +9,15 @@ import {
 } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { useActiveCoin } from "@/lib/coin/context";
+import { getCoinProfile } from "@/lib/coin/profile";
 import { tauriTailLogs } from "@/lib/rpc/client";
 
 const POLL_MS = 2_000;
 
 export function Logs() {
+  const coin = useActiveCoin();
+  const profile = getCoinProfile(coin);
   const [lines, setLines] = useState<string[]>([]);
   const [liveMode, setLiveMode] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -29,7 +33,7 @@ export function Logs() {
     const poll = async () => {
       if (paused || stopped) return;
       try {
-        const next = await tauriTailLogs(400);
+        const next = await tauriTailLogs(coin, 400);
         if (!stopped) {
           setLines(next);
           setError(null);
@@ -49,93 +53,87 @@ export function Logs() {
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [liveMode, paused]);
+  }, [coin, liveMode, paused]);
 
   useEffect(() => {
-    if (scrollRef.current && liveMode && !paused) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    if (!liveMode || paused) return;
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [lines, liveMode, paused]);
 
-  const startLiveMode = () => {
-    setPaused(false);
-    setLiveMode(true);
-  };
-
-  const stopLiveMode = () => {
-    setLiveMode(false);
-    setPaused(false);
+  const refreshOnce = async () => {
+    try {
+      setLines(await tauriTailLogs(coin, 400));
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
   };
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-4">
+      <CardHeader className="flex-row flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <CardTitle>debug.log</CardTitle>
-            <Badge tone={liveMode ? (paused ? "warning" : "accent") : "neutral"}>
-              {liveMode ? (paused ? "Paused" : "Live") : "Idle"}
-            </Badge>
-          </div>
+          <CardTitle>Node logs</CardTitle>
           <CardDescription>
-            {liveMode
-              ? "Streaming the daemon log from your data directory."
-              : "Idle — start Live Mode to stream debug.log."}
+            Tail of {profile.binaryName} debug.log from your data directory.
           </CardDescription>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {liveMode ? (
+            <Badge tone="success">Live</Badge>
+          ) : (
+            <Badge tone="neutral">Paused</Badge>
+          )}
+          <Button size="sm" variant="secondary" onClick={() => void refreshOnce()}>
+            <RefreshCcw className="h-3.5 w-3.5" /> Refresh
+          </Button>
           {!liveMode ? (
-            <Button size="sm" onClick={startLiveMode}>
-              <Radio className="h-3.5 w-3.5" /> Live Mode
+            <Button size="sm" onClick={() => setLiveMode(true)}>
+              <Play className="h-3.5 w-3.5" /> Start live
+            </Button>
+          ) : paused ? (
+            <Button size="sm" onClick={() => setPaused(false)}>
+              <Play className="h-3.5 w-3.5" /> Resume
             </Button>
           ) : (
-            <>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => setPaused((p) => !p)}
-              >
-                {paused ? (
-                  <>
-                    <Play className="h-3.5 w-3.5" /> Resume
-                  </>
-                ) : (
-                  <>
-                    <Pause className="h-3.5 w-3.5" /> Pause
-                  </>
-                )}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={stopLiveMode}>
-                <Square className="h-3.5 w-3.5" /> Stop live
-              </Button>
-            </>
+            <Button size="sm" variant="secondary" onClick={() => setPaused(true)}>
+              <Pause className="h-3.5 w-3.5" /> Pause
+            </Button>
           )}
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setLines([])}
-            title="Clear local buffer"
-          >
-            <RefreshCcw className="h-3.5 w-3.5" /> Clear
-          </Button>
+          {liveMode && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setLiveMode(false);
+                setPaused(false);
+              }}
+            >
+              <Square className="h-3.5 w-3.5" /> Stop
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent>
-        {error && <div className="mb-2 text-xs text-danger">{error}</div>}
+        {error && (
+          <div className="mb-3 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+            {error}
+          </div>
+        )}
         <div
           ref={scrollRef}
-          className="h-[520px] overflow-auto rounded-md border border-border bg-black/40 p-3 font-mono text-xs leading-5 text-fg-muted"
+          className="max-h-[32rem] overflow-auto rounded-md border border-border bg-bg-subtle p-3 font-mono text-[11px] leading-relaxed text-fg-muted"
         >
-          {!liveMode && lines.length === 0 ? (
+          {lines.length === 0 ? (
             <div className="text-fg-subtle">
-              Log streaming is off. Click <strong>Live Mode</strong> to tail
-              debug.log.
+              No log lines yet. Start live tail or refresh.
             </div>
-          ) : lines.length === 0 ? (
-            <div className="text-fg-subtle">Waiting for log output…</div>
           ) : (
             lines.map((line, i) => (
-              <div key={i} className="whitespace-pre-wrap break-all">
+              <div key={`${i}-${line.slice(0, 24)}`} className="whitespace-pre-wrap">
                 {line}
               </div>
             ))

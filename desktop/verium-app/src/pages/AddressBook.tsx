@@ -1,3 +1,5 @@
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookUser, Pencil, Plus, Save, Trash2, X } from "lucide-react";
@@ -32,18 +34,19 @@ function emptyDraft(category: AddressBookCategory = "send"): DraftEntry {
 }
 
 export function AddressBook() {
+  const coin = useActiveCoin();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<AddressBookCategory>("send");
   const [draft, setDraft] = useState<DraftEntry | null>(null);
 
   const entries = useQuery({
-    queryKey: ["address-book"],
-    queryFn: listAddressBookEntries,
+    queryKey: coinQueryKey(coin, "address-book"),
+    queryFn: () => listAddressBookEntries(coin),
   });
 
   const upsert = useMutation({
     mutationFn: (entry: DraftEntry) =>
-      upsertAddressBookEntry({
+      upsertAddressBookEntry(coin, {
         id: entry.id ?? "",
         address: entry.address.trim(),
         label: entry.label.trim(),
@@ -52,14 +55,14 @@ export function AddressBook() {
       }),
     onSuccess: () => {
       setDraft(null);
-      queryClient.invalidateQueries({ queryKey: ["address-book"] });
+      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "address-book") });
     },
   });
 
   const remove = useMutation({
-    mutationFn: (id: string) => deleteAddressBookEntry(id),
+    mutationFn: (id: string) => deleteAddressBookEntry(coin, id),
     onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["address-book"] }),
+      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "address-book") }),
   });
 
   const filtered = useMemo(() => {

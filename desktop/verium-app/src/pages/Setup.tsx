@@ -8,6 +8,7 @@ import {
   Circle,
   Cog,
   HardDriveDownload,
+  HardDriveUpload,
   Loader2,
   ShieldCheck,
   Wallet as WalletIcon,
@@ -20,12 +21,14 @@ import {
   CardTitle,
 } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import {
   rpcGetConfig,
   rpcGetWalletInfo,
   rpcSetConfig,
-  tauriDetectVeriumd,
-  tauriDetectVeriumdRuntime,
+  tauriDetectDaemon,
+  tauriDetectDaemonRuntime,
   tauriEnsureDaemonConnected,
   tauriEnsureFirstRun,
   tauriStartDaemon,
@@ -39,13 +42,18 @@ import {
 import { DaemonConnectionPanel } from "@/components/DaemonConnectionPanel";
 import { BootstrapDialog } from "@/components/BootstrapDialog";
 import { WalletCreateForm } from "@/components/WalletCreateForm";
+import { WalletImportForm } from "@/components/WalletImportForm";
 import { WalletUnlockForm } from "@/components/WalletUnlockForm";
+import { RestoreFromPhraseForm } from "@/components/RestoreFromPhraseForm";
+import { RecoveryPhraseWizard } from "@/components/RecoveryPhraseWizard";
+import { recoveryApplyHdSeed } from "@/lib/security/client";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 
 type Step =
   | "welcome"
   | "daemon"
   | "wallet"
+  | "recovery"
   | "bootstrap"
   | "done"
   | "advanced";
@@ -54,41 +62,49 @@ const STEPS: { id: Exclude<Step, "advanced">; label: string }[] = [
   { id: "welcome", label: "Welcome" },
   { id: "daemon", label: "Start node" },
   { id: "wallet", label: "Wallet" },
+  { id: "recovery", label: "Recovery" },
   { id: "bootstrap", label: "Sync" },
   { id: "done", label: "Finish" },
 ];
 
+type WalletAction = "choose" | "create" | "import" | "restore_phrase" | "unlock";
+
 export function Setup() {
+  const coin = useActiveCoin();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("welcome");
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
   const [datadirDraft, setDatadirDraft] = useState<string>("");
+  const [walletAction, setWalletAction] = useState<WalletAction>("choose");
 
   const updatePrefs = useUserPreferences((s) => s.update);
-  const config = useQuery({ queryKey: ["daemon-config"], queryFn: rpcGetConfig });
+  const config = useQuery({
+    queryKey: coinQueryKey(coin, "daemon-config"),
+    queryFn: () => rpcGetConfig(coin),
+  });
   const binary = useQuery({
-    queryKey: ["detect-veriumd"],
-    queryFn: tauriDetectVeriumd,
+    queryKey: coinQueryKey(coin, "detect-daemon"),
+    queryFn: () => tauriDetectDaemon(coin),
   });
   const runtime = useQuery({
-    queryKey: ["detect-veriumd-runtime"],
-    queryFn: tauriDetectVeriumdRuntime,
+    queryKey: coinQueryKey(coin, "detect-daemon-runtime"),
+    queryFn: () => tauriDetectDaemonRuntime(coin),
     refetchInterval: step === "daemon" ? 4_000 : false,
     enabled: step === "daemon",
   });
   const walletFile = useQuery({
-    queryKey: ["wallet-file-status"],
-    queryFn: tauriWalletFileStatus,
+    queryKey: coinQueryKey(coin, "wallet-file-status"),
+    queryFn: () => tauriWalletFileStatus(coin),
     refetchInterval: 4_000,
     enabled: step === "wallet" || step === "daemon",
   });
 
-  const { data: nodeStatus } = useDaemonStatus();
+  const { data: nodeStatus } = useDaemonStatus(coin);
   const connected = Boolean(nodeStatus?.connected);
 
   const walletInfo = useQuery({
-    queryKey: ["getwalletinfo"],
-    queryFn: rpcGetWalletInfo,
+    queryKey: coinQueryKey(coin, "getwalletinfo"),
+    queryFn: () => rpcGetWalletInfo(coin),
     enabled: step === "wallet" && connected,
     retry: 1,
   });
@@ -110,22 +126,29 @@ export function Setup() {
     if (step !== "wallet") return;
     if (walletSetupMode === "ready") {
       setStep("bootstrap");
+      return;
     }
-  }, [step, walletSetupMode]);
+    if (walletSetupMode === "needs_unlock") {
+      setWalletAction("unlock");
+    } else if (walletSetupMode === "needs_encrypt" && walletAction === "unlock") {
+      setWalletAction("choose");
+    }
+  }, [step, walletSetupMode, walletAction]);
 
   const saveConfig = useMutation({
-    mutationFn: rpcSetConfig,
+    mutationFn: (partial: Parameters<typeof rpcSetConfig>[1]) =>
+      rpcSetConfig(coin, partial),
   });
 
   const ensureFirstRun = useMutation({
-    mutationFn: tauriEnsureFirstRun,
+    mutationFn: () => tauriEnsureFirstRun(coin),
   });
 
   const startDaemon = useMutation({
     mutationFn: async () => {
       await ensureFirstRun.mutateAsync();
-      await tauriStartDaemon();
-      const result = await tauriEnsureDaemonConnected();
+      await tauriStartDaemon(coin);
+      const result = await tauriEnsureDaemonConnected(coin);
       return result;
     },
     onSuccess: (result) => {
@@ -151,7 +174,7 @@ export function Setup() {
             Set up Verium
           </CardTitle>
           <CardDescription>
-            Three minutes — start the bundled node, unlock or encrypt your
+            Three minutes — start the bundled node, create or import your
             wallet, optionally seed the chain.
           </CardDescription>
         </CardHeader>
@@ -185,18 +208,25 @@ export function Setup() {
                 <span className="font-mono">veriumd</span> node — there is
                 nothing else to install. If you already use Verium-Qt, your
                 existing wallet and chain data in the same data folder will
-                carry over — just unlock with your existing passphrase.
+                carry over — just unlock with your existing passphrase. You can
+                also import a <span className="font-mono">wallet.dat</span>{" "}
+                backup from another machine during setup.
               </p>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <FeatureTile
                   icon={<Cog className="h-4 w-4" />}
                   title="Auto-start node"
-                  body="The wallet starts and stops the daemon for you."
+                  body="The wallet starts and stops veriumd when you open and close it."
                 />
                 <FeatureTile
                   icon={<ShieldCheck className="h-4 w-4" />}
                   title="Encrypted wallet"
                   body="Strong passphrase, stored only inside wallet.dat."
+                />
+                <FeatureTile
+                  icon={<HardDriveUpload className="h-4 w-4" />}
+                  title="Import backup"
+                  body="Restore wallet.dat from Verium-Qt or a saved backup."
                 />
                 <FeatureTile
                   icon={<HardDriveDownload className="h-4 w-4" />}
@@ -357,22 +387,134 @@ export function Setup() {
                 </div>
               )}
 
-              {walletSetupMode === "needs_unlock" && (
-                <WalletUnlockForm
-                  title="Unlock your existing wallet"
-                  description="Enter the passphrase from your previous Verium wallet. Your coins, addresses, and transaction history stay exactly as they are."
-                  onUnlocked={() => setStep("bootstrap")}
-                />
+              {walletSetupMode === "needs_unlock" && walletAction === "unlock" && (
+                <>
+                  <WalletUnlockForm
+                    title="Unlock your existing wallet"
+                    description="Enter the passphrase from your previous Verium wallet. Your coins, addresses, and transaction history stay exactly as they are."
+                    onUnlocked={() => setStep("bootstrap")}
+                  />
+                  <div className="border-t border-border pt-3">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setWalletAction("import")}
+                    >
+                      Import a different wallet.dat instead
+                    </Button>
+                  </div>
+                </>
               )}
 
-              {walletSetupMode === "needs_encrypt" && (
-                <WalletCreateForm
-                  onCreated={() => setStep("bootstrap")}
-                  onAlreadyEncrypted={() => {
+              {walletSetupMode === "needs_encrypt" && walletAction === "choose" && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setWalletAction("create")}
+                    className="flex flex-col gap-2 rounded-md border border-border bg-bg-subtle p-4 text-left transition-colors hover:border-accent"
+                  >
+                    <span className="flex items-center gap-2 text-sm font-medium text-fg">
+                      <WalletIcon className="h-4 w-4 text-accent" />
+                      Create new wallet
+                    </span>
+                    <span className="text-xs text-fg-muted">
+                      First time on this machine — choose a passphrase and
+                      encrypt a fresh wallet.dat.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWalletAction("import")}
+                    className="flex flex-col gap-2 rounded-md border border-border bg-bg-subtle p-4 text-left transition-colors hover:border-accent"
+                  >
+                    <span className="flex items-center gap-2 text-sm font-medium text-fg">
+                      <HardDriveUpload className="h-4 w-4 text-accent" />
+                      Import wallet.dat
+                    </span>
+                    <span className="text-xs text-fg-muted">
+                      Restore a backup from Verium-Qt, this app, or another
+                      computer.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWalletAction("restore_phrase")}
+                    className="flex flex-col gap-2 rounded-md border border-border bg-bg-subtle p-4 text-left transition-colors hover:border-accent sm:col-span-2"
+                  >
+                    <span className="flex items-center gap-2 text-sm font-medium text-fg">
+                      <ShieldCheck className="h-4 w-4 text-accent" />
+                      Restore from recovery phrase
+                    </span>
+                    <span className="text-xs text-fg-muted">
+                      Enter your 24-word BIP39 mnemonic to recover an HD wallet.
+                    </span>
+                  </button>
+                </div>
+              )}
+
+              {walletAction === "create" && walletSetupMode === "needs_encrypt" && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="self-start"
+                    onClick={() => setWalletAction("choose")}
+                  >
+                    Back
+                  </Button>
+                  <WalletCreateForm
+                    onCreated={() => setStep("recovery")}
+                    onAlreadyEncrypted={() => {
+                      void walletInfo.refetch();
+                    }}
+                  />
+                </>
+              )}
+
+              {walletAction === "restore_phrase" && (
+                <RestoreFromPhraseForm
+                  onRestored={() => {
+                    setWalletAction("unlock");
                     void walletInfo.refetch();
                   }}
                 />
               )}
+
+              {walletAction === "import" && (
+                <WalletImportForm
+                  onRestored={() => {
+                    setWalletAction("unlock");
+                    void walletInfo.refetch();
+                    void walletFile.refetch();
+                  }}
+                  onCancel={
+                    walletSetupMode === "needs_unlock"
+                      ? () => setWalletAction("unlock")
+                      : walletSetupMode === "needs_encrypt"
+                        ? () => setWalletAction("choose")
+                        : undefined
+                  }
+                />
+              )}
+            </div>
+          )}
+
+          {step === "recovery" && (
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-2 text-sm text-fg">
+                <ShieldCheck className="h-4 w-4 text-accent" />
+                Save your recovery phrase
+              </div>
+              <p className="text-sm text-fg-muted">
+                Write down this 24-word phrase before continuing. It is the only
+                way to recover your wallet if you lose your passphrase or computer.
+              </p>
+              <RecoveryPhraseWizard
+                onComplete={(phrase) => {
+                  void recoveryApplyHdSeed(coin, phrase).then(() => setStep("bootstrap"));
+                }}
+                onSkip={() => setStep("bootstrap")}
+              />
             </div>
           )}
 
@@ -400,6 +542,7 @@ export function Setup() {
                 </Button>
               </div>
               <BootstrapDialog
+                coin={coin}
                 open={bootstrapOpen}
                 onClose={() => {
                   setBootstrapOpen(false);
@@ -459,6 +602,7 @@ export function Setup() {
               </div>
 
               <DaemonConnectionPanel
+                coin={coin}
                 config={config.data}
                 mode="wizard"
                 onConnected={() => setStep("wallet")}

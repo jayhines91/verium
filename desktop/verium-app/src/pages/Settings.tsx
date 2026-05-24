@@ -1,6 +1,7 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Monitor, Moon, Sun } from "lucide-react";
+import { ChevronDown, ChevronRight, Monitor, Moon, Shield, Sun } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -13,14 +14,18 @@ import { Badge } from "@/components/ui/Badge";
 import { ExternalLinkButton } from "@/components/ExternalLinkButton";
 import { DaemonConnectionPanel } from "@/components/DaemonConnectionPanel";
 import { WalletBackupCard } from "@/components/WalletBackupCard";
+import { VeriumConfEditorCard } from "@/components/VeriumConfEditorCard";
 import { useTheme } from "@/hooks/useTheme";
+import { ALL_COINS, coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
+import { useEnabledCoins } from "@/lib/coin/context";
+import { clearStakingStoppedByUser } from "@/hooks/useAutoStake";
 import { clearMiningStoppedByUser } from "@/lib/mining-session";
 import type { ThemeMode } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import {
   rpcGetConfig,
   tauriCheckForUpdates,
-  tauriDetectVeriumd,
+  tauriDetectDaemon,
   tauriRestartDaemon,
   tauriStartDaemon,
   tauriStopDaemon,
@@ -42,13 +47,15 @@ import {
 } from "@/lib/verium-links";
 
 export function Settings() {
+  const enabledCoins = useEnabledCoins();
+  const [daemonCoin, setDaemonCoin] = useState<CoinId>("verium");
   const config = useQuery({
-    queryKey: ["daemon-config"],
-    queryFn: rpcGetConfig,
+    queryKey: coinQueryKey(daemonCoin, "daemon-config"),
+    queryFn: () => rpcGetConfig(daemonCoin),
   });
-  const start = useMutation({ mutationFn: tauriStartDaemon });
-  const stop = useMutation({ mutationFn: tauriStopDaemon });
-  const restart = useMutation({ mutationFn: tauriRestartDaemon });
+  const start = useMutation({ mutationFn: () => tauriStartDaemon(daemonCoin) });
+  const stop = useMutation({ mutationFn: () => tauriStopDaemon(daemonCoin) });
+  const restart = useMutation({ mutationFn: () => tauriRestartDaemon(daemonCoin) });
   const updates = useMutation({ mutationFn: tauriCheckForUpdates });
 
   const prefs = useUserPreferences((s) => s.prefs);
@@ -57,13 +64,34 @@ export function Settings() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const binary = useQuery({
-    queryKey: ["detect-veriumd"],
-    queryFn: tauriDetectVeriumd,
+    queryKey: coinQueryKey(daemonCoin, "detect-daemon"),
+    queryFn: () => tauriDetectDaemon(daemonCoin),
     enabled: advancedOpen,
   });
 
   return (
     <div className="flex flex-col gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Shield className="h-4 w-4 text-accent" />
+            Security center
+          </CardTitle>
+          <CardDescription>
+            Two-factor authentication, recovery phrase, hardware wallets, backups,
+            spending controls, and audit log.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Link
+            to="/security"
+            className="inline-flex h-8 items-center justify-center rounded-md bg-accent px-3 text-xs font-medium text-accent-fg hover:bg-accent/90"
+          >
+            Open security settings
+          </Link>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>Appearance</CardTitle>
@@ -78,6 +106,39 @@ export function Settings() {
       </Card>
 
       <WalletBackupCard />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Chains</CardTitle>
+          <CardDescription>
+            Enable or disable Verium and Vericoin in the wallet UI.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <label className="flex cursor-pointer items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={prefs.verium_enabled !== false}
+              onChange={(e) =>
+                void updatePrefs({ verium_enabled: e.target.checked })
+              }
+              className="h-4 w-4 rounded border-border accent-accent"
+            />
+            <span>Verium (VRM) — mining</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={prefs.vericoin_enabled !== false}
+              onChange={(e) =>
+                void updatePrefs({ vericoin_enabled: e.target.checked })
+              }
+              className="h-4 w-4 rounded border-border accent-accent"
+            />
+            <span>Vericoin (VRC) — staking</span>
+          </label>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -101,6 +162,41 @@ export function Settings() {
               className="h-4 w-4 rounded border-border accent-accent"
             />
             <span>Notify when VRM is received (toast + sound)</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={prefs.notify_on_vrc_received !== false}
+              onChange={(e) =>
+                void updatePrefs({ notify_on_vrc_received: e.target.checked })
+              }
+              className="h-4 w-4 rounded border-border accent-accent"
+            />
+            <span>Notify when VRC is received</span>
+          </label>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Staking</CardTitle>
+          <CardDescription>
+            Automatically start Vericoin staking when the app opens.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <label className="flex cursor-pointer items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={prefs.auto_stake_on_open === true}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                if (checked) clearStakingStoppedByUser();
+                void updatePrefs({ auto_stake_on_open: checked });
+              }}
+              className="h-4 w-4 rounded border-border accent-accent"
+            />
+            <span>Auto-stake on open</span>
           </label>
         </CardContent>
       </Card>
@@ -241,6 +337,8 @@ export function Settings() {
         </CardContent>
       </Card>
 
+      <VeriumConfEditorCard coin={daemonCoin} />
+
       <Card>
         <CardHeader
           className="cursor-pointer select-none"
@@ -292,15 +390,29 @@ export function Settings() {
 
             <section className="flex flex-col gap-2">
               <h3 className="text-sm font-semibold">Daemon connection</h3>
+              <div className="flex flex-wrap gap-2">
+                {ALL_COINS.filter((c) => enabledCoins.includes(c)).map((c) => (
+                  <Button
+                    key={c}
+                    size="sm"
+                    variant={daemonCoin === c ? "primary" : "secondary"}
+                    onClick={() => setDaemonCoin(c)}
+                  >
+                    {getCoinProfile(c).symbol}
+                  </Button>
+                ))}
+              </div>
               <p className="text-xs text-fg-muted">
-                Point the app at a different data directory or RPC endpoint.
-                Changes require a daemon restart.
+                Configure RPC and data directory for{" "}
+                {getCoinProfile(daemonCoin).displayName}.
               </p>
-              <DaemonConnectionPanel config={config.data} mode="settings" />
+              <DaemonConnectionPanel coin={daemonCoin} config={config.data} mode="settings" />
             </section>
 
             <section className="flex flex-col gap-3">
-              <h3 className="text-sm font-semibold">Verium core binary</h3>
+              <h3 className="text-sm font-semibold">
+                {getCoinProfile(daemonCoin).displayName} core binary
+              </h3>
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-fg-muted">Status:</span>
                 {binary.data?.manageable ? (
@@ -336,7 +448,8 @@ export function Settings() {
               <h3 className="text-sm font-semibold">Explorer integration</h3>
               <p className="text-xs text-fg-muted">
                 URL templates used when opening transactions, blocks, and
-                addresses on the official explorer. Use{" "}
+                addresses on the official explorer. Defaults follow the active
+                chain (VRM → explorer-vrm, VRC → explorer-vrc). Use{" "}
                 <span className="font-mono">%s</span> as the placeholder.
               </p>
               <Field

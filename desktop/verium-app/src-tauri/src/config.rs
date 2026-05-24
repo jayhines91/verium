@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::coin_profile::CoinId;
 use crate::daemon;
 use crate::error::{AppError, AppResult};
 use crate::wsl::{detect_wsl_datadirs, is_wsl_unc_path, normalize_wsl_unc_path};
@@ -25,35 +26,64 @@ pub struct DaemonConfig {
 
 impl Default for DaemonConfig {
     fn default() -> Self {
-        let datadir = default_datadir();
-        let cookie_path = Some(datadir.join(".cookie"));
-        Self {
-            datadir,
-            rpc_host: "127.0.0.1".to_string(),
-            rpc_port: 33987,
-            chain: "main".to_string(),
-            rpc_user: None,
-            rpc_password: None,
-            rpc_password_set: false,
-            cookie_path,
-        }
+        default_config_for_coin(CoinId::Verium)
     }
 }
 
-pub fn default_datadir() -> PathBuf {
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    {
-        if let Some(d) = dirs::data_dir() {
-            return d.join("Verium");
+pub fn default_config_for_coin(coin: CoinId) -> DaemonConfig {
+    let datadir = default_datadir(coin);
+    let cookie_path = Some(datadir.join(".cookie"));
+    DaemonConfig {
+        datadir,
+        rpc_host: "127.0.0.1".to_string(),
+        rpc_port: coin.default_rpc_port(),
+        chain: coin.default_network_chain().to_string(),
+        rpc_user: None,
+        rpc_password: None,
+        rpc_password_set: false,
+        cookie_path,
+    }
+}
+
+pub fn default_datadir(coin: CoinId) -> PathBuf {
+    coin.default_datadir()
+}
+
+pub fn app_config_base() -> PathBuf {
+    let base = dirs::config_dir()
+        .or_else(dirs::data_dir)
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("Vericonomy").join("desktop-app")
+}
+
+pub fn migrate_legacy_configs() -> AppResult<()> {
+    let legacy_daemon = app_config_base()
+        .parent()
+        .map(|p| p.join("Verium").join("desktop-app").join("daemon.json"));
+    let legacy_addressbook = app_config_base()
+        .parent()
+        .map(|p| p.join("Verium").join("desktop-app").join("addressbook.json"));
+    if let Some(legacy) = legacy_daemon {
+        let target = app_daemon_config_path(CoinId::Verium);
+        if legacy.exists() && !target.exists() {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&legacy, &target)?;
+            tracing::info!("migrated legacy daemon.json to {}", target.display());
         }
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        if let Some(h) = dirs::home_dir() {
-            return h.join(".verium");
+    if let Some(legacy) = legacy_addressbook {
+        let target = app_addressbook_path(CoinId::Verium);
+        if legacy.exists() && !target.exists() {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&legacy, &target)?;
+            tracing::info!("migrated legacy addressbook.json to {}", target.display());
         }
     }
-    PathBuf::from(".")
+    Ok(())
 }
 
 /// App-level daemon settings persisted between wallet restarts (no secrets on disk).
@@ -67,14 +97,15 @@ struct SavedDaemonConfig {
     pub rpc_user: Option<String>,
 }
 
-pub fn app_daemon_config_path() -> PathBuf {
-    let base = dirs::config_dir()
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("Verium").join("desktop-app").join("daemon.json")
+pub fn app_daemon_config_path(coin: CoinId) -> PathBuf {
+    app_config_base().join(format!("daemon-{}.json", coin.as_str()))
 }
 
-pub fn save_app_daemon_config(cfg: &DaemonConfig) -> AppResult<()> {
+pub fn app_addressbook_path(coin: CoinId) -> PathBuf {
+    app_config_base().join(format!("addressbook-{}.json", coin.as_str()))
+}
+
+pub fn save_app_daemon_config(coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {
     let saved = SavedDaemonConfig {
         datadir: cfg.datadir.clone(),
         rpc_host: cfg.rpc_host.clone(),
@@ -82,7 +113,7 @@ pub fn save_app_daemon_config(cfg: &DaemonConfig) -> AppResult<()> {
         chain: cfg.chain.clone(),
         rpc_user: cfg.rpc_user.clone(),
     };
-    let path = app_daemon_config_path();
+    let path = app_daemon_config_path(coin);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -92,8 +123,8 @@ pub fn save_app_daemon_config(cfg: &DaemonConfig) -> AppResult<()> {
     Ok(())
 }
 
-fn load_saved_daemon_config() -> AppResult<Option<SavedDaemonConfig>> {
-    let path = app_daemon_config_path();
+fn load_saved_daemon_config(coin: CoinId) -> AppResult<Option<SavedDaemonConfig>> {
+    let path = app_daemon_config_path(coin);
     if !path.exists() {
         return Ok(None);
     }
@@ -120,8 +151,11 @@ fn config_from_saved(saved: SavedDaemonConfig) -> DaemonConfig {
     }
 }
 
-fn config_from_wsl_autodetect() -> Option<DaemonConfig> {
-    if !cfg!(target_os = "windows") || daemon::bundled_sidecar_available() {
+fn config_from_wsl_autodetect(coin: CoinId) -> Option<DaemonConfig> {
+    if coin != CoinId::Verium {
+        return None;
+    }
+    if !cfg!(target_os = "windows") || daemon::bundled_sidecar_available(coin) {
         return None;
     }
     let candidates = detect_wsl_datadirs().ok()?;
@@ -129,38 +163,39 @@ fn config_from_wsl_autodetect() -> Option<DaemonConfig> {
     tracing::info!("auto-detected WSL datadir: {}", best.unc_path);
     Some(DaemonConfig {
         datadir: PathBuf::from(&best.unc_path),
-        ..DaemonConfig::default()
+        ..default_config_for_coin(coin)
     })
 }
 
-pub fn load_or_default_config() -> AppResult<DaemonConfig> {
-    let mut cfg = if let Some(saved) = load_saved_daemon_config()? {
+pub fn load_or_default_config(coin: CoinId) -> AppResult<DaemonConfig> {
+    let _ = migrate_legacy_configs();
+    let mut cfg = if let Some(saved) = load_saved_daemon_config(coin)? {
         config_from_saved(saved)
-    } else if let Some(auto) = config_from_wsl_autodetect() {
+    } else if let Some(auto) = config_from_wsl_autodetect(coin) {
         auto
     } else {
-        DaemonConfig::default()
+        default_config_for_coin(coin)
     };
-    // Shipped builds bundle veriumd natively — ignore leftover dev WSL datadir paths.
-    if daemon::bundled_sidecar_available() && is_wsl_unc_path(&cfg.datadir) {
+    // Shipped builds bundle sidecars natively — ignore leftover dev WSL datadir paths.
+    if daemon::bundled_sidecar_available(coin) && is_wsl_unc_path(&cfg.datadir) {
         tracing::info!(
             "bundled sidecar: using native datadir instead of {}",
             cfg.datadir.display()
         );
-        cfg.datadir = default_datadir();
+        cfg.datadir = default_datadir(coin);
     }
-    refresh_config_paths(&mut cfg)?;
+    refresh_config_paths(coin, &mut cfg)?;
     Ok(cfg)
 }
 
 /// Ensures the data directory exists and that verium.conf carries an RPC login
 /// the desktop app can authenticate with. Safe to call on every launch — only
 /// writes when something is missing.
-pub fn ensure_first_run_config(cfg: &mut DaemonConfig) -> AppResult<bool> {
+pub fn ensure_first_run_config(coin: CoinId, cfg: &mut DaemonConfig) -> AppResult<bool> {
     fs::create_dir_all(&cfg.datadir)?;
-    refresh_config_paths(cfg)?;
+    refresh_config_paths(coin, cfg)?;
 
-    let diag = rpc_auth_diagnostics(cfg);
+    let diag = rpc_auth_diagnostics(coin, cfg);
     let needs_creds = !diag.rpc_user_in_conf || !diag.rpc_password_in_conf;
     if !needs_creds {
         return Ok(false);
@@ -170,7 +205,7 @@ pub fn ensure_first_run_config(cfg: &mut DaemonConfig) -> AppResult<bool> {
         .rpc_user
         .clone()
         .filter(|u| !u.is_empty())
-        .unwrap_or_else(|| "veriumwallet".to_string());
+        .unwrap_or_else(|| coin.default_rpc_user().to_string());
     let password = generate_rpc_password();
     let overrides = vec![
         ("server", "1".to_string()),
@@ -180,11 +215,11 @@ pub fn ensure_first_run_config(cfg: &mut DaemonConfig) -> AppResult<bool> {
         ("rpcuser", user.clone()),
         ("rpcpassword", password.clone()),
     ];
-    write_verium_conf_overrides(&cfg.datadir, &overrides)?;
+    write_node_conf_overrides(coin, &cfg.datadir, &overrides)?;
     cfg.rpc_user = Some(user);
     cfg.rpc_password = Some(password);
-    refresh_config_paths(cfg)?;
-    save_app_daemon_config(cfg)?;
+    refresh_config_paths(coin, cfg)?;
+    save_app_daemon_config(coin, cfg)?;
     tracing::info!("first-run: wrote rpc credentials to {}", cfg.datadir.display());
     Ok(true)
 }
@@ -251,13 +286,13 @@ pub fn wallet_backup_dir(cfg: &DaemonConfig) -> AppResult<PathBuf> {
     Ok(dir)
 }
 
-pub fn default_wallet_backup_filename() -> String {
+pub fn default_wallet_backup_filename(coin: CoinId) -> String {
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    format!("verium-wallet-{stamp}.dat")
+    format!("{}-wallet-{stamp}.dat", coin.as_str())
 }
 
-pub fn suggested_wallet_backup_path(cfg: &DaemonConfig) -> AppResult<PathBuf> {
-    Ok(wallet_backup_dir(cfg)?.join(default_wallet_backup_filename()))
+pub fn suggested_wallet_backup_path(coin: CoinId, cfg: &DaemonConfig) -> AppResult<PathBuf> {
+    Ok(wallet_backup_dir(cfg)?.join(default_wallet_backup_filename(coin)))
 }
 
 /// Absolute path string for `backupwallet` (forward slashes work on Windows too).
@@ -308,13 +343,14 @@ pub struct PartialDaemonConfig {
     pub rpc_password: Option<String>,
 }
 
-pub fn parse_verium_conf_into(datadir: &Path, cfg: &mut DaemonConfig) -> AppResult<()> {
-    let path = datadir.join("verium.conf");
+pub fn parse_node_conf_into(coin: CoinId, datadir: &Path, cfg: &mut DaemonConfig) -> AppResult<()> {
+    let path = datadir.join(coin.conf_filename());
     if !path.exists() {
         return Ok(());
     }
     let content = fs::read_to_string(&path)?;
     let mut current_section: Option<String> = None;
+    let active_section = coin.conf_section().map(str::to_string);
     let active_chain = cfg.chain.clone();
     for raw in content.lines() {
         let line = strip_comment(raw).trim().to_string();
@@ -329,9 +365,11 @@ pub fn parse_verium_conf_into(datadir: &Path, cfg: &mut DaemonConfig) -> AppResu
             current_section = Some(section);
             continue;
         }
-        let in_active_section = match &current_section {
-            None => true,
-            Some(s) => s == &active_chain,
+        let in_active_section = match (&active_section, &current_section) {
+            (None, None) => true,
+            (None, Some(s)) => s == &active_chain,
+            (Some(expected), Some(s)) => s == expected,
+            (Some(_), None) => true,
         };
         if !in_active_section {
             continue;
@@ -361,6 +399,11 @@ pub fn parse_verium_conf_into(datadir: &Path, cfg: &mut DaemonConfig) -> AppResu
     Ok(())
 }
 
+/// Backwards-compatible alias.
+pub fn parse_verium_conf_into(datadir: &Path, cfg: &mut DaemonConfig) -> AppResult<()> {
+    parse_node_conf_into(CoinId::Verium, datadir, cfg)
+}
+
 fn strip_comment(line: &str) -> &str {
     if let Some(idx) = line.find('#') {
         &line[..idx]
@@ -369,9 +412,9 @@ fn strip_comment(line: &str) -> &str {
     }
 }
 
-pub fn refresh_config_paths(cfg: &mut DaemonConfig) -> AppResult<()> {
+pub fn refresh_config_paths(coin: CoinId, cfg: &mut DaemonConfig) -> AppResult<()> {
     let datadir = cfg.datadir.clone();
-    parse_verium_conf_into(&datadir, cfg)?;
+    parse_node_conf_into(coin, &datadir, cfg)?;
     let cookie = datadir.join(".cookie");
     if cookie.exists() {
         cfg.cookie_path = Some(cookie);
@@ -396,8 +439,8 @@ pub struct RpcAuthDiagnostics {
     pub app_auth_method: String,
 }
 
-pub fn rpc_auth_diagnostics(cfg: &DaemonConfig) -> RpcAuthDiagnostics {
-    let conf_path = cfg.datadir.join("verium.conf");
+pub fn rpc_auth_diagnostics(coin: CoinId, cfg: &DaemonConfig) -> RpcAuthDiagnostics {
+    let conf_path = node_conf_path(coin, cfg);
     let mut rpc_user_in_conf = false;
     let mut rpc_password_in_conf = false;
     if conf_path.exists() {
@@ -438,19 +481,25 @@ pub fn rpc_auth_diagnostics(cfg: &DaemonConfig) -> RpcAuthDiagnostics {
     }
 }
 
-pub fn write_verium_conf_overrides(
+pub fn write_node_conf_overrides(
+    coin: CoinId,
     datadir: &Path,
     overrides: &[(&str, String)],
 ) -> AppResult<()> {
-    let path = datadir.join("verium.conf");
+    let path = datadir.join(coin.conf_filename());
     fs::create_dir_all(datadir)?;
     let existing = fs::read_to_string(&path).unwrap_or_default();
-    let backup = datadir.join("verium.conf.bak");
+    let backup = datadir.join(format!("{}.bak", coin.conf_filename()));
     if path.exists() {
         let _ = fs::copy(&path, &backup);
     }
 
     let mut lines: Vec<String> = existing.lines().map(|l| l.to_string()).collect();
+    if coin.conf_section().is_some() && !existing.contains('[') {
+        if let Some(section) = coin.conf_section() {
+            lines.insert(0, format!("[{section}]"));
+        }
+    }
     for (key, value) in overrides {
         let prefix = format!("{key}=");
         let comment_prefix = format!("#{key}=");
@@ -469,5 +518,80 @@ pub fn write_verium_conf_overrides(
     }
     let joined = lines.join("\n");
     fs::write(&path, joined)?;
+    Ok(())
+}
+
+pub fn write_verium_conf_overrides(
+    datadir: &Path,
+    overrides: &[(&str, String)],
+) -> AppResult<()> {
+    write_node_conf_overrides(CoinId::Verium, datadir, overrides)
+}
+
+pub fn node_conf_path(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
+    cfg.datadir.join(coin.conf_filename())
+}
+
+pub fn node_conf_backup_path(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
+    cfg.datadir.join(format!("{}.bak", coin.conf_filename()))
+}
+
+pub fn read_node_conf_file(coin: CoinId, cfg: &DaemonConfig) -> AppResult<String> {
+    let path = node_conf_path(coin, cfg);
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    Ok(fs::read_to_string(&path)?)
+}
+
+pub fn write_node_conf_file(coin: CoinId, cfg: &DaemonConfig, content: &str) -> AppResult<()> {
+    fs::create_dir_all(&cfg.datadir)?;
+    let path = node_conf_path(coin, cfg);
+    if path.exists() {
+        let _ = fs::copy(&path, node_conf_backup_path(coin, cfg));
+    }
+    fs::write(&path, content)?;
+    Ok(())
+}
+
+pub fn verium_conf_path(cfg: &DaemonConfig) -> PathBuf {
+    node_conf_path(CoinId::Verium, cfg)
+}
+
+pub fn verium_conf_backup_path(cfg: &DaemonConfig) -> PathBuf {
+    node_conf_backup_path(CoinId::Verium, cfg)
+}
+
+pub fn read_verium_conf_file(cfg: &DaemonConfig) -> AppResult<String> {
+    read_node_conf_file(CoinId::Verium, cfg)
+}
+
+pub fn write_verium_conf_file(cfg: &DaemonConfig, content: &str) -> AppResult<()> {
+    write_node_conf_file(CoinId::Verium, cfg, content)
+}
+
+/// Berkeley DB keeps environment files beside `wallet.dat`. After replacing the
+/// wallet file, stale log/cache files must be removed or veriumd can load a mix
+/// of old and new wallet state (wrong balances vs transaction list).
+pub fn clear_wallet_bdb_environment(wallet_dat: &Path) -> AppResult<()> {
+    let Some(parent) = wallet_dat.parent() else {
+        return Ok(());
+    };
+    let db_dir = parent.join("database");
+    if db_dir.is_dir() {
+        fs::remove_dir_all(&db_dir)?;
+        tracing::info!(
+            "wallet restore: cleared Berkeley DB environment at {}",
+            db_dir.display()
+        );
+    }
+    let db_log = parent.join("db.log");
+    if db_log.is_file() {
+        fs::remove_file(&db_log)?;
+        tracing::info!(
+            "wallet restore: removed stale db.log at {}",
+            db_log.display()
+        );
+    }
     Ok(())
 }

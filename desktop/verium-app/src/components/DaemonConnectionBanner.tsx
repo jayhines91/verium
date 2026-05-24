@@ -2,23 +2,44 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { useDaemonStatus } from "@/hooks/useDaemonStatus";
-import { tauriRepairChain, tauriRestartWslVeriumd } from "@/lib/rpc/client";
+import { BootstrapProgressPanel } from "@/components/BootstrapProgressPanel";
+import { DaemonConnectingBanner } from "@/components/DaemonConnectingBanner";
+import { coinQueryKey } from "@/lib/coin/profile";
+import { useActiveCoin } from "@/lib/coin/context";
+import { getCoinProfile } from "@/lib/coin/profile";
+import { isBinaryUnavailableError } from "@/lib/daemon-connecting";
+import { bootstrapCanCancel } from "@/lib/bootstrap-progress";
+import { useBootstrapProgress } from "@/hooks/useBootstrapProgress";
+import { resetDaemonEnsureAttempt, useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { tauriCancelBootstrap, tauriRepairChain, tauriRestartWslVeriumd } from "@/lib/rpc/client";
 import { useQuery } from "@tanstack/react-query";
 import { rpcGetConfig } from "@/lib/rpc/client";
 
 export function DaemonConnectionBanner() {
+  const coin = useActiveCoin();
+  const profile = getCoinProfile(coin);
   const queryClient = useQueryClient();
-  const { data, isLoading } = useDaemonStatus();
-  const config = useQuery({ queryKey: ["daemon-config"], queryFn: rpcGetConfig });
+  const { data, isConnecting } = useDaemonStatus(coin);
+  const config = useQuery({
+    queryKey: coinQueryKey(coin, "daemon-config"),
+    queryFn: () => rpcGetConfig(coin),
+  });
 
   const repair = useMutation({
-    mutationFn: () => tauriRepairChain("bootstrap"),
+    mutationFn: () => tauriRepairChain(coin, "bootstrap"),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["daemon-status"] });
-      void queryClient.invalidateQueries({ queryKey: ["getblockchaininfo"] });
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "daemon-status"),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "getblockchaininfo"),
+      });
     },
   });
+
+  const bootstrapProgress = useBootstrapProgress(coin, repair.isPending);
+  const canCancelBootstrap =
+    repair.isPending && bootstrapCanCancel(bootstrapProgress);
 
   const restart = useMutation({
     mutationFn: () => {
@@ -27,11 +48,17 @@ export function DaemonConnectionBanner() {
       return tauriRestartWslVeriumd(datadir);
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["daemon-status"] });
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "daemon-status"),
+      });
     },
   });
 
-  if (isLoading || (data?.connected && !data?.chain_corrupt)) {
+  if (isConnecting) {
+    return <DaemonConnectingBanner coin={coin} />;
+  }
+
+  if (data?.connected && !data?.chain_corrupt) {
     return null;
   }
 
@@ -40,6 +67,7 @@ export function DaemonConnectionBanner() {
     data?.error?.includes("invalid RPC credentials");
 
   const corrupt = data?.chain_corrupt === true;
+  const binaryMissing = isBinaryUnavailableError(data?.error);
   const timestampRules =
     data?.chain_repair_detail?.includes("bad-cb-timestamp") ||
     data?.chain_repair_detail?.includes("bad-tx-timestamp") ||
@@ -62,28 +90,38 @@ export function DaemonConnectionBanner() {
             : "Chain data failed verification"
           : unauthorized
             ? "Daemon reachable but RPC login failed"
-            : "Verium daemon not connected"}
+            : binaryMissing
+              ? `${profile.displayName} node binary not available`
+              : `${profile.displayName} daemon not connected`}
       </div>
       <p className="mt-1 text-xs opacity-90">
         {corrupt && timestampRules ? (
           <>
-            Your WSL <span className="font-mono">veriumd</span> build applies strict
-            timestamp checks that reject valid mainnet blocks from the official
-            bootstrap. The wallet now starts the node with{" "}
-            <span className="font-mono">-checklevel=0</span> to skip that check.
-            Click <strong>Restart node</strong> below — do not use reindex (that
-            wipes the bootstrap and re-syncs from genesis).
+            Your WSL <span className="font-mono">{profile.binaryName}</span> build
+            applies strict timestamp checks. Click <strong>Restart node</strong>{" "}
+            below.
           </>
         ) : corrupt ? (
-          <>
-            Re-import the official bootstrap to replace{" "}
-            <span className="font-mono">blocks/</span> and{" "}
-            <span className="font-mono">chainstate/</span>.
-          </>
+          <>Re-import the official bootstrap to replace chain data.</>
         ) : unauthorized ? (
-          "The app cannot authenticate to veriumd. Use Settings → Daemon connection to create an RPC login or enter the same rpcuser/rpcpassword from your verium.conf."
+          "Use Settings → Daemon connection to configure RPC credentials."
+        ) : binaryMissing && coin === "vericoin" ? (
+          <>
+            The app cannot start <span className="font-mono">{profile.binaryName}</span>{" "}
+            on this machine yet. Build or install a real binary, then set{" "}
+            <span className="font-mono">VERICOIND_LOCAL</span> /{" "}
+            <span className="font-mono">VERICOIND_PATH</span> and run{" "}
+            <span className="font-mono">npm run fetch:vericoind</span>, or disable
+            Vericoin in Settings → Chains until CDN packages ship.
+          </>
+        ) : binaryMissing ? (
+          <>
+            Install <span className="font-mono">{profile.binaryName}</span> or set{" "}
+            <span className="font-mono">VERIUMD_PATH</span> /{" "}
+            <span className="font-mono">VERIUMD_LOCAL</span>.
+          </>
         ) : (
-          "Start veriumd and configure the data directory so Dashboard, Wallet, and Mining can load live data."
+          `Start ${profile.binaryName} and configure the data directory.`
         )}
         {(data?.chain_repair_detail || data?.error) && (
           <span className="mt-1 block font-mono text-[11px] opacity-80">
@@ -93,7 +131,14 @@ export function DaemonConnectionBanner() {
       </p>
 
       {corrupt && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-3 space-y-3">
+          {repair.isPending && (
+            <BootstrapProgressPanel
+              progress={bootstrapProgress}
+              fallbackMessage={`Re-importing ${profile.displayName} bootstrap…`}
+            />
+          )}
+          <div className="flex flex-wrap items-center gap-2">
           {timestampRules ? (
             <Button
               size="sm"
@@ -109,38 +154,58 @@ export function DaemonConnectionBanner() {
               )}
             </Button>
           ) : (
-            <Button
-              size="sm"
-              onClick={() => repair.mutate()}
-              disabled={repair.isPending}
-            >
-              {repair.isPending ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Re-importing…
-                </>
-              ) : (
-                "Re-import bootstrap"
+            <>
+              <Button
+                size="sm"
+                onClick={() => repair.mutate()}
+                disabled={repair.isPending}
+              >
+                {repair.isPending ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Re-importing…
+                  </>
+                ) : (
+                  "Re-import bootstrap"
+                )}
+              </Button>
+              {canCancelBootstrap && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void tauriCancelBootstrap(coin)}
+                >
+                  Cancel download
+                </Button>
               )}
-            </Button>
+            </>
           )}
-          {(repair.data || restart.isSuccess) && (
-            <span className="text-xs opacity-90">
-              {repair.data?.message ?? "Node restart requested."}
-            </span>
-          )}
-          {(repair.error || restart.error) && (
-            <span className="text-xs">{String(repair.error ?? restart.error)}</span>
-          )}
+          </div>
         </div>
       )}
 
-      {!corrupt && (
+      {!corrupt && !binaryMissing && (
         <Link
           to="/settings#daemon-connection"
           className="mt-2 inline-block text-xs font-medium underline underline-offset-2"
         >
           Open connection settings →
         </Link>
+      )}
+
+      {binaryMissing && (
+        <Button
+          size="sm"
+          variant="secondary"
+          className="mt-3"
+          onClick={() => {
+            resetDaemonEnsureAttempt(coin);
+            void queryClient.invalidateQueries({
+              queryKey: coinQueryKey(coin, "daemon-status"),
+            });
+          }}
+        >
+          Retry detection
+        </Button>
       )}
     </div>
   );

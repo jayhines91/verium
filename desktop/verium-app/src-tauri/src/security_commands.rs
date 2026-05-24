@@ -1,0 +1,489 @@
+//! Tauri commands for security, recovery, 2FA, passkeys, hardware wallets, etc.
+
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use tauri::State;
+
+use crate::audit_log::{self, AuditEntry};
+use crate::auto_lock::{self, AutoLockConfig};
+use crate::backup_scheduler::{self, BackupHealth, BackupSchedulerConfig};
+use crate::coin_profile::{parse_coin_id, CoinId};
+use crate::error::{AppError, AppResult};
+use crate::hardware_wallet::{self, HardwareWalletConfig, HardwareVendor, PsbtSendResult};
+use crate::installer_verify::{self, VerificationStatus};
+use crate::multisig::{self, MultisigWalletConfig};
+use crate::passkey::{self, PasskeyConfig};
+use crate::receive_requests::{self, ReceiveRequest};
+use crate::recovery::{self, RecoveryPhraseBundle};
+use crate::slip39_recovery::{self, ShamirSplitResult};
+use crate::spending_controls::{self, SpendingControlsConfig, SpendCheckResult};
+use crate::state::AppState;
+use crate::two_factor::{self, TwoFactorConfig, TwoFactorEnrollment};
+
+// ── Recovery phrase ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn recovery_generate_mnemonic() -> AppResult<RecoveryPhraseBundle> {
+    recovery::generate_mnemonic()
+}
+
+#[tauri::command]
+pub fn recovery_validate_mnemonic(phrase: String) -> AppResult<bool> {
+    recovery::validate_mnemonic(&phrase)
+}
+
+#[tauri::command]
+pub fn recovery_verification_indices(word_count: u32) -> AppResult<Vec<usize>> {
+    Ok(recovery::verification_indices(word_count, 3))
+}
+
+#[tauri::command]
+pub fn recovery_verify_words(
+    phrase: String,
+    indices: Vec<usize>,
+    answers: Vec<String>,
+) -> AppResult<bool> {
+    Ok(recovery::verify_words_at_indices(&phrase, &indices, &answers))
+}
+
+#[tauri::command]
+pub async fn recovery_apply_hd_seed(
+    state: State<'_, AppState>,
+    coin: String,
+    phrase: String,
+    bip39_passphrase: Option<String>,
+) -> AppResult<String> {
+    let coin = parse_coin_id(&coin)?;
+    let wif = recovery::master_xpriv_to_wif(&phrase, bip39_passphrase.as_deref())?;
+    let client = state.rpc_client(coin).await?;
+    client
+        .call_no_result("sethdseed", json!([true, wif]))
+        .await?;
+    audit_log::append("set_hd_seed", "Applied BIP39 HD seed via sethdseed", Some(coin.as_str()))?;
+    Ok("HD seed applied. Back up wallet.dat immediately.".into())
+}
+
+#[tauri::command]
+pub async fn recovery_wallet_is_hd(
+    state: State<'_, AppState>,
+    coin: String,
+) -> AppResult<bool> {
+    let coin = parse_coin_id(&coin)?;
+    let client = state.rpc_client(coin).await?;
+    let info: serde_json::Value = client.call("getwalletinfo", json!([])).await?;
+    Ok(info.get("hdseedid").is_some())
+}
+
+// ── 2FA ──────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn two_factor_status() -> AppResult<TwoFactorConfig> {
+    two_factor::status()
+}
+
+#[tauri::command]
+pub fn two_factor_start_enrollment() -> AppResult<TwoFactorEnrollment> {
+    two_factor::start_enrollment()
+}
+
+#[tauri::command]
+pub fn two_factor_confirm_enrollment(code: String) -> AppResult<bool> {
+    two_factor::confirm_enrollment(&code)
+}
+
+#[tauri::command]
+pub fn two_factor_verify(code: String) -> AppResult<bool> {
+    two_factor::verify(&code)
+}
+
+#[tauri::command]
+pub fn two_factor_disable(code: String) -> AppResult<()> {
+    two_factor::disable(&code)
+}
+
+#[tauri::command]
+pub fn two_factor_is_gated(action: String, amount: Option<f64>, coin: String) -> AppResult<bool> {
+    two_factor::is_action_gated(&action, amount, &coin)
+}
+
+#[tauri::command]
+pub fn two_factor_save_config(partial: PartialTwoFactorConfig) -> AppResult<TwoFactorConfig> {
+    let mut config = two_factor::load()?;
+    if let Some(v) = partial.send_threshold_vrm {
+        config.send_threshold_vrm = Some(v);
+    }
+    if let Some(v) = partial.send_threshold_vrc {
+        config.send_threshold_vrc = Some(v);
+    }
+    if let Some(v) = partial.gated_actions {
+        config.gated_actions = v;
+    }
+    two_factor::save(&config)?;
+    Ok(config)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PartialTwoFactorConfig {
+    pub send_threshold_vrm: Option<f64>,
+    pub send_threshold_vrc: Option<f64>,
+    pub gated_actions: Option<Vec<String>>,
+}
+
+// ── Passkey / PIN ────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn passkey_status() -> AppResult<PasskeyConfig> {
+    passkey::status()
+}
+
+#[tauri::command]
+pub fn passkey_gate_required() -> AppResult<bool> {
+    passkey::gate_required()
+}
+
+#[tauri::command]
+pub fn passkey_enroll_pin(pin: String) -> AppResult<()> {
+    passkey::enroll_pin(&pin)
+}
+
+#[tauri::command]
+pub fn passkey_verify_pin(pin: String) -> AppResult<bool> {
+    passkey::verify_pin(&pin)
+}
+
+#[tauri::command]
+pub fn passkey_disable(pin: String) -> AppResult<()> {
+    passkey::disable(&pin)
+}
+
+// ── Auto-lock ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn auto_lock_get_config() -> AppResult<AutoLockConfig> {
+    auto_lock::load_config()
+}
+
+#[tauri::command]
+pub fn auto_lock_set_config(config: AutoLockConfig) -> AppResult<()> {
+    auto_lock::save_config(&config)
+}
+
+#[tauri::command]
+pub fn auto_lock_record_activity() -> AppResult<()> {
+    auto_lock::record_activity();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn auto_lock_should_lock() -> AppResult<bool> {
+    let config = auto_lock::load_config()?;
+    Ok(auto_lock::should_auto_lock(&config))
+}
+
+// ── Audit log ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn audit_log_list(limit: Option<usize>) -> AppResult<Vec<AuditEntry>> {
+    audit_log::list(limit)
+}
+
+#[tauri::command]
+pub fn audit_log_export() -> AppResult<String> {
+    audit_log::export_json()
+}
+
+#[tauri::command]
+pub fn audit_log_record(action: String, detail: String, coin: Option<String>) -> AppResult<AuditEntry> {
+    audit_log::append(&action, &detail, coin.as_deref())
+}
+
+// ── Receive requests (encrypted) ─────────────────────────────────────────────
+
+#[tauri::command]
+pub fn receive_requests_list(coin: String) -> AppResult<Vec<ReceiveRequest>> {
+    let coin = parse_coin_id(&coin)?;
+    receive_requests::list(coin)
+}
+
+#[tauri::command]
+pub fn receive_requests_save(coin: String, requests: Vec<ReceiveRequest>) -> AppResult<()> {
+    let coin = parse_coin_id(&coin)?;
+    receive_requests::save_all(coin, &requests)
+}
+
+// ── Hardware wallets ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn hardware_wallet_list() -> AppResult<Vec<HardwareWalletConfig>> {
+    hardware_wallet::list_wallets()
+}
+
+#[tauri::command]
+pub fn hardware_wallet_add(config: HardwareWalletConfig) -> AppResult<HardwareWalletConfig> {
+    hardware_wallet::add_wallet(config)
+}
+
+#[tauri::command]
+pub fn hardware_wallet_remove(id: String) -> AppResult<()> {
+    hardware_wallet::remove_wallet(&id)
+}
+
+#[tauri::command]
+pub fn hardware_wallet_detect() -> AppResult<Vec<HardwareVendor>> {
+    Ok(hardware_wallet::detect_devices())
+}
+
+#[tauri::command]
+pub async fn hardware_wallet_import_xpub(
+    state: State<'_, AppState>,
+    coin: String,
+    xpub: String,
+    label: String,
+) -> AppResult<()> {
+    let coin = parse_coin_id(&coin)?;
+    let client = state.rpc_client(coin).await?;
+    hardware_wallet::import_xpub_watchonly(&client, &xpub, &label).await?;
+    audit_log::append("hw_import_xpub", &format!("Imported xpub {label}"), Some(coin.as_str()))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn hardware_wallet_send_psbt(
+    state: State<'_, AppState>,
+    coin: String,
+    outputs: serde_json::Map<String, serde_json::Value>,
+    fee_rate: Option<f64>,
+) -> AppResult<PsbtSendResult> {
+    let coin = parse_coin_id(&coin)?;
+    let client = state.rpc_client(coin).await?;
+    hardware_wallet::send_via_psbt(&client, outputs, fee_rate).await
+}
+
+#[tauri::command]
+pub async fn hardware_wallet_finalize_psbt(
+    state: State<'_, AppState>,
+    coin: String,
+    psbt_base64: String,
+) -> AppResult<String> {
+    let coin = parse_coin_id(&coin)?;
+    let client = state.rpc_client(coin).await?;
+    let txid = hardware_wallet::finalize_and_broadcast(&client, &psbt_base64).await?;
+    audit_log::append("hw_send", &format!("Broadcast PSBT tx {txid}"), Some(coin.as_str()))?;
+    Ok(txid)
+}
+
+// ── Multisig ─────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn multisig_list() -> AppResult<Vec<MultisigWalletConfig>> {
+    multisig::list()
+}
+
+#[tauri::command]
+pub fn multisig_save(wallet: MultisigWalletConfig) -> AppResult<MultisigWalletConfig> {
+    multisig::save_wallet(wallet)
+}
+
+#[tauri::command]
+pub fn multisig_remove(id: String) -> AppResult<()> {
+    multisig::remove(&id)
+}
+
+#[tauri::command]
+pub async fn multisig_create_address(
+    state: State<'_, AppState>,
+    coin: String,
+    required: u32,
+    pubkeys: Vec<String>,
+    label: String,
+) -> AppResult<String> {
+    let coin = parse_coin_id(&coin)?;
+    let client = state.rpc_client(coin).await?;
+    let addr = multisig::create_multisig_address(&client, required, pubkeys, &label).await?;
+    audit_log::append("multisig_create", &format!("Created {label} at {addr}"), Some(coin.as_str()))?;
+    Ok(addr)
+}
+
+// ── Spending controls ────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn spending_controls_get() -> AppResult<SpendingControlsConfig> {
+    spending_controls::load()
+}
+
+#[tauri::command]
+pub fn spending_controls_save(config: SpendingControlsConfig) -> AppResult<()> {
+    spending_controls::save(&config)
+}
+
+#[tauri::command]
+pub fn spending_controls_check_send(
+    amount: f64,
+    coin: String,
+    address: String,
+) -> AppResult<SpendCheckResult> {
+    spending_controls::check_spend_allowed(amount, &coin, &address)
+}
+
+#[tauri::command]
+pub fn spending_controls_record_send(
+    amount: f64,
+    coin: String,
+    address: String,
+) -> AppResult<()> {
+    spending_controls::record_spend(amount, &coin, &address)
+}
+
+#[tauri::command]
+pub fn spending_controls_check_allowlist(
+    address: String,
+    allowlist: Vec<String>,
+) -> AppResult<bool> {
+    Ok(spending_controls::check_allowlist(&address, &allowlist))
+}
+
+// ── Backup scheduler ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn backup_scheduler_get_config() -> AppResult<BackupSchedulerConfig> {
+    backup_scheduler::load_config()
+}
+
+#[tauri::command]
+pub fn backup_scheduler_save_config(config: BackupSchedulerConfig) -> AppResult<()> {
+    backup_scheduler::save_config(&config)
+}
+
+#[tauri::command]
+pub fn backup_health() -> AppResult<BackupHealth> {
+    backup_scheduler::health_status()
+}
+
+#[tauri::command]
+pub async fn backup_run_now(
+    state: State<'_, AppState>,
+    coin: String,
+) -> AppResult<String> {
+    let coin = parse_coin_id(&coin)?;
+    let cfg = state.config(coin).await?;
+    let path = backup_scheduler::create_local_backup(&cfg, coin)?;
+    let config = backup_scheduler::load_config()?;
+    backup_scheduler::prune_old_backups(&cfg, &config)?;
+    audit_log::append("backup", &format!("Auto backup to {path}"), Some(coin.as_str()))?;
+    Ok(path)
+}
+
+#[tauri::command]
+pub async fn backup_export_cloud(
+    state: State<'_, AppState>,
+    coin: String,
+    password: String,
+) -> AppResult<String> {
+    let coin = parse_coin_id(&coin)?;
+    let cfg = state.config(coin).await?;
+    let path = backup_scheduler::export_encrypted_cloud(&cfg, coin, &password)?;
+    audit_log::append("cloud_backup", &format!("Encrypted cloud backup to {path}"), Some(coin.as_str()))?;
+    Ok(path)
+}
+
+#[tauri::command]
+pub fn backup_verify(path: String) -> AppResult<bool> {
+    backup_scheduler::verify_backup(std::path::Path::new(&path))
+}
+
+// ── SLIP-39 ──────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn slip39_split(mnemonic: String, threshold: u8, total: u8) -> AppResult<ShamirSplitResult> {
+    slip39_recovery::split_mnemonic(&mnemonic, threshold, total)
+}
+
+#[tauri::command]
+pub fn slip39_combine(shares: Vec<String>) -> AppResult<String> {
+    slip39_recovery::combine_shares(&shares)
+}
+
+// ── Installer verification ───────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn verify_installation() -> AppResult<VerificationStatus> {
+    installer_verify::verify_installation()
+}
+
+// ── BIP21 URI parsing ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ParsedPaymentUri {
+    pub scheme: String,
+    pub address: String,
+    pub amount: Option<f64>,
+    pub label: Option<String>,
+    pub message: Option<String>,
+}
+
+#[tauri::command]
+pub fn parse_payment_uri(uri: String) -> AppResult<ParsedPaymentUri> {
+    let trimmed = uri.trim();
+    let (scheme, rest) = trimmed
+        .split_once(':')
+        .ok_or_else(|| AppError::other("invalid payment URI"))?;
+    if scheme != "verium" && scheme != "vericoin" {
+        return Err(AppError::other("unsupported scheme"));
+    }
+    let (address, query) = match rest.split_once('?') {
+        Some((a, q)) => (a, Some(q)),
+        None => (rest, None),
+    };
+    let mut amount = None;
+    let mut label = None;
+    let mut message = None;
+    if let Some(q) = query {
+        for pair in q.split('&') {
+            if let Some((k, v)) = pair.split_once('=') {
+                match k {
+                    "amount" => amount = v.parse().ok(),
+                    "label" => label = Some(urlencoding::decode(v).unwrap_or_default().into_owned()),
+                    "message" => message = Some(urlencoding::decode(v).unwrap_or_default().into_owned()),
+                    _ => {}
+                }
+            }
+        }
+    }
+    Ok(ParsedPaymentUri {
+        scheme: scheme.to_string(),
+        address: address.to_string(),
+        amount,
+        label,
+        message,
+    })
+}
+
+#[tauri::command]
+pub fn build_payment_uri(
+    coin: String,
+    address: String,
+    amount: Option<f64>,
+    label: Option<String>,
+    message: Option<String>,
+) -> AppResult<String> {
+    let scheme = match coin.as_str() {
+        "vericoin" => "vericoin",
+        _ => "verium",
+    };
+    let mut uri = format!("{scheme}:{address}");
+    let mut params = Vec::new();
+    if let Some(a) = amount {
+        params.push(format!("amount={a}"));
+    }
+    if let Some(l) = label.filter(|s| !s.is_empty()) {
+        params.push(format!("label={}", urlencoding::encode(&l)));
+    }
+    if let Some(m) = message.filter(|s| !s.is_empty()) {
+        params.push(format!("message={}", urlencoding::encode(&m)));
+    }
+    if !params.is_empty() {
+        uri.push('?');
+        uri.push_str(&params.join("&"));
+    }
+    Ok(uri)
+}

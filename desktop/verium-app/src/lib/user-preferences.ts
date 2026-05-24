@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import type { CoinId } from "@/lib/coin/profile";
 import { DEFAULT_TX_EXPLORER_TEMPLATE } from "@/lib/verium-links";
 import type { ThemeMode } from "@/lib/theme";
+import { DEFAULT_WALLET_UNLOCK_SECONDS } from "@/lib/wallet-unlock";
 
 export interface UserPreferences {
   setup_completed: boolean;
@@ -9,15 +11,23 @@ export interface UserPreferences {
   explorer_tx_url_template: string;
   explorer_block_url_template?: string;
   explorer_address_url_template?: string;
+  active_coin?: CoinId;
+  verium_enabled?: boolean;
+  vericoin_enabled?: boolean;
   auto_mine_on_open?: boolean;
+  auto_stake_on_open?: boolean;
   play_sound_on_block_mined?: boolean;
   notify_on_vrm_received?: boolean;
+  notify_on_vrc_received?: boolean;
   auto_mine_threads?: number;
   mining_power_watts?: number;
   mining_cost_per_kwh?: number;
   theme_mode?: ThemeMode;
+  /** @deprecated use wallet_unlock_duration_by_coin */
   wallet_unlock_duration_seconds?: number;
+  wallet_unlock_duration_by_coin?: Partial<Record<CoinId, number>>;
   tx_fee_rate_vrm_per_kb?: number;
+  bootstrap_imported_at_by_coin?: Partial<Record<CoinId, number>>;
 }
 
 interface PrefsState {
@@ -30,12 +40,21 @@ interface PrefsState {
 const DEFAULT_PREFS: UserPreferences = {
   setup_completed: false,
   explorer_tx_url_template: DEFAULT_TX_EXPLORER_TEMPLATE,
+  active_coin: "verium",
+  verium_enabled: true,
+  vericoin_enabled: true,
   auto_mine_on_open: false,
+  auto_stake_on_open: false,
   play_sound_on_block_mined: false,
   notify_on_vrm_received: true,
+  notify_on_vrc_received: true,
   auto_mine_threads: 2,
   theme_mode: "system",
-  wallet_unlock_duration_seconds: 4 * 60 * 60,
+  wallet_unlock_duration_seconds: DEFAULT_WALLET_UNLOCK_SECONDS,
+  wallet_unlock_duration_by_coin: {
+    verium: DEFAULT_WALLET_UNLOCK_SECONDS,
+    vericoin: DEFAULT_WALLET_UNLOCK_SECONDS,
+  },
 };
 
 export const useUserPreferences = create<PrefsState>((set, get) => ({
@@ -53,7 +72,23 @@ export const useUserPreferences = create<PrefsState>((set, get) => ({
     }
   },
   update: async (partial) => {
-    const next = { ...get().prefs, ...partial };
+    const current = get().prefs;
+    const next: UserPreferences = {
+      ...current,
+      ...partial,
+      wallet_unlock_duration_by_coin: partial.wallet_unlock_duration_by_coin
+        ? {
+            ...current.wallet_unlock_duration_by_coin,
+            ...partial.wallet_unlock_duration_by_coin,
+          }
+        : current.wallet_unlock_duration_by_coin,
+      bootstrap_imported_at_by_coin: partial.bootstrap_imported_at_by_coin
+        ? {
+            ...current.bootstrap_imported_at_by_coin,
+            ...partial.bootstrap_imported_at_by_coin,
+          }
+        : current.bootstrap_imported_at_by_coin,
+    };
     set({ prefs: next });
     await invoke<UserPreferences>("set_user_preferences", { partial });
   },

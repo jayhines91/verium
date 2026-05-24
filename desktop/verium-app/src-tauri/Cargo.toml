@@ -1,7 +1,7 @@
 [package]
 name = "verium-app"
-version = "1.0.0"
-description = "Modern desktop control UI for the Verium core daemon."
+version = "2.0.0"
+description = "Vericonomy Wallet — dual-chain desktop UI for Verium and Vericoin."
 authors = ["Verium developers"]
 edition = "2021"
 rust-version = "1.77"
@@ -18,6 +18,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-deep-link = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
@@ -32,7 +33,21 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+keyring = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+aes-gcm = "0.10"
+argon2 = "0.5"
+bip39 = "2"
+bitcoin = { version = "0.32", default-features = false, features = ["std", "secp-recovery"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+hex = "0.4"
+hidapi = "2"
+rand = "0.8"
+sha2 = "0.10"
+sharks = "0.5"
+totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
+urlencoding = "2"
+zeroize = { version = "1", features = ["derive"] }
 
 [features]
 default = ["custom-protocol"]

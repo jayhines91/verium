@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { CoinId } from "@/lib/coin/profile";
 
 export interface ExplorerStats {
   network_hash?: number;
@@ -13,6 +14,11 @@ export interface ExplorerStats {
   price_btc?: number;
   market_cap_usd?: number;
   volume_24h_usd?: number;
+  stake_interest?: number;
+  stake_inflation?: number;
+  net_stake_weight?: number;
+  pos_difficulty?: number;
+  pow_difficulty?: number;
   fetched_at: number;
   source?: string;
 }
@@ -70,38 +76,45 @@ export function isExplorerApiEnabled(): Promise<boolean> {
   return invoke<boolean>("is_explorer_api_enabled");
 }
 
-export function fetchExplorerStats(): Promise<ExplorerStats> {
-  return invoke<ExplorerStats>("fetch_explorer_stats");
+export function fetchExplorerStats(coin: CoinId): Promise<ExplorerStats> {
+  return invoke<ExplorerStats>("fetch_explorer_stats", { coin });
 }
 
-export function fetchExplorerBlocks(limit = 10): Promise<ExplorerBlock[]> {
-  return invoke<ExplorerBlock[]>("fetch_explorer_blocks", { limit });
+export function fetchExplorerBlocks(
+  coin: CoinId,
+  limit = 10,
+): Promise<ExplorerBlock[]> {
+  return invoke<ExplorerBlock[]>("fetch_explorer_blocks", { coin, limit });
 }
 
 export function fetchExplorerTransactions(
+  coin: CoinId,
   limit = 25,
 ): Promise<ExplorerTransaction[]> {
   return invoke<ExplorerTransaction[]>("fetch_explorer_transactions", {
+    coin,
     limit,
   });
 }
 
 export function fetchExplorerExtraction(
+  coin: CoinId,
   limit = 20,
 ): Promise<ExplorerExtractionEntry[]> {
   return invoke<ExplorerExtractionEntry[]>("fetch_explorer_extraction", {
+    coin,
     limit,
   });
 }
 
-export function fetchExplorerChainTips(): Promise<ExplorerChainTip[]> {
-  return invoke<ExplorerChainTip[]>("fetch_explorer_chain_tips");
+export function fetchExplorerChainTips(coin: CoinId): Promise<ExplorerChainTip[]> {
+  return invoke<ExplorerChainTip[]>("fetch_explorer_chain_tips", { coin });
 }
 
-export function fetchExplorerPeers(): Promise<ExplorerPeerEntry[]> {
-  return invoke<ExplorerPeerEntry[]>("fetch_explorer_peers_cmd");
+export function fetchExplorerPeers(coin: CoinId): Promise<ExplorerPeerEntry[]> {
+  return invoke<ExplorerPeerEntry[]>("fetch_explorer_peers_cmd", { coin });
 }
 
-export function getExplorerLogoUrl(): Promise<string> {
-  return invoke<string>("get_explorer_logo_url");
+export function getExplorerLogoUrl(coin: CoinId): Promise<string> {
+  return invoke<string>("get_explorer_logo_url", { coin });
 }

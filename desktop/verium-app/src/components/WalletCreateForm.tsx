@@ -7,6 +7,7 @@ import {
   tauriRestartAfterEncrypt,
   type WalletCreateResult,
 } from "@/lib/rpc/client";
+import { useActiveCoin } from "@/lib/coin/context";
 import { scorePassphrase } from "@/lib/passphrase-strength";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +30,7 @@ export function WalletCreateForm({
   onAlreadyEncrypted,
   className,
 }: WalletCreateFormProps) {
+  const coin = useActiveCoin();
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
@@ -40,10 +42,10 @@ export function WalletCreateForm({
   const create = useMutation({
     mutationFn: async () => {
       setPhase("Encrypting wallet…");
-      const result = await rpcWalletCreateEncrypted(passphrase);
+      const result = await rpcWalletCreateEncrypted(coin, passphrase);
       if (result.daemon_stopped) {
         setPhase("Restarting daemon…");
-        await tauriRestartAfterEncrypt();
+        await tauriRestartAfterEncrypt(coin);
       }
       return result;
     },

@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { rpcListTransactions } from "@/lib/rpc/client";
+import { coinQueryKey } from "@/lib/coin/profile";
+import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { rpcListTransactions, type TransactionItem } from "@/lib/rpc/client";
 
 export interface BlockMinedEvent {
   height: number;
@@ -24,54 +26,55 @@ function emitBlockMined(event: BlockMinedEvent): void {
 }
 
 const POLL_MS = 10_000;
+const VERIUM = "verium" as const;
 
-/**
- * Polls wallet coinbase transactions and emits when a new mined block height
- * appears. Mount once near the app root.
- */
+function isMinedCoinbase(tx: TransactionItem): boolean {
+  return tx.category === "generate" || tx.category === "immature";
+}
+
+function minedSortKey(tx: TransactionItem): number {
+  return tx.blockheight ?? tx.blocktime ?? tx.time ?? 0;
+}
+
+/** Polls verium wallet coinbase transactions and emits new mined blocks. */
 export function useBlockMinedWatcher(): void {
-  const seenHeights = useRef<Set<number>>(new Set());
+  const { data: status } = useDaemonStatus(VERIUM);
+  const seenTxids = useRef<Set<string>>(new Set());
   const initialized = useRef(false);
 
   const txs = useQuery({
-    queryKey: ["listtransactions", "block-mined-watcher"],
-    queryFn: () => rpcListTransactions(100, 0),
+    queryKey: coinQueryKey(VERIUM, "listtransactions", "block-mined-watcher"),
+    queryFn: () => rpcListTransactions(VERIUM, 100, 0),
     refetchInterval: POLL_MS,
     retry: 0,
+    enabled: status?.connected === true,
   });
 
   useEffect(() => {
-    const mined = (txs.data ?? []).filter(
-      (tx) =>
-        (tx.category === "generate" || tx.category === "immature") &&
-        tx.blockheight != null,
-    );
+    if (!txs.isSuccess || txs.data === undefined) return;
+
+    const mined = txs.data.filter(isMinedCoinbase);
 
     if (!initialized.current) {
       for (const tx of mined) {
-        if (tx.blockheight != null) {
-          seenHeights.current.add(tx.blockheight);
-        }
+        seenTxids.current.add(tx.txid);
       }
       initialized.current = true;
       return;
     }
 
-    const sorted = [...mined].sort(
-      (a, b) => (b.blockheight ?? 0) - (a.blockheight ?? 0),
-    );
+    const sorted = [...mined].sort((a, b) => minedSortKey(b) - minedSortKey(a));
 
     for (const tx of sorted) {
-      const height = tx.blockheight;
-      if (height == null || seenHeights.current.has(height)) continue;
+      if (seenTxids.current.has(tx.txid)) continue;
 
-      seenHeights.current.add(height);
+      seenTxids.current.add(tx.txid);
       emitBlockMined({
-        height,
+        height: tx.blockheight ?? 0,
         amount: tx.amount,
         txid: tx.txid,
       });
       break;
     }
-  }, [txs.data]);
+  }, [txs.data, txs.isSuccess]);
 }

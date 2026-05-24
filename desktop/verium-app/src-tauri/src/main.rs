@@ -1,5 +1,5 @@
-// Prevents an additional console window on Windows in release builds.
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// No console window on Windows — wallet UI only; logs go to debug.log in-app.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {
     verium_app_lib::run();

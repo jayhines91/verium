@@ -3,8 +3,10 @@ import {
   ArrowLeftRight,
   BookOpen,
   BookUser,
+  Coins,
   Cpu,
   Gauge,
+  Lock,
   Network as NetworkIcon,
   ScrollText,
   Settings as SettingsIcon,
@@ -12,22 +14,27 @@ import {
   Terminal,
   Wallet as WalletIcon,
 } from "lucide-react";
-import { EXPLORER_LOGO_URL } from "@/lib/verium-links";
+import { CoinSwitcher } from "@/components/CoinSwitcher";
+import { useActiveCoin, useEnabledCoins } from "@/lib/coin/context";
+import { getCoinProfile } from "@/lib/coin/profile";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
   to: string;
   label: string;
   icon: typeof Gauge;
+  coins?: ("verium" | "vericoin")[];
 }
 
 const items: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: Gauge },
   { to: "/wallet", label: "Wallet", icon: WalletIcon },
-  { to: "/mining", label: "Mining", icon: Cpu },
+  { to: "/mining", label: "Mining", icon: Cpu, coins: ["verium"] },
+  { to: "/staking", label: "Staking", icon: Coins, coins: ["vericoin"] },
   { to: "/network", label: "Network", icon: NetworkIcon },
   { to: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { to: "/addresses", label: "Address book", icon: BookUser },
+  { to: "/security", label: "Security", icon: Lock },
   { to: "/sign", label: "Sign & verify", icon: ShieldCheck },
   { to: "/console", label: "RPC console", icon: Terminal },
   { to: "/logs", label: "Logs", icon: ScrollText },
@@ -40,24 +47,25 @@ const APP_VERSION =
     ?.VITE_APP_VERSION || "1.0.0";
 
 export function Sidebar() {
+  const activeCoin = useActiveCoin();
+  const enabledCoins = useEnabledCoins();
+  const profile = getCoinProfile(activeCoin);
+
+  const visibleItems = items.filter((item) => {
+    if (!item.coins) return true;
+    return item.coins.some(
+      (coin) => enabledCoins.includes(coin) && coin === activeCoin,
+    );
+  });
+
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-bg-subtle">
-      <div className="flex items-center gap-3 px-4 py-4">
-        <img
-          src={EXPLORER_LOGO_URL}
-          alt="Verium"
-          className="h-9 w-9 shrink-0 rounded-lg object-contain"
-        />
-        <div className="min-w-0 leading-tight">
-          <div className="truncate text-sm font-semibold">Verium</div>
-          <div className="text-[10px] uppercase tracking-wider text-fg-subtle">
-            VRM · Wallet
-          </div>
-        </div>
+      <div className="px-3 py-4">
+        <CoinSwitcher />
       </div>
 
       <nav className="flex flex-1 flex-col gap-0.5 px-2 py-2">
-        {items.map(({ to, label, icon: Icon }) => (
+        {visibleItems.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}
@@ -78,6 +86,9 @@ export function Sidebar() {
 
       <div className="border-t border-border px-5 py-3 text-xs text-fg-subtle">
         Vericonomy Wallet v{APP_VERSION}
+        <div className="mt-0.5 text-[10px] uppercase tracking-wider">
+          {profile.symbol} · {profile.displayName}
+        </div>
       </div>
     </aside>
   );

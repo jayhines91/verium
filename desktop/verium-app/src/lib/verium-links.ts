@@ -1,25 +1,32 @@
 /**
  * Central source of truth for Vericonomy public resources.
  *
- * Mirrors the URL constants in src/qt/guiconstants.h and src/downloader.h so
- * the new desktop UI and the legacy Qt wallet point at the same official
- * endpoints.
+ * Coin-specific explorer URLs live in `explorer-links.ts`. Constants below
+ * default to Verium for backward compatibility with legacy imports.
  */
 
-export const EXPLORER_HOME = "https://explorer-vrm.vericonomy.com/";
-export const EXPLORER_LOGO_URL =
-  "https://explorer-vrm.vericonomy.com/assets/images/logo.png";
+import {
+  defaultAddressExplorerTemplate,
+  defaultBlockExplorerTemplate,
+  defaultTxExplorerTemplate,
+  explorerBlocksHash,
+  explorerExtractionHash,
+  explorerHome,
+  explorerLogoUrl,
+  explorerPeersHash,
+  explorerProfitabilityHash,
+  explorerRichlistHash,
+} from "@/lib/explorer-links";
+
+export const EXPLORER_HOME = explorerHome("verium");
+export const EXPLORER_LOGO_URL = explorerLogoUrl("verium");
 export const EXPLORER_REST_BASE =
   "https://explorer-vrm.vericonomy.com/rest/api/1";
-export const EXPLORER_BLOCKS =
-  "https://explorer-vrm.vericonomy.com/#homeBlocks";
-export const EXPLORER_PEERS = "https://explorer-vrm.vericonomy.com/#homePeers";
-export const EXPLORER_EXTRACTION =
-  "https://explorer-vrm.vericonomy.com/#homeExtraction";
-export const EXPLORER_RICHLIST =
-  "https://explorer-vrm.vericonomy.com/#homeRichlist";
-export const EXPLORER_PROFITABILITY =
-  "https://explorer-vrm.vericonomy.com/#homeProfitability";
+export const EXPLORER_BLOCKS = explorerBlocksHash("verium");
+export const EXPLORER_PEERS = explorerPeersHash("verium");
+export const EXPLORER_EXTRACTION = explorerExtractionHash("verium");
+export const EXPLORER_RICHLIST = explorerRichlistHash("verium");
+export const EXPLORER_PROFITABILITY = explorerProfitabilityHash("verium");
 
 export const DOCS_HOME = "https://docs.vericonomy.com/";
 export const DOCS_DOWNLOADS = "https://docs.vericonomy.com/en/Downloads";
@@ -60,13 +67,13 @@ export const COMMUNITY_TWITTER = "https://twitter.com/vericonomy";
  * can override it in Settings.
  */
 export const DEFAULT_TX_EXPLORER_TEMPLATE =
-  "https://explorer-vrm.vericonomy.com/#tx/%s";
+  defaultTxExplorerTemplate("verium");
 
 export const DEFAULT_BLOCK_EXPLORER_TEMPLATE =
-  "https://explorer-vrm.vericonomy.com/#block/%s";
+  defaultBlockExplorerTemplate("verium");
 
 export const DEFAULT_ADDRESS_EXPLORER_TEMPLATE =
-  "https://explorer-vrm.vericonomy.com/#address/%s";
+  defaultAddressExplorerTemplate("verium");
 
 export function buildTxExplorerUrl(template: string, txid: string): string {
   const safe =

@@ -1,4 +1,4 @@
-name: Build Verium desktop app (Tauri)
+name: Build Vericonomy Wallet (Tauri)
 
 on:
   push:
@@ -107,6 +107,12 @@ jobs:
           VERIUMD_OPTIONAL: ${{ contains(github.ref, 'refs/tags/desktop-v') && '0' || '1' }}
         run: npm run fetch:veriumd
 
+      - name: Fetch bundled vericoind sidecar
+        env:
+          VERICOIND_TARGET_TRIPLE: ${{ matrix.target }}
+          VERICOIND_REQUIRED: ${{ contains(github.ref, 'refs/tags/desktop-v') && '1' || '0' }}
+        run: npm run fetch:vericoind
+
       - name: Cargo check (Tauri backend)
         run: cargo check --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
 
@@ -125,10 +131,55 @@ jobs:
             -exec cp {} artifacts/ \;
           ls -la artifacts/ || true
 
+      - name: Generate release hashes manifest
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, glob, os, datetime
+          os.chdir("artifacts")
+          files = glob.glob("*")
+          hashes = {"generated_at": datetime.datetime.utcnow().isoformat() + "Z"}
+          for f in files:
+              if f.endswith(".exe") or f.endswith(".msi"):
+                  with open(f, "rb") as fh:
+                      h = hashlib.sha256(fh.read()).hexdigest()
+                  if "setup" in f.lower() or f.endswith(".exe"):
+                      hashes["app"] = h
+          sidecar = f"../src-tauri/binaries/veriumd-${{ matrix.target }}"
+          if [ -f "$sidecar" ] || [ -f "${sidecar}.exe" ]; then
+              true
+          fi
+          PY
+          # Hash sidecar if present
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            SC="src-tauri/binaries/veriumd-${{ matrix.target }}.exe"
+          else
+            SC="src-tauri/binaries/veriumd-${{ matrix.target }}"
+          fi
+          if [ -f "$SC" ]; then
+            SIDE_HASH=$(sha256sum "$SC" | awk '{print $1}')
+            python3 -c "import json; d=json.load(open('release-hashes.json')); d['veriumd']='$SIDE_HASH'; json.dump(d, open('release-hashes.json','w'), indent=2)"
+          fi
+          cp release-hashes.json artifacts/ 2>/dev/null || cp ../release-hashes.json artifacts/ || true
+
+      - name: Install cosign (optional signing)
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign release artifacts with cosign
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        shell: bash
+        run: |
+          for f in artifacts/*; do
+            cosign sign-blob --yes "$f" --output-signature "${f}.sig" || true
+          done
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: verium-desktop-${{ matrix.target }}
+          name: vericonomy-desktop-${{ matrix.target }}
           path: desktop/verium-app/artifacts/**
           if-no-files-found: warn
 
@@ -163,7 +214,7 @@ jobs:
       - name: Download all bundle artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: verium-desktop-*
+          pattern: vericonomy-desktop-*
           merge-multiple: true
           path: release-assets
 

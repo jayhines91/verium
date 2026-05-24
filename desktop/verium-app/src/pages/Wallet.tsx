@@ -1,3 +1,5 @@
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { useQuery } from "@tanstack/react-query";
 import {
   Card,
@@ -9,6 +11,7 @@ import {
 } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { WalletUnlockForm } from "@/components/WalletUnlockForm";
+import { UpgradeToHdCard } from "@/components/UpgradeToHdCard";
 import { rpcGetWalletInfo } from "@/lib/rpc/client";
 import {
   formatUnlockedUntil,
@@ -16,17 +19,20 @@ import {
   isWalletLocked,
   isWalletUnlocked,
   normalizeUnlockDuration,
+  patchUnlockDurationPrefs,
+  unlockDurationForCoin,
   UNLOCK_DURATION_OPTIONS,
 } from "@/lib/wallet-unlock";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { cn, formatNumber, formatVrm } from "@/lib/utils";
 
 export function Wallet() {
+  const coin = useActiveCoin();
   const prefs = useUserPreferences((s) => s.prefs);
   const updatePrefs = useUserPreferences((s) => s.update);
   const wallet = useQuery({
-    queryKey: ["getwalletinfo"],
-    queryFn: rpcGetWalletInfo,
+    queryKey: coinQueryKey(coin, "getwalletinfo"),
+    queryFn: () => rpcGetWalletInfo(coin),
     refetchInterval: 5_000,
   });
 
@@ -34,9 +40,7 @@ export function Wallet() {
   const encrypted = isWalletEncrypted(wallet.data);
   const unlocked = isWalletUnlocked(wallet.data);
   const unlockedUntil = wallet.data?.unlocked_until ?? 0;
-  const durationSeconds = normalizeUnlockDuration(
-    prefs.wallet_unlock_duration_seconds,
-  );
+  const durationSeconds = unlockDurationForCoin(prefs, coin);
 
   if (wallet.isLoading) {
     return (
@@ -92,6 +96,7 @@ export function Wallet() {
 
   return (
     <div className="flex flex-col gap-6">
+      <UpgradeToHdCard />
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card>
           <CardHeader>
@@ -159,10 +164,11 @@ export function Wallet() {
               </p>
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm text-fg-muted">
-                  Remember unlock duration
+                  Keep wallet unlocked for
                 </label>
                 {UNLOCK_DURATION_OPTIONS.map((option) => {
-                  const active = durationSeconds === option.seconds;
+                  const active =
+                    normalizeUnlockDuration(durationSeconds) === option.seconds;
                   return (
                     <label
                       key={option.id}
@@ -178,9 +184,9 @@ export function Wallet() {
                         name="wallet-unlock-duration-pref"
                         checked={active}
                         onChange={() =>
-                          void updatePrefs({
-                            wallet_unlock_duration_seconds: option.seconds,
-                          })
+                          void updatePrefs(
+                            patchUnlockDurationPrefs(prefs, coin, option.seconds),
+                          )
                         }
                         className="mt-0.5 accent-accent"
                       />

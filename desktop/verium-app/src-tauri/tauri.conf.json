@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Verium",
-  "version": "1.0.0",
-  "identifier": "com.vericonomy.verium.desktop",
+  "productName": "Vericonomy Wallet",
+  "version": "2.0.0",
+  "identifier": "com.vericonomy.wallet.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run build && npm run fetch:veriumd:if-missing",
+    "beforeBuildCommand": "npm run build && npm run fetch:sidecars:if-missing",
     "frontendDist": "../dist"
   },
   "app": {
@@ -23,7 +23,14 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: asset: http://ipc.localhost https://explorer-vrm.vericonomy.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; img-src 'self' data: blob: asset: http://ipc.localhost https://explorer-vrm.vericonomy.com https://explorer-vrc.vericonomy.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; media-src 'self' blob:"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["verium", "vericoin"]
+      }
     }
   },
   "bundle": {
@@ -38,11 +45,11 @@
     ],
     "category": "Finance",
     "shortDescription": "Vericonomy Wallet",
-    "longDescription": "Modern desktop wallet for Verium (VRM) with a bundled veriumd node, integrated CPU miner, send/receive, transaction history, and chain bootstrap. Connects to a local veriumd over JSON-RPC and is shipped as a single installer.",
+    "longDescription": "Modern desktop wallet for Verium (VRM) and Vericoin (VRC) with bundled veriumd and vericoind nodes, CPU mining, PoST staking, send/receive, transaction history, and chain bootstrap.",
     "publisher": "Vericonomy",
-    "externalBin": ["binaries/veriumd"],
+    "externalBin": ["binaries/veriumd", "binaries/vericoind"],
     "resources": [],
-    "copyright": "Copyright (c) Vericonomy and the Verium developers",
+    "copyright": "Copyright (c) Vericonomy",
     "linux": {
       "deb": {
         "depends": []

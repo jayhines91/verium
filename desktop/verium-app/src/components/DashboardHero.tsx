@@ -1,483 +1,269 @@
 import { Link } from "react-router-dom";
-import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Loader2, Pickaxe, Users, Wallet } from "lucide-react";
-import { ExplorerLink } from "@/components/ExplorerLink";
-import { MiningPickaxeAnimation } from "@/components/MiningPickaxeAnimation";
+import { ArrowLeftRight, Coins, Cpu, Wallet } from "lucide-react";
+import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
-import { BLOCK_AGE_TICK_MS, resolveTipBlock } from "@/lib/block-tip";
-import {
-  fetchExplorerBlocks,
-  fetchExplorerStats,
-  isExplorerApiEnabled,
-} from "@/lib/explorer-api";
-import { isMinerBooting, miningInfoRefetchMs } from "@/lib/mining-boot";
-import {
-  averageBlockTimeMinutes,
-  buildNetworkStats,
-  networkHashToKhm,
-  networkSharePercent,
-} from "@/lib/mining-revenue";
 import {
   rpcGetBlockchainInfo,
   rpcGetMinerState,
   rpcGetMiningInfo,
-  rpcGetNetworkInfo,
-  rpcGetPeerInfo,
+  rpcGetStakingState,
+  rpcGetVericoinMiningInfo,
   rpcGetWalletInfo,
 } from "@/lib/rpc/client";
+import { formatCoinAmount } from "@/lib/units";
+import { fetchExplorerStats } from "@/lib/explorer-api";
+import { networkCoinsStakingPercent, mergeStakingNetworkKpis } from "@/lib/staking-stats";
 import {
-  cn,
-  formatBlockAge,
-  formatNumber,
-  formatPercent,
-  formatVrm,
-} from "@/lib/utils";
+  blocksBehindNetwork,
+  syncTargetHeight,
+} from "@/lib/bootstrap-policy";
+import { cn, formatNumber, formatPercent } from "@/lib/utils";
 
-function StatusDot({ synced }: { synced: boolean }) {
+function ChainStatusCard({ coin }: { coin: CoinId }) {
+  const profile = getCoinProfile(coin);
+  const { data: status } = useDaemonStatus(coin);
+  const blockchain = useQuery({
+    queryKey: coinQueryKey(coin, "getblockchaininfo"),
+    queryFn: () => rpcGetBlockchainInfo(coin),
+    refetchInterval: 5_000,
+  });
+  const wallet = useQuery({
+    queryKey: coinQueryKey(coin, "getwalletinfo"),
+    queryFn: () => rpcGetWalletInfo(coin),
+    refetchInterval: 10_000,
+  });
+  const explorer = useQuery({
+    queryKey: coinQueryKey(coin, "explorer-stats"),
+    queryFn: () => fetchExplorerStats(coin),
+    refetchInterval: 30_000,
+    enabled: blockchain.data?.initialblockdownload === true,
+    retry: 0,
+  });
+
+  const ibd = blockchain.data?.initialblockdownload;
+  const progress = blockchain.data?.verificationprogress ?? 0;
+  const connected = status?.connected === true;
+  const synced =
+    connected && ibd === false && status?.sync_stalled !== true;
+  const localBlocks = blockchain.data?.blocks;
+  const networkTip = explorer.data?.height;
+  const syncTarget = syncTargetHeight(blockchain.data, networkTip);
+  const behind = blocksBehindNetwork(localBlocks, syncTarget);
+
   return (
-    <span
+    <div
       className={cn(
-        "relative inline-flex h-2 w-2 shrink-0 rounded-full",
-        synced ? "bg-success" : "bg-warning",
-      )}
-      aria-hidden
-    >
-      {synced && (
-        <span className="absolute inset-0 animate-ping rounded-full bg-success/60" />
-      )}
-    </span>
-  );
-}
-
-function MetaDivider() {
-  return (
-    <span className="hidden h-3 w-px shrink-0 bg-border sm:block" aria-hidden />
-  );
-}
-
-interface QuickTileProps {
-  to: string;
-  icon?: typeof Pickaxe;
-  iconNode?: ReactNode;
-  label: string;
-  value: string;
-  hint?: string;
-  active?: boolean;
-  booting?: boolean;
-}
-
-function QuickTile({
-  to,
-  icon: Icon,
-  iconNode,
-  label,
-  value,
-  hint,
-  active,
-  booting,
-}: QuickTileProps) {
-  return (
-    <Link
-      to={to}
-      className={cn(
-        "group flex min-w-[7.5rem] flex-col gap-1 rounded-lg border px-3 py-2.5 transition-colors",
-        booting
-          ? "border-warning/35 bg-warning/8 hover:bg-warning/12"
-          : active
-            ? "border-success/35 bg-success/8 hover:bg-success/12"
-            : "border-border/80 bg-bg-panel/60 hover:border-border-strong hover:bg-bg-panel",
+        "rounded-xl border p-5",
+        profile.accentClass,
+        "border-border bg-bg-panel/40",
       )}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-          {iconNode ?? (
-            Icon && (
-              <Icon
-                className={cn(
-                  "h-3.5 w-3.5",
-                  booting
-                    ? "text-warning"
-                    : active
-                      ? "text-success"
-                      : "text-fg-muted",
-                )}
-              />
-            )
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-medium uppercase tracking-wide text-fg-subtle">
+            {profile.displayName} · {profile.symbol}
+          </div>
+          <div className="mt-1 font-mono text-3xl font-semibold tabular-nums">
+            {localBlocks != null ? formatNumber(localBlocks) : "—"}
+          </div>
+          <div className="text-sm text-fg-muted">block height</div>
+          {!synced && syncTarget != null && syncTarget > (localBlocks ?? 0) && (
+            <div className="mt-1 font-mono text-xs text-fg-muted">
+              of ~{formatNumber(syncTarget)} network tip
+            </div>
           )}
-          {label}
+        </div>
+        <span
+          className={cn(
+            "rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase",
+            synced ? "bg-success/15 text-success" : "bg-warning/15 text-warning",
+          )}
+        >
+          {synced ? "Synced" : !connected ? "Offline" : ibd ? "Syncing" : "Catching up"}
         </span>
-        {booting ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-warning" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 text-fg-subtle opacity-0 transition-opacity group-hover:opacity-100" />
-        )}
       </div>
-      <div
-        className={cn(
-          "truncate text-sm font-semibold tabular-nums",
-          booting ? "text-warning" : active ? "text-success" : "text-fg",
-        )}
-      >
-        {value}
-      </div>
-      {hint && (
-        <div className="truncate text-[11px] text-fg-subtle">{hint}</div>
+      {!synced && (
+        <div className="mt-2 space-y-0.5 text-xs text-fg-muted">
+          <div>{formatPercent(progress, 0)} verified</div>
+          {behind != null && behind > 0 && (
+            <div>~{formatNumber(behind, 0)} blocks behind network</div>
+          )}
+        </div>
       )}
-    </Link>
-  );
-}
-
-interface MetricCellProps {
-  label: string;
-  value: string;
-  className?: string;
-}
-
-function MetricCell({ label, value, className }: MetricCellProps) {
-  return (
-    <div className={cn("px-4 py-3", className)}>
-      <div className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-        {label}
-      </div>
-      <div className="mt-0.5 text-sm font-semibold tabular-nums text-fg">
-        {value}
+      <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div>
+          <div className="text-xs text-fg-subtle">Spendable</div>
+          <div className="text-lg font-semibold tabular-nums">
+            {wallet.data
+              ? formatCoinAmount(wallet.data.balance, coin, 4)
+              : "—"}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-fg-subtle">Unconfirmed</div>
+          <div className="text-lg font-semibold tabular-nums">
+            {wallet.data
+              ? formatCoinAmount(wallet.data.unconfirmed_balance, coin, 4)
+              : "—"}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-fg-subtle">Immature</div>
+          <div className="text-lg font-semibold tabular-nums">
+            {wallet.data
+              ? formatCoinAmount(wallet.data.immature_balance, coin, 4)
+              : "—"}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-fg-subtle">Peers</div>
+          <div className="text-lg font-semibold tabular-nums">
+            {formatNumber(status?.connections ?? 0)}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-export function DashboardHero() {
-  const prevHeight = useRef<number | null>(null);
-  const [ageTick, setAgeTick] = useState(0);
-  const { data: status } = useDaemonStatus();
-  const blockchain = useQuery({
-    queryKey: ["getblockchaininfo"],
-    queryFn: rpcGetBlockchainInfo,
-    refetchInterval: 5_000,
-  });
-  const network = useQuery({
-    queryKey: ["getnetworkinfo"],
-    queryFn: rpcGetNetworkInfo,
-    refetchInterval: 5_000,
-  });
-  const peers = useQuery({
-    queryKey: ["getpeerinfo"],
-    queryFn: rpcGetPeerInfo,
-    refetchInterval: 5_000,
-  });
+function VeriumMiningCard({ coin }: { coin: CoinId }) {
+  const profile = getCoinProfile(coin);
   const minerState = useQuery({
-    queryKey: ["get_miner_state"],
-    queryFn: rpcGetMinerState,
+    queryKey: coinQueryKey(coin, "get_miner_state"),
+    queryFn: () => rpcGetMinerState(coin),
     refetchInterval: 5_000,
   });
-  const minerActive = minerState.data?.active ?? false;
-  const minerStartedAt = minerState.data?.started_at;
   const mining = useQuery({
-    queryKey: ["getmininginfo"],
-    queryFn: rpcGetMiningInfo,
-    refetchInterval: (query) => {
-      const hr = query.state.data?.hashrate ?? 0;
-      return miningInfoRefetchMs(minerActive, hr, minerStartedAt, 5_000);
-    },
+    queryKey: coinQueryKey(coin, "getmininginfo"),
+    queryFn: () => rpcGetMiningInfo(coin),
+    refetchInterval: 5_000,
   });
-  const wallet = useQuery({
-    queryKey: ["getwalletinfo"],
-    queryFn: rpcGetWalletInfo,
+
+  return (
+    <Link
+      to="/mining"
+      className="rounded-xl border border-border bg-bg-panel/60 p-4 transition-colors hover:border-border-strong hover:bg-bg-panel"
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Cpu className="h-4 w-4 text-accent" />
+          CPU mining
+        </div>
+        <span
+          className={cn(
+            "text-xs font-semibold",
+            minerState.data?.active ? "text-success" : "text-fg-subtle",
+          )}
+        >
+          {minerState.data?.active ? "Active" : "Idle"}
+        </span>
+      </div>
+      <div className="mt-2 text-2xl font-semibold tabular-nums">
+        {formatNumber(mining.data?.hashrate ?? 0, 0)} H/m
+      </div>
+      <div className="mt-1 text-xs text-fg-subtle">
+        Local hashrate · {profile.symbol} rewards after 101 confirmations
+      </div>
+    </Link>
+  );
+}
+
+function VericoinStakingCard({ coin }: { coin: CoinId }) {
+  const stakingState = useQuery({
+    queryKey: coinQueryKey(coin, "get_staking_state"),
+    queryFn: () => rpcGetStakingState(coin),
+    refetchInterval: 5_000,
+  });
+  const vrcMining = useQuery({
+    queryKey: coinQueryKey("vericoin", "getmininginfo"),
+    queryFn: () => rpcGetVericoinMiningInfo(),
     refetchInterval: 10_000,
   });
-  const explorerEnabled = useQuery({
-    queryKey: ["explorer-api-enabled"],
-    queryFn: isExplorerApiEnabled,
-    staleTime: Infinity,
-  });
-  const explorerStats = useQuery({
-    queryKey: ["explorer-stats"],
-    queryFn: fetchExplorerStats,
-    enabled: explorerEnabled.data === true,
+  const vrcExplorer = useQuery({
+    queryKey: coinQueryKey("vericoin", "explorer-stats"),
+    queryFn: () => fetchExplorerStats("vericoin"),
     refetchInterval: 30_000,
     retry: 0,
   });
-  const explorerBlocks = useQuery({
-    queryKey: ["explorer-blocks", 50],
-    queryFn: () => fetchExplorerBlocks(50),
-    enabled: explorerEnabled.data !== false,
-    refetchInterval: 30_000,
-    retry: 1,
+  const wallet = useQuery({
+    queryKey: coinQueryKey(coin, "getwalletinfo"),
+    queryFn: () => rpcGetWalletInfo(coin),
+    refetchInterval: 10_000,
   });
 
-  const ibd = blockchain.data?.initialblockdownload;
-  const progress = blockchain.data?.verificationprogress ?? 0;
-  const blocks = blockchain.data?.blocks;
-  const headers = blockchain.data?.headers;
-  const lag =
-    blocks != null && headers != null ? Math.max(0, headers - blocks) : 0;
-  const synced = !ibd && lag === 0 && status?.sync_stalled !== true;
-  const peerCount = Math.max(
-    network.data?.connections ?? 0,
-    peers.data?.length ?? 0,
-  );
-  const networkStats = buildNetworkStats(explorerStats.data, mining.data);
-  const avgBlockTimeMin = averageBlockTimeMinutes(explorerBlocks.data);
-  const networkKhm = networkStats?.networkHash
-    ? networkHashToKhm(networkStats.networkHash)
-    : null;
-  const localHash = mining.data?.hashrate ?? 0;
-  const share = networkSharePercent(localHash, networkStats?.networkHash);
-  const explorerHeight = explorerStats.data?.height;
-  const heightDelta =
-    blocks != null && explorerHeight != null
-      ? blocks - explorerHeight
-      : undefined;
-  const active = minerActive;
-  const minerBooting = isMinerBooting(active, localHash, minerStartedAt);
-  const immature = wallet.data?.immature_balance ?? 0;
-
-  useEffect(() => {
-    if (blocks != null) prevHeight.current = blocks;
-  }, [blocks]);
-
-  useEffect(() => {
-    const id = window.setInterval(
-      () => setAgeTick((n) => n + 1),
-      BLOCK_AGE_TICK_MS,
-    );
-    return () => window.clearInterval(id);
-  }, []);
-
-  const heightTick =
-    blocks != null && prevHeight.current != null && blocks > prevHeight.current;
-
-  const tipBlock = resolveTipBlock(explorerBlocks.data, blocks);
-  const latestBlockAge =
-    tipBlock?.time != null ? formatBlockAge(tipBlock.time, ageTick) : null;
-
-  const syncLabel = synced
-    ? "Fully synced"
-    : ibd
-      ? "Syncing chain"
-      : lag > 0
-        ? "Catching up"
-        : "Syncing";
-
-  const syncDetail = synced
-    ? undefined
-    : lag > 0
-      ? `${formatNumber(lag)} blocks behind headers`
-      : `${formatPercent(progress, 0)} verified`;
-
-  const explorerDeltaLabel =
-    heightDelta === undefined
-      ? null
-      : heightDelta === 0
-        ? "Matches explorer"
-        : heightDelta > 0
-          ? `+${heightDelta} vs explorer`
-          : `${heightDelta} vs explorer`;
-
-  const miningValue = minerBooting
-    ? "Starting…"
-    : active
-      ? `${formatNumber(localHash, 0)} H/m`
-      : localHash > 0
-        ? `${formatNumber(localHash, 0)} H/m idle`
-        : "Idle";
-
-  const miningHint = minerBooting
-    ? "Spinning up"
-    : active
-      ? "Active"
-      : undefined;
-
-  const walletHint =
-    immature > 0
-      ? `${formatVrm(immature, 4)} immature`
-      : share != null && localHash > 0
-        ? `${formatNumber(share, 2)}% network share`
-        : undefined;
+  const vrcNetwork = mergeStakingNetworkKpis(vrcMining.data, vrcExplorer.data);
+  const networkStakePct = networkCoinsStakingPercent(vrcNetwork.netStakeWeight);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-gradient-to-b from-bg-panel/40 to-bg-subtle/80">
-      {/* Status ribbon */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/70 px-4 py-2.5 sm:px-5">
-        <div className="flex items-center gap-2 text-sm">
-          <StatusDot synced={synced} />
-          <span className="font-medium text-fg">{syncLabel}</span>
-          {syncDetail && (
-            <span className="text-fg-muted">{syncDetail}</span>
-          )}
+    <Link
+      to="/staking"
+      className="rounded-xl border border-border bg-bg-panel/60 p-4 transition-colors hover:border-border-strong hover:bg-bg-panel"
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Coins className="h-4 w-4 text-accent" />
+          PoST staking
         </div>
+        <span
+          className={cn(
+            "text-xs font-semibold",
+            stakingState.data?.active ? "text-success" : "text-fg-subtle",
+          )}
+        >
+          {stakingState.data?.active ? "Active" : "Idle"}
+        </span>
+      </div>
+      <div className="mt-2 text-2xl font-semibold tabular-nums">
+        {vrcNetwork.interestRate != null
+          ? `${formatNumber(vrcNetwork.interestRate, 2)}%`
+          : formatCoinAmount(wallet.data?.stake ?? 0, coin, 4)}
+      </div>
+      <div className="mt-1 text-xs text-fg-subtle">
+        {networkStakePct != null
+          ? `${formatNumber(networkStakePct, 2)}% network staked · ${formatCoinAmount(wallet.data?.stake ?? 0, coin, 4)} your weight`
+          : `Stake weight ${formatCoinAmount(wallet.data?.stake ?? 0, coin, 4)}`}
+      </div>
+    </Link>
+  );
+}
 
-        {!synced && (
-          <div className="flex min-w-[8rem] flex-1 items-center gap-2 sm:max-w-xs">
-            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-panel">
-              <div
-                className="h-full rounded-full bg-warning transition-all duration-500"
-                style={{ width: `${Math.min(100, progress * 100)}%` }}
-              />
-            </div>
-            <span className="text-xs tabular-nums text-fg-subtle">
-              {formatPercent(progress, 0)}
-            </span>
-          </div>
+export function DashboardHero({ coin }: { coin: CoinId }) {
+  const profile = getCoinProfile(coin);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <ChainStatusCard coin={coin} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {coin === "verium" ? (
+          <VeriumMiningCard coin={coin} />
+        ) : (
+          <VericoinStakingCard coin={coin} />
         )}
-
-        <MetaDivider />
-
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-muted">
-          <span className="rounded-md bg-bg-panel/80 px-2 py-0.5 font-medium text-fg">
-            Mainnet
-          </span>
-          {explorerDeltaLabel && (
-            <>
-              <MetaDivider />
-              <span
-                className={cn(
-                  "rounded-md px-2 py-0.5 font-medium",
-                  heightDelta === 0 || (heightDelta != null && heightDelta > 0)
-                    ? "bg-success/10 text-success"
-                    : "bg-warning/10 text-warning",
-                )}
-              >
-                {explorerDeltaLabel}
-              </span>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Hero + quick actions */}
-      <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start lg:gap-8">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium uppercase tracking-wider text-fg-subtle">
-            <span>Latest block</span>
-            {latestBlockAge != null && (
-              <span className="normal-case tracking-normal text-fg-muted">
-                · {latestBlockAge}
-              </span>
-            )}
-            {heightTick && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-accent">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-                New block
-              </span>
-            )}
+        <Link
+          to="/wallet"
+          className="rounded-xl border border-border bg-bg-panel/60 p-4 transition-colors hover:border-border-strong hover:bg-bg-panel"
+        >
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Wallet className="h-4 w-4 text-accent" />
+            {profile.displayName} wallet
           </div>
-
-          <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-1">
-            <span className="font-mono text-4xl font-semibold tabular-nums tracking-tight text-fg sm:text-[2.75rem] sm:leading-none">
-              {blocks != null ? formatNumber(blocks) : "—"}
-            </span>
+          <div className="mt-2 text-sm text-fg-muted">
+            Balances, unlock, and HD upgrade for {profile.symbol}.
           </div>
-
-          {blockchain.data?.bestblockhash && (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <code className="max-w-full truncate rounded-md border border-border/70 bg-bg-panel/50 px-2.5 py-1 font-mono text-xs text-fg-muted">
-                {blockchain.data.bestblockhash.slice(0, 20)}…
-              </code>
-              <ExplorerLink
-                target={{
-                  kind: "block",
-                  hashOrHeight: blockchain.data.bestblockhash,
-                }}
-                label="View block"
-                className="rounded-md border border-border/70 bg-bg-panel/50 px-2 py-1 hover:border-border-strong hover:bg-bg-panel hover:text-accent"
-                showIcon
-              />
-            </div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:gap-2.5">
-          <QuickTile
-            to="/mining"
-            iconNode={
-              <MiningPickaxeAnimation
-                active={active && !minerBooting}
-                booting={minerBooting}
-                size="xs"
-              />
-            }
-            label="Mining"
-            value={miningValue}
-            hint={miningHint}
-            active={active && !minerBooting}
-            booting={minerBooting}
-          />
-          <QuickTile
-            to="/wallet"
-            icon={Wallet}
-            label="Available"
-            value={wallet.data ? formatVrm(wallet.data.balance, 4) : "—"}
-            hint={walletHint}
-          />
-          <QuickTile
-            to="/network"
-            icon={Users}
-            label="Peers"
-            value={formatNumber(peerCount)}
-            hint={
-              peerCount === 0
-                ? "No connections"
-                : peerCount === 1
-                  ? "1 connection"
-                  : `${peerCount} connections`
-            }
-          />
-        </div>
-      </div>
-
-      {/* Network metrics */}
-      <div className="grid grid-cols-2 divide-y divide-border/70 border-t border-border/70 bg-bg-panel/30 sm:grid-cols-3 lg:grid-cols-6 lg:divide-y-0 lg:divide-x">
-        <MetricCell
-          label="Network Hashrate"
-          value={
-            networkKhm != null ? `${formatNumber(networkKhm, 1)} kH/m` : "—"
-          }
-        />
-        <MetricCell
-          label="Difficulty"
-          value={mining.data ? formatNumber(mining.data.difficulty, 4) : "—"}
-        />
-        <MetricCell
-          label="Avg. Block time"
-          value={
-            avgBlockTimeMin != null
-              ? `${formatNumber(avgBlockTimeMin, 1)} min`
-              : networkStats?.blockTimeMin
-                ? `${formatNumber(networkStats.blockTimeMin, 1)} min`
-                : "—"
-          }
-        />
-        <MetricCell
-          label="VRM price"
-          value={
-            explorerStats.data?.price_usd != null
-              ? `$${formatNumber(explorerStats.data.price_usd, 4)}`
-              : "—"
-          }
-        />
-        <MetricCell
-          label="Mempool"
-          value={
-            explorerStats.data?.pooled_tx != null
-              ? formatNumber(explorerStats.data.pooled_tx, 0)
-              : mining.data
-                ? formatNumber(mining.data.pooledtx, 0)
-                : "—"
-          }
-        />
-        <MetricCell
-          label="Hashrate Share"
-          value={
-            share != null && localHash > 0
-              ? `${formatNumber(share, 2)}%`
-              : localHash > 0
-                ? "<0.01%"
-                : "—"
-          }
-          className="col-span-2 sm:col-span-1"
-        />
+        </Link>
+        <Link
+          to="/transactions"
+          className="rounded-xl border border-border bg-bg-panel/60 p-4 transition-colors hover:border-border-strong hover:bg-bg-panel"
+        >
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <ArrowLeftRight className="h-4 w-4 text-accent" />
+            Send &amp; receive
+          </div>
+          <div className="mt-2 text-sm text-fg-muted">
+            Pay {profile.symbol} or create receiving addresses.
+          </div>
+        </Link>
       </div>
     </div>
   );

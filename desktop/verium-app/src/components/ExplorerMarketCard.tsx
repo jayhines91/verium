@@ -8,8 +8,9 @@ import {
 } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { ExplorerLink } from "@/components/ExplorerLink";
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
-import { EXPLORER_HOME } from "@/lib/verium-links";
 import { formatNumber } from "@/lib/utils";
 
 function formatUsd(value?: number): string {
@@ -23,7 +24,11 @@ function formatUsd(value?: number): string {
   return `$${formatNumber(value, 4)}`;
 }
 
-export function ExplorerMarketCard() {
+export function ExplorerMarketCard({ coin: coinProp }: { coin?: CoinId }) {
+  const activeCoin = useActiveCoin();
+  const coin = coinProp ?? activeCoin;
+  const profile = getCoinProfile(coin);
+
   const enabled = useQuery({
     queryKey: ["explorer-api-enabled"],
     queryFn: isExplorerApiEnabled,
@@ -31,8 +36,8 @@ export function ExplorerMarketCard() {
   });
 
   const stats = useQuery({
-    queryKey: ["explorer-stats"],
-    queryFn: fetchExplorerStats,
+    queryKey: coinQueryKey(coin, "explorer-stats"),
+    queryFn: () => fetchExplorerStats(coin),
     enabled: enabled.data === true,
     refetchInterval: 60_000,
     retry: 0,
@@ -46,14 +51,18 @@ export function ExplorerMarketCard() {
         <div>
           <CardTitle>Market & network</CardTitle>
           <CardDescription>
-            Live data from the Vericonomy explorer REST API.
+            Live {profile.symbol} data from the Vericonomy explorer.
           </CardDescription>
         </div>
         <div className="flex items-center gap-2">
           {stats.data?.source && (
             <Badge tone="accent">{stats.data.source}</Badge>
           )}
-          <ExplorerLink target={{ kind: "raw", url: EXPLORER_HOME }} label="Explorer" />
+          <ExplorerLink
+            coin={coin}
+            target={{ kind: "raw", url: profile.explorerBase }}
+            label="Explorer"
+          />
         </div>
       </CardHeader>
       <CardContent>
@@ -61,14 +70,17 @@ export function ExplorerMarketCard() {
           <div className="text-xs text-fg-subtle">Market data unavailable.</div>
         ) : (
           <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-            <Stat label="VRM price" value={formatUsd(stats.data?.price_usd)} />
+            <Stat
+              label={`${profile.symbol} price`}
+              value={formatUsd(stats.data?.price_usd)}
+            />
             <Stat label="Market cap" value={formatUsd(stats.data?.market_cap_usd)} />
             <Stat label="24h volume" value={formatUsd(stats.data?.volume_24h_usd)} />
             <Stat
               label="Block reward"
               value={
                 stats.data?.block_reward !== undefined
-                  ? `${formatNumber(stats.data.block_reward, 4)} VRM`
+                  ? `${formatNumber(stats.data.block_reward, 4)} ${profile.symbol}`
                   : "—"
               }
             />
@@ -76,7 +88,7 @@ export function ExplorerMarketCard() {
               label="Supply"
               value={
                 stats.data?.supply !== undefined
-                  ? `${formatNumber(stats.data.supply, 2)} VRM`
+                  ? `${formatNumber(stats.data.supply, 2)} ${profile.symbol}`
                   : "—"
               }
             />

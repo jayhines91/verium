@@ -1,3 +1,5 @@
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
@@ -77,6 +79,7 @@ function clampMiningThreads(value: number, fallback = 2): number {
 }
 
 export function Mining() {
+  const coin = useActiveCoin();
   const queryClient = useQueryClient();
   const prefs = useUserPreferences((s) => s.prefs);
   const updatePrefs = useUserPreferences((s) => s.update);
@@ -90,40 +93,40 @@ export function Mining() {
   const lastSampleRef = useRef<{ t: number; hr: number } | null>(null);
 
   const minerState = useQuery({
-    queryKey: ["get_miner_state"],
-    queryFn: rpcGetMinerState,
+    queryKey: coinQueryKey(coin, "get_miner_state"),
+    queryFn: () => rpcGetMinerState(coin),
     refetchInterval: 4_000,
   });
   const minerActive = minerState.data?.active ?? false;
   const minerStartedAt = minerState.data?.started_at;
 
   const mining = useQuery({
-    queryKey: ["getmininginfo"],
-    queryFn: rpcGetMiningInfo,
+    queryKey: coinQueryKey(coin, "getmininginfo"),
+    queryFn: () => rpcGetMiningInfo(coin),
     refetchInterval: (query) => {
       const hr = query.state.data?.hashrate ?? 0;
       return miningInfoRefetchMs(minerActive, hr, minerStartedAt, 4_000);
     },
   });
   const blockchain = useQuery({
-    queryKey: ["getblockchaininfo"],
-    queryFn: rpcGetBlockchainInfo,
+    queryKey: coinQueryKey(coin, "getblockchaininfo"),
+    queryFn: () => rpcGetBlockchainInfo(coin),
     refetchInterval: 10_000,
   });
   const wallet = useQuery({
-    queryKey: ["getwalletinfo"],
-    queryFn: rpcGetWalletInfo,
+    queryKey: coinQueryKey(coin, "getwalletinfo"),
+    queryFn: () => rpcGetWalletInfo(coin),
     refetchInterval: 10_000,
   });
-  const daemonStatus = useDaemonStatus();
+  const daemonStatus = useDaemonStatus(coin);
   const explorerEnabled = useQuery({
     queryKey: ["explorer-api-enabled"],
     queryFn: isExplorerApiEnabled,
     staleTime: Infinity,
   });
   const explorerStats = useQuery({
-    queryKey: ["explorer-stats"],
-    queryFn: fetchExplorerStats,
+    queryKey: coinQueryKey(coin, "explorer-stats"),
+    queryFn: () => fetchExplorerStats(coin),
     enabled: explorerEnabled.data === true,
     refetchInterval: 30_000,
     retry: 0,
@@ -144,19 +147,19 @@ export function Mining() {
   }, [mining.data]);
 
   const start = useMutation({
-    mutationFn: () => rpcMinerStart(savedThreads),
+    mutationFn: () => rpcMinerStart(coin, savedThreads),
     onSuccess: (state) => {
       clearMiningStoppedByUser();
-      queryClient.setQueryData(["get_miner_state"], state);
-      queryClient.invalidateQueries({ queryKey: ["getmininginfo"] });
+      queryClient.setQueryData(coinQueryKey(coin, "get_miner_state"), state);
+      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getmininginfo") });
     },
   });
   const stop = useMutation({
-    mutationFn: rpcMinerStop,
+    mutationFn: () => rpcMinerStop(coin),
     onSuccess: (state) => {
       markMiningStoppedByUser();
-      queryClient.setQueryData(["get_miner_state"], state);
-      queryClient.invalidateQueries({ queryKey: ["getmininginfo"] });
+      queryClient.setQueryData(coinQueryKey(coin, "get_miner_state"), state);
+      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getmininginfo") });
     },
   });
 

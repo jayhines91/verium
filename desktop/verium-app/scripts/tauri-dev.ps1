@@ -7,4 +7,7 @@ Set-Location $root
 
 . (Join-Path $PSScriptRoot "load-win-build-env.ps1")
 
+npm run fetch:sidecars:if-missing
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 npm run tauri:dev:raw

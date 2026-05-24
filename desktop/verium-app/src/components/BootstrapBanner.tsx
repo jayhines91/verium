@@ -3,41 +3,80 @@ import { useQuery } from "@tanstack/react-query";
 import { HardDriveDownload, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { BootstrapDialog } from "@/components/BootstrapDialog";
+import { coinQueryKey } from "@/lib/coin/profile";
+import { useActiveCoin } from "@/lib/coin/context";
 import { rpcGetBlockchainInfo, rpcGetPeerInfo } from "@/lib/rpc/client";
-import { shouldOfferBootstrap } from "@/lib/bootstrap-policy";
+import {
+  blocksBehindNetwork,
+  shouldOfferBootstrap,
+  syncTargetHeight,
+} from "@/lib/bootstrap-policy";
+import { fetchExplorerStats } from "@/lib/explorer-api";
 import { useUserPreferences } from "@/lib/user-preferences";
+import { formatNumber, formatPercent } from "@/lib/utils";
 
 export function BootstrapBanner() {
+  const coin = useActiveCoin();
   const [dialogOpen, setDialogOpen] = useState(false);
   const prefs = useUserPreferences((s) => s.prefs);
   const updatePrefs = useUserPreferences((s) => s.update);
 
   const blockchain = useQuery({
-    queryKey: ["getblockchaininfo"],
-    queryFn: rpcGetBlockchainInfo,
+    queryKey: coinQueryKey(coin, "getblockchaininfo"),
+    queryFn: () => rpcGetBlockchainInfo(coin),
     refetchInterval: 15_000,
   });
   const peers = useQuery({
-    queryKey: ["getpeerinfo"],
-    queryFn: rpcGetPeerInfo,
+    queryKey: coinQueryKey(coin, "getpeerinfo"),
+    queryFn: () => rpcGetPeerInfo(coin),
     refetchInterval: 15_000,
   });
+  const explorer = useQuery({
+    queryKey: coinQueryKey(coin, "explorer-stats"),
+    queryFn: () => fetchExplorerStats(coin),
+    refetchInterval: 30_000,
+    retry: 0,
+  });
 
+  const networkTip = explorer.data?.height;
   const offer = shouldOfferBootstrap(
     blockchain.data,
     peers.data,
     prefs.bootstrap_dismissed_at,
+    networkTip,
   );
 
   if (!offer) return null;
+
+  const localBlocks = blockchain.data?.blocks;
+  const progress = blockchain.data?.verificationprogress ?? 0;
+  const target = syncTargetHeight(blockchain.data, networkTip);
+  const behind = blocksBehindNetwork(localBlocks, target);
 
   return (
     <div className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
       <HardDriveDownload className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
       <div className="flex flex-1 flex-col gap-2">
-        <div className="text-warning">
-          Your chain is far behind the network. Importing the official
-          bootstrap snapshot will sync much faster than catching up over P2P.
+        <div className="space-y-1 text-warning">
+          <div>
+            Your chain is far behind the network. Importing the official
+            bootstrap snapshot can jump you ahead faster than catching up over
+            P2P. Dashboard block counts show your local verified height until
+            sync completes.
+          </div>
+          {localBlocks != null && (
+            <div className="font-mono text-xs text-fg-muted">
+              Local block #{formatNumber(localBlocks, 0)}
+              {target != null && (
+                <> · network tip ~#{formatNumber(target, 0)}</>
+              )}
+              {behind != null && behind > 0 && (
+                <> · ~{formatNumber(behind, 0)} blocks remaining</>
+              )}
+              {" · "}
+              {formatPercent(progress, 0)} verified
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={() => setDialogOpen(true)}>
@@ -56,7 +95,11 @@ export function BootstrapBanner() {
           </Button>
         </div>
       </div>
-      <BootstrapDialog open={dialogOpen} onClose={() => setDialogOpen(false)} />
+      <BootstrapDialog
+        coin={coin}
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+      />
     </div>
   );
 }

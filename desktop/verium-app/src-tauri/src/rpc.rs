@@ -65,7 +65,7 @@ impl RpcClient {
     ) -> AppResult<T> {
         let body = RpcRequest {
             jsonrpc: "1.0",
-            id: "verium-app",
+            id: "vericonomy-app",
             method,
             params,
         };

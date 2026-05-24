@@ -1,41 +1,36 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
-import { EXPLORER_LOGO_URL } from "@/lib/verium-links";
+import {
+  ALL_COINS,
+  COIN_PROFILES,
+  type CoinId,
+} from "@/lib/coin/profile";
+import {
+  useActiveCoin,
+  useEnabledCoins,
+  useSetActiveCoin,
+} from "@/lib/coin/context";
+import { getExplorerLogoUrl } from "@/lib/explorer-api";
 import { cn } from "@/lib/utils";
 
-type CoinId = "verium" | "vericoin";
-
-interface CoinOption {
-  id: CoinId;
-  name: string;
-  tagline: string;
-  symbol: string;
-  accentClass: string;
-}
-
-const COINS: CoinOption[] = [
-  {
-    id: "verium",
-    name: "Verium",
-    tagline: "Reserve",
-    symbol: "VRM",
-    accentClass: "bg-accent/15 text-accent border-accent/30",
-  },
-  {
-    id: "vericoin",
-    name: "Vericoin",
-    tagline: "Currency",
-    symbol: "VRC",
-    accentClass: "bg-bg-panel text-fg-muted border-border-strong",
-  },
-];
-
 export function CoinSwitcher() {
+  const activeCoin = useActiveCoin();
+  const setActiveCoin = useSetActiveCoin();
+  const enabledCoins = useEnabledCoins();
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<CoinId>("verium");
   const rootRef = useRef<HTMLDivElement>(null);
+  const [logoUrls, setLogoUrls] = useState<Partial<Record<CoinId, string>>>({});
 
-  const active = COINS.find((c) => c.id === selected) ?? COINS[0]!;
+  const active = COIN_PROFILES[activeCoin];
+  const options = ALL_COINS.filter((coin) => enabledCoins.includes(coin));
+
+  useEffect(() => {
+    for (const coin of ALL_COINS) {
+      void getExplorerLogoUrl(coin).then((url) => {
+        setLogoUrls((prev) => ({ ...prev, [coin]: url }));
+      });
+    }
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -71,14 +66,14 @@ export function CoinSwitcher() {
         )}
       >
         <img
-          src={EXPLORER_LOGO_URL}
-          alt={active.name}
+          src={logoUrls[activeCoin]}
+          alt={active.displayName}
           className="h-9 w-9 shrink-0 rounded-lg object-contain"
         />
         <div className="min-w-0 flex-1 leading-tight">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-sm font-semibold">
-              {active.name}
+              {active.displayName}
             </span>
             <span
               className={cn(
@@ -108,16 +103,17 @@ export function CoinSwitcher() {
           aria-label="Select coin"
           className="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-50 overflow-hidden rounded-lg border border-border bg-bg-panel shadow-lg"
         >
-          {COINS.map((coin) => {
-            const isActive = coin.id === selected;
+          {options.map((coin) => {
+            const profile = COIN_PROFILES[coin];
+            const isActive = coin === activeCoin;
             return (
               <button
-                key={coin.id}
+                key={coin}
                 type="button"
                 role="option"
                 aria-selected={isActive}
                 onClick={() => {
-                  setSelected(coin.id);
+                  setActiveCoin(coin);
                   setOpen(false);
                 }}
                 className={cn(
@@ -125,19 +121,26 @@ export function CoinSwitcher() {
                   isActive ? "bg-accent/10" : "hover:bg-bg-subtle",
                 )}
               >
+                <img
+                  src={logoUrls[coin]}
+                  alt=""
+                  className="mt-0.5 h-7 w-7 shrink-0 rounded-md object-contain"
+                />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-sm font-semibold">{coin.name}</span>
+                    <span className="text-sm font-semibold">
+                      {profile.displayName}
+                    </span>
                     <span
                       className={cn(
                         "rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                        coin.accentClass,
+                        profile.accentClass,
                       )}
                     >
-                      {coin.symbol}
+                      {profile.symbol}
                     </span>
                   </div>
-                  <div className="text-xs text-fg-subtle">{coin.tagline}</div>
+                  <div className="text-xs text-fg-subtle">{profile.tagline}</div>
                 </div>
                 {isActive && (
                   <Check className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
@@ -146,7 +149,7 @@ export function CoinSwitcher() {
             );
           })}
           <div className="border-t border-border px-3 py-2 text-[10px] text-fg-subtle">
-            Switch between the Verium and Vericoin Wallets
+            Switch between Verium and Vericoin wallets
           </div>
         </div>
       )}

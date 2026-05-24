@@ -1,3 +1,5 @@
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { useQuery } from "@tanstack/react-query";
 import {
   Card,
@@ -16,10 +18,10 @@ import {
   isExplorerApiEnabled,
 } from "@/lib/explorer-api";
 import {
-  EXPLORER_EXTRACTION,
-  EXPLORER_PEERS,
-  EXPLORER_RICHLIST,
-} from "@/lib/verium-links";
+  explorerExtractionHash,
+  explorerPeersHash,
+  explorerRichlistHash,
+} from "@/lib/explorer-links";
 import {
   rpcGetBlockchainInfo,
   rpcGetNetworkInfo,
@@ -48,19 +50,20 @@ function chainTipLabel(status?: string): string {
 }
 
 export function Network() {
+  const coin = useActiveCoin();
   const network = useQuery({
-    queryKey: ["getnetworkinfo"],
-    queryFn: rpcGetNetworkInfo,
+    queryKey: coinQueryKey(coin, "getnetworkinfo"),
+    queryFn: () => rpcGetNetworkInfo(coin),
     refetchInterval: 5_000,
   });
   const peers = useQuery({
-    queryKey: ["getpeerinfo"],
-    queryFn: rpcGetPeerInfo,
+    queryKey: coinQueryKey(coin, "getpeerinfo"),
+    queryFn: () => rpcGetPeerInfo(coin),
     refetchInterval: 5_000,
   });
   const blockchain = useQuery({
-    queryKey: ["getblockchaininfo"],
-    queryFn: rpcGetBlockchainInfo,
+    queryKey: coinQueryKey(coin, "getblockchaininfo"),
+    queryFn: () => rpcGetBlockchainInfo(coin),
     refetchInterval: 10_000,
   });
 
@@ -71,24 +74,24 @@ export function Network() {
   });
 
   const extraction = useQuery({
-    queryKey: ["explorer-extraction"],
-    queryFn: () => fetchExplorerExtraction(15),
+    queryKey: coinQueryKey(coin, "explorer-extraction"),
+    queryFn: () => fetchExplorerExtraction(coin, 15),
     enabled: explorerEnabled.data === true,
     refetchInterval: 60_000,
     retry: 0,
   });
 
   const chainTips = useQuery({
-    queryKey: ["explorer-chain-tips"],
-    queryFn: fetchExplorerChainTips,
+    queryKey: coinQueryKey(coin, "explorer-chain-tips"),
+    queryFn: () => fetchExplorerChainTips(coin),
     enabled: explorerEnabled.data === true,
     refetchInterval: 60_000,
     retry: 0,
   });
 
   const explorerStats = useQuery({
-    queryKey: ["explorer-stats"],
-    queryFn: fetchExplorerStats,
+    queryKey: coinQueryKey(coin, "explorer-stats"),
+    queryFn: () => fetchExplorerStats(coin),
     enabled: explorerEnabled.data === true,
     refetchInterval: 60_000,
     retry: 0,
@@ -171,7 +174,8 @@ export function Network() {
                 </CardDescription>
               </div>
               <ExplorerLink
-                target={{ kind: "raw", url: EXPLORER_EXTRACTION }}
+                coin={coin}
+                target={{ kind: "raw", url: explorerExtractionHash(coin) }}
                 label="Full list"
               />
             </CardHeader>
@@ -325,15 +329,18 @@ export function Network() {
           </div>
           <div className="flex flex-col items-end gap-1">
             <ExplorerLink
-              target={{ kind: "raw", url: EXPLORER_PEERS }}
+              coin={coin}
+              target={{ kind: "raw", url: explorerPeersHash(coin) }}
               label="Peers on explorer"
             />
             <ExplorerLink
-              target={{ kind: "raw", url: EXPLORER_EXTRACTION }}
+              coin={coin}
+              target={{ kind: "raw", url: explorerExtractionHash(coin) }}
               label="Extraction stats"
             />
             <ExplorerLink
-              target={{ kind: "raw", url: EXPLORER_RICHLIST }}
+              coin={coin}
+              target={{ kind: "raw", url: explorerRichlistHash(coin) }}
               label="Rich list"
             />
           </div>

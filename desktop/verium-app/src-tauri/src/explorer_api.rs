@@ -1,25 +1,27 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
+use crate::coin_profile::CoinId;
 use crate::error::{AppError, AppResult};
 
 pub const EXPLORER_API_ENABLED: bool = true;
 
-pub const EXPLORER_BASE: &str = "https://explorer-vrm.vericonomy.com";
-
-fn explorer_api_url(path: &str) -> String {
-    let path = path.trim_start_matches('/');
-    format!("{EXPLORER_BASE}/rest/api/1/{path}")
-}
-
-pub fn explorer_logo_url() -> String {
-    format!("{EXPLORER_BASE}/assets/images/logo.png")
-}
-
 const CACHE_TTL: Duration = Duration::from_secs(30);
+const PEERS_CACHE_TTL: Duration = Duration::from_secs(300);
+
+fn explorer_api_url(coin: CoinId, path: &str) -> String {
+    let base = coin.explorer_api_base();
+    let path = path.trim_start_matches('/');
+    format!("{base}/{path}")
+}
+
+pub fn explorer_logo_url(coin: CoinId) -> String {
+    coin.explorer_logo_url().to_string()
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExplorerStats {
@@ -35,6 +37,12 @@ pub struct ExplorerStats {
     pub price_btc: Option<f64>,
     pub market_cap_usd: Option<f64>,
     pub volume_24h_usd: Option<f64>,
+    /// Vericoin PoS fields from `getmininginfo` (local node or explorer RPC proxy).
+    pub stake_interest: Option<f64>,
+    pub stake_inflation: Option<f64>,
+    pub net_stake_weight: Option<f64>,
+    pub pos_difficulty: Option<f64>,
+    pub pow_difficulty: Option<f64>,
     pub fetched_at: u64,
     pub source: String,
 }
@@ -98,7 +106,7 @@ struct TimedEntry<T> {
     value: T,
 }
 
-struct CacheStore {
+struct CoinCache {
     stats: Option<TimedEntry<ExplorerStats>>,
     blocks: Option<TimedEntry<Vec<ExplorerBlock>>>,
     transactions: Option<TimedEntry<Vec<ExplorerTransaction>>>,
@@ -107,7 +115,7 @@ struct CacheStore {
     peers: Option<TimedEntry<Vec<ExplorerPeerEntry>>>,
 }
 
-impl Default for CacheStore {
+impl Default for CoinCache {
     fn default() -> Self {
         Self {
             stats: None,
@@ -120,13 +128,13 @@ impl Default for CacheStore {
     }
 }
 
-static CACHE: once_cell::sync::Lazy<Mutex<CacheStore>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(CacheStore::default()));
+static CACHE: once_cell::sync::Lazy<Mutex<HashMap<CoinId, CoinCache>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn http_client() -> AppResult<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
-        .user_agent("verium-desktop-app/0.1")
+        .user_agent("vericonomy-desktop-app/0.1")
         .build()?)
 }
 
@@ -158,12 +166,58 @@ fn parse_u64(v: &Value) -> Option<u64> {
     }
 }
 
-pub async fn fetch_network_stats() -> AppResult<ExplorerStats> {
+fn coingecko_id(coin: CoinId) -> &'static str {
+    match coin {
+        CoinId::Verium => "veriumreserve",
+        CoinId::Vericoin => "vericoin",
+    }
+}
+
+fn parse_pos_pow_difficulty(
+    coin: CoinId,
+    mining: &Value,
+) -> (Option<f64>, Option<f64>, Option<f64>) {
+    let Some(diff) = mining.get("difficulty") else {
+        return (None, None, None);
+    };
+    if coin == CoinId::Vericoin {
+        if let Some(obj) = diff.as_object() {
+            return (
+                obj.get("proof-of-stake").and_then(parse_f64),
+                obj.get("proof-of-work").and_then(parse_f64),
+                None,
+            );
+        }
+        return (None, None, None);
+    }
+    (None, None, diff.as_f64().or_else(|| parse_f64(diff)))
+}
+
+async fn latest_block_generation(client: &reqwest::Client, coin: CoinId) -> Option<f64> {
+    let blocks = get_json(
+        client,
+        &explorer_api_url(coin, "block?limit=1"),
+    )
+    .await
+    .ok()?;
+    let first = blocks.as_array()?.first()?;
+    first
+        .get("generation")
+        .and_then(parse_f64)
+        .or_else(|| {
+            first
+                .get("generation")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse().ok())
+        })
+}
+
+pub async fn fetch_network_stats(coin: CoinId) -> AppResult<ExplorerStats> {
     if !EXPLORER_API_ENABLED {
         return Err(AppError::other("explorer api disabled"));
     }
 
-    if let Some(cached) = read_stats_cache().await {
+    if let Some(cached) = read_stats_cache(coin).await {
         return Ok(cached);
     }
 
@@ -171,47 +225,74 @@ pub async fn fetch_network_stats() -> AppResult<ExplorerStats> {
 
     let mining = get_json(
         &client,
-        &explorer_api_url("rpc/getmininginfo"),
+        &explorer_api_url(coin, "rpc/getmininginfo"),
     )
     .await?;
 
     let supply_info = get_json(
         &client,
-        &explorer_api_url("rpc/gettxoutsetinfo"),
+        &explorer_api_url(coin, "rpc/gettxoutsetinfo"),
     )
     .await
     .ok();
 
     let price_info = get_json(
         &client,
-        &explorer_api_url("coingecko/price"),
+        &explorer_api_url(coin, "coingecko/price"),
     )
     .await
     .ok();
 
+    let cg_id = coingecko_id(coin);
     let price_usd = price_info
         .as_ref()
-        .and_then(|p| p.get("veriumreserve"))
+        .and_then(|p| p.get(cg_id))
         .and_then(|v| v.get("usd"))
         .and_then(parse_f64);
 
     let price_btc = price_info
         .as_ref()
-        .and_then(|p| p.get("veriumreserve"))
+        .and_then(|p| p.get(cg_id))
         .and_then(|v| v.get("btc"))
         .and_then(parse_f64);
 
     let market_cap_usd = price_info
         .as_ref()
-        .and_then(|p| p.get("veriumreserve"))
+        .and_then(|p| p.get(cg_id))
         .and_then(|v| v.get("usd_market_cap"))
         .and_then(parse_f64);
 
     let volume_24h_usd = price_info
         .as_ref()
-        .and_then(|p| p.get("veriumreserve"))
+        .and_then(|p| p.get(cg_id))
         .and_then(|v| v.get("usd_24h_vol"))
         .and_then(parse_f64);
+
+    let (pos_difficulty, pow_difficulty, flat_difficulty) =
+        parse_pos_pow_difficulty(coin, &mining);
+
+    let mut block_reward = mining.get("blockreward").and_then(parse_f64);
+    if coin == CoinId::Vericoin {
+        if block_reward.is_none_or(|r| r > 100.0) {
+            block_reward = latest_block_generation(&client, coin).await;
+        }
+    }
+
+    let stake_interest = if coin == CoinId::Vericoin {
+        mining.get("stakeinterest").and_then(parse_f64)
+    } else {
+        None
+    };
+    let stake_inflation = if coin == CoinId::Vericoin {
+        mining.get("stakeinflation").and_then(parse_f64)
+    } else {
+        None
+    };
+    let net_stake_weight = if coin == CoinId::Vericoin {
+        mining.get("netstakeweight").and_then(parse_f64)
+    } else {
+        None
+    };
 
     let stats = ExplorerStats {
         network_hash: mining.get("networkhashps").and_then(parse_f64),
@@ -228,8 +309,8 @@ pub async fn fetch_network_stats() -> AppResult<ExplorerStats> {
                     .and_then(|s| s.get("height"))
                     .and_then(parse_u64)
             }),
-        block_reward: mining.get("blockreward").and_then(parse_f64),
-        difficulty: mining.get("difficulty").and_then(parse_f64),
+        block_reward,
+        difficulty: flat_difficulty.or(pos_difficulty),
         blocks_per_hour: mining.get("blocksperhour").and_then(parse_f64),
         block_time_min: mining.get("blocktime").and_then(parse_f64),
         pooled_tx: mining.get("pooledtx").and_then(parse_u64),
@@ -237,33 +318,35 @@ pub async fn fetch_network_stats() -> AppResult<ExplorerStats> {
         price_btc,
         market_cap_usd,
         volume_24h_usd,
+        stake_interest,
+        stake_inflation,
+        net_stake_weight,
+        pos_difficulty,
+        pow_difficulty,
         fetched_at: now_secs(),
         source: "explorer-rest".to_string(),
     };
 
-    write_stats_cache(stats.clone()).await;
+    write_stats_cache(coin, stats.clone()).await;
     Ok(stats)
 }
 
-const PEERS_CACHE_TTL: Duration = Duration::from_secs(300);
-
-pub async fn fetch_explorer_peers() -> AppResult<Vec<ExplorerPeerEntry>> {
+pub async fn fetch_explorer_peers(coin: CoinId) -> AppResult<Vec<ExplorerPeerEntry>> {
     if !EXPLORER_API_ENABLED {
         return Err(AppError::other("explorer api disabled"));
     }
 
-    if let Some(cached) = read_peers_cache().await {
+    if let Some(cached) = read_peers_cache(coin).await {
         return Ok(cached);
     }
 
     let client = http_client()?;
-    let versions = get_json(&client, &explorer_api_url("peer?limit=50")).await?;
+    let versions = get_json(&client, &explorer_api_url(coin, "peer?limit=50")).await?;
     let versions = versions
         .as_array()
         .ok_or_else(|| AppError::other("peer versions response is not an array"))?;
 
-    let mut by_address: std::collections::HashMap<String, ExplorerPeerEntry> =
-        std::collections::HashMap::new();
+    let mut by_address: HashMap<String, ExplorerPeerEntry> = HashMap::new();
 
     for version in versions {
         let version_id = match version.get("version_id").and_then(parse_u64) {
@@ -280,7 +363,11 @@ pub async fn fetch_explorer_peers() -> AppResult<Vec<ExplorerPeerEntry>> {
             .and_then(parse_u64)
             .unwrap_or(0);
 
-        let detail = get_json(&client, &explorer_api_url(&format!("peer/{version_id}"))).await?;
+        let detail = get_json(
+            &client,
+            &explorer_api_url(coin, &format!("peer/{version_id}")),
+        )
+        .await?;
         let Some(peer_list) = detail.get("peers").and_then(|p| p.as_array()) else {
             continue;
         };
@@ -322,17 +409,17 @@ pub async fn fetch_explorer_peers() -> AppResult<Vec<ExplorerPeerEntry>> {
             .then_with(|| a.address.cmp(&b.address))
     });
 
-    write_peers_cache(peers.clone()).await;
+    write_peers_cache(coin, peers.clone()).await;
     Ok(peers)
 }
 
-pub async fn fetch_blocks(limit: u32) -> AppResult<Vec<ExplorerBlock>> {
+pub async fn fetch_blocks(coin: CoinId, limit: u32) -> AppResult<Vec<ExplorerBlock>> {
     let limit = limit.clamp(1, 100);
-    let blocks = if let Some(cached) = read_blocks_cache().await {
+    let blocks = if let Some(cached) = read_blocks_cache(coin).await {
         cached
     } else {
         let client = http_client()?;
-        let url = explorer_api_url("block?limit=100");
+        let url = explorer_api_url(coin, "block?limit=100");
         let value = get_json(&client, &url).await?;
         let arr = value
             .as_array()
@@ -373,21 +460,21 @@ pub async fn fetch_blocks(limit: u32) -> AppResult<Vec<ExplorerBlock>> {
             })
             .collect();
 
-        write_blocks_cache(fetched.clone()).await;
+        write_blocks_cache(coin, fetched.clone()).await;
         fetched
     };
 
     Ok(blocks.into_iter().take(limit as usize).collect())
 }
 
-pub async fn fetch_transactions(limit: u32) -> AppResult<Vec<ExplorerTransaction>> {
+pub async fn fetch_transactions(coin: CoinId, limit: u32) -> AppResult<Vec<ExplorerTransaction>> {
     let limit = limit.clamp(1, 100);
-    if let Some(cached) = read_transactions_cache().await {
-        return Ok(cached);
+    if let Some(cached) = read_transactions_cache(coin).await {
+        return Ok(cached.into_iter().take(limit as usize).collect());
     }
 
     let client = http_client()?;
-    let url = explorer_api_url(&format!("transaction?limit={limit}"));
+    let url = explorer_api_url(coin, &format!("transaction?limit={limit}"));
     let value = get_json(&client, &url).await?;
     let arr = value
         .as_array()
@@ -413,18 +500,18 @@ pub async fn fetch_transactions(limit: u32) -> AppResult<Vec<ExplorerTransaction
         })
         .collect();
 
-    write_transactions_cache(txs.clone()).await;
-    Ok(txs)
+    write_transactions_cache(coin, txs.clone()).await;
+    Ok(txs.into_iter().take(limit as usize).collect())
 }
 
-pub async fn fetch_extraction(limit: u32) -> AppResult<Vec<ExplorerExtractionEntry>> {
+pub async fn fetch_extraction(coin: CoinId, limit: u32) -> AppResult<Vec<ExplorerExtractionEntry>> {
     let limit = limit.clamp(1, 100);
-    if let Some(cached) = read_extraction_cache().await {
-        return Ok(cached);
+    if let Some(cached) = read_extraction_cache(coin).await {
+        return Ok(cached.into_iter().take(limit as usize).collect());
     }
 
     let client = http_client()?;
-    let url = explorer_api_url(&format!("extraction?limit={limit}"));
+    let url = explorer_api_url(coin, &format!("extraction?limit={limit}"));
     let value = get_json(&client, &url).await?;
     let arr = value
         .as_array()
@@ -445,17 +532,17 @@ pub async fn fetch_extraction(limit: u32) -> AppResult<Vec<ExplorerExtractionEnt
         })
         .collect();
 
-    write_extraction_cache(entries.clone()).await;
-    Ok(entries)
+    write_extraction_cache(coin, entries.clone()).await;
+    Ok(entries.into_iter().take(limit as usize).collect())
 }
 
-pub async fn fetch_chain_tips() -> AppResult<Vec<ExplorerChainTip>> {
-    if let Some(cached) = read_chain_cache().await {
+pub async fn fetch_chain_tips(coin: CoinId) -> AppResult<Vec<ExplorerChainTip>> {
+    if let Some(cached) = read_chain_cache(coin).await {
         return Ok(cached);
     }
 
     let client = http_client()?;
-    let url = explorer_api_url("chain");
+    let url = explorer_api_url(coin, "chain");
     let value = get_json(&client, &url).await?;
     let arr = value
         .as_array()
@@ -479,110 +566,137 @@ pub async fn fetch_chain_tips() -> AppResult<Vec<ExplorerChainTip>> {
 
     tips.sort_by(|a, b| b.height.cmp(&a.height).then(b.id.cmp(&a.id)));
 
-    write_chain_cache(tips.clone()).await;
+    write_chain_cache(coin, tips.clone()).await;
     Ok(tips)
 }
 
-async fn read_stats_cache() -> Option<ExplorerStats> {
+async fn with_coin_cache<F>(coin: CoinId, f: F)
+where
+    F: FnOnce(&mut CoinCache),
+{
+    let mut guard = CACHE.lock().await;
+    let entry = guard.entry(coin).or_default();
+    f(entry);
+}
+
+async fn read_stats_cache(coin: CoinId) -> Option<ExplorerStats> {
     let guard = CACHE.lock().await;
     guard
+        .get(&coin)?
         .stats
         .as_ref()
         .filter(|e| e.at.elapsed() < CACHE_TTL)
         .map(|e| e.value.clone())
 }
 
-async fn write_stats_cache(stats: ExplorerStats) {
-    let mut guard = CACHE.lock().await;
-    guard.stats = Some(TimedEntry {
-        at: Instant::now(),
-        value: stats,
-    });
+async fn write_stats_cache(coin: CoinId, stats: ExplorerStats) {
+    with_coin_cache(coin, |c| {
+        c.stats = Some(TimedEntry {
+            at: Instant::now(),
+            value: stats,
+        });
+    })
+    .await;
 }
 
-async fn read_blocks_cache() -> Option<Vec<ExplorerBlock>> {
+async fn read_blocks_cache(coin: CoinId) -> Option<Vec<ExplorerBlock>> {
     let guard = CACHE.lock().await;
     guard
+        .get(&coin)?
         .blocks
         .as_ref()
         .filter(|e| e.at.elapsed() < CACHE_TTL)
         .map(|e| e.value.clone())
 }
 
-async fn write_blocks_cache(blocks: Vec<ExplorerBlock>) {
-    let mut guard = CACHE.lock().await;
-    guard.blocks = Some(TimedEntry {
-        at: Instant::now(),
-        value: blocks,
-    });
+async fn write_blocks_cache(coin: CoinId, blocks: Vec<ExplorerBlock>) {
+    with_coin_cache(coin, |c| {
+        c.blocks = Some(TimedEntry {
+            at: Instant::now(),
+            value: blocks,
+        });
+    })
+    .await;
 }
 
-async fn read_transactions_cache() -> Option<Vec<ExplorerTransaction>> {
+async fn read_transactions_cache(coin: CoinId) -> Option<Vec<ExplorerTransaction>> {
     let guard = CACHE.lock().await;
     guard
+        .get(&coin)?
         .transactions
         .as_ref()
         .filter(|e| e.at.elapsed() < CACHE_TTL)
         .map(|e| e.value.clone())
 }
 
-async fn write_transactions_cache(txs: Vec<ExplorerTransaction>) {
-    let mut guard = CACHE.lock().await;
-    guard.transactions = Some(TimedEntry {
-        at: Instant::now(),
-        value: txs,
-    });
+async fn write_transactions_cache(coin: CoinId, txs: Vec<ExplorerTransaction>) {
+    with_coin_cache(coin, |c| {
+        c.transactions = Some(TimedEntry {
+            at: Instant::now(),
+            value: txs,
+        });
+    })
+    .await;
 }
 
-async fn read_extraction_cache() -> Option<Vec<ExplorerExtractionEntry>> {
+async fn read_extraction_cache(coin: CoinId) -> Option<Vec<ExplorerExtractionEntry>> {
     let guard = CACHE.lock().await;
     guard
+        .get(&coin)?
         .extraction
         .as_ref()
         .filter(|e| e.at.elapsed() < CACHE_TTL)
         .map(|e| e.value.clone())
 }
 
-async fn write_extraction_cache(entries: Vec<ExplorerExtractionEntry>) {
-    let mut guard = CACHE.lock().await;
-    guard.extraction = Some(TimedEntry {
-        at: Instant::now(),
-        value: entries,
-    });
+async fn write_extraction_cache(coin: CoinId, entries: Vec<ExplorerExtractionEntry>) {
+    with_coin_cache(coin, |c| {
+        c.extraction = Some(TimedEntry {
+            at: Instant::now(),
+            value: entries,
+        });
+    })
+    .await;
 }
 
-async fn read_chain_cache() -> Option<Vec<ExplorerChainTip>> {
+async fn read_chain_cache(coin: CoinId) -> Option<Vec<ExplorerChainTip>> {
     let guard = CACHE.lock().await;
     guard
+        .get(&coin)?
         .chain_tips
         .as_ref()
         .filter(|e| e.at.elapsed() < CACHE_TTL)
         .map(|e| e.value.clone())
 }
 
-async fn write_chain_cache(tips: Vec<ExplorerChainTip>) {
-    let mut guard = CACHE.lock().await;
-    guard.chain_tips = Some(TimedEntry {
-        at: Instant::now(),
-        value: tips,
-    });
+async fn write_chain_cache(coin: CoinId, tips: Vec<ExplorerChainTip>) {
+    with_coin_cache(coin, |c| {
+        c.chain_tips = Some(TimedEntry {
+            at: Instant::now(),
+            value: tips,
+        });
+    })
+    .await;
 }
 
-async fn read_peers_cache() -> Option<Vec<ExplorerPeerEntry>> {
+async fn read_peers_cache(coin: CoinId) -> Option<Vec<ExplorerPeerEntry>> {
     let guard = CACHE.lock().await;
     guard
+        .get(&coin)?
         .peers
         .as_ref()
         .filter(|e| e.at.elapsed() < PEERS_CACHE_TTL)
         .map(|e| e.value.clone())
 }
 
-async fn write_peers_cache(peers: Vec<ExplorerPeerEntry>) {
-    let mut guard = CACHE.lock().await;
-    guard.peers = Some(TimedEntry {
-        at: Instant::now(),
-        value: peers,
-    });
+async fn write_peers_cache(coin: CoinId, peers: Vec<ExplorerPeerEntry>) {
+    with_coin_cache(coin, |c| {
+        c.peers = Some(TimedEntry {
+            at: Instant::now(),
+            value: peers,
+        });
+    })
+    .await;
 }
 
 fn now_secs() -> u64 {

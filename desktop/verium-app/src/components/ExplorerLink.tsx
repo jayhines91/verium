@@ -1,13 +1,16 @@
 import { ExternalLink } from "lucide-react";
-import { useUserPreferences } from "@/lib/user-preferences";
+import { useActiveCoin } from "@/lib/coin/context";
+import type { CoinId } from "@/lib/coin/profile";
 import {
   buildAddressExplorerUrl,
   buildBlockExplorerUrl,
   buildTxExplorerUrl,
-  DEFAULT_ADDRESS_EXPLORER_TEMPLATE,
-  DEFAULT_BLOCK_EXPLORER_TEMPLATE,
-  EXPLORER_HOME,
-} from "@/lib/verium-links";
+  effectiveAddressExplorerTemplate,
+  effectiveBlockExplorerTemplate,
+  effectiveTxExplorerTemplate,
+  explorerHome,
+} from "@/lib/explorer-links";
+import { useUserPreferences } from "@/lib/user-preferences";
 import { openExternal } from "@/lib/open-external";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +23,7 @@ type ExplorerTarget =
 
 interface ExplorerLinkProps {
   target: ExplorerTarget;
+  coin?: CoinId;
   label?: string;
   className?: string;
   showIcon?: boolean;
@@ -28,28 +32,38 @@ interface ExplorerLinkProps {
 
 export function ExplorerLink({
   target,
+  coin: coinProp,
   label = "View on explorer",
   className,
   showIcon = true,
   title,
 }: ExplorerLinkProps) {
+  const activeCoin = useActiveCoin();
+  const coin = coinProp ?? activeCoin;
   const { prefs } = useUserPreferences();
-  const txTemplate = prefs.explorer_tx_url_template;
-  const blockTemplate =
-    prefs.explorer_block_url_template ?? DEFAULT_BLOCK_EXPLORER_TEMPLATE;
-  const addressTemplate =
-    prefs.explorer_address_url_template ?? DEFAULT_ADDRESS_EXPLORER_TEMPLATE;
+  const txTemplate = effectiveTxExplorerTemplate(
+    coin,
+    prefs.explorer_tx_url_template,
+  );
+  const blockTemplate = effectiveBlockExplorerTemplate(
+    coin,
+    prefs.explorer_block_url_template,
+  );
+  const addressTemplate = effectiveAddressExplorerTemplate(
+    coin,
+    prefs.explorer_address_url_template,
+  );
 
   const resolveUrl = () => {
     switch (target.kind) {
       case "home":
-        return EXPLORER_HOME;
+        return explorerHome(coin);
       case "tx":
-        return buildTxExplorerUrl(txTemplate, target.txid);
+        return buildTxExplorerUrl(coin, txTemplate, target.txid);
       case "block":
-        return buildBlockExplorerUrl(blockTemplate, target.hashOrHeight);
+        return buildBlockExplorerUrl(coin, blockTemplate, target.hashOrHeight);
       case "address":
-        return buildAddressExplorerUrl(addressTemplate, target.address);
+        return buildAddressExplorerUrl(coin, addressTemplate, target.address);
       case "raw":
         return target.url;
     }
@@ -59,18 +73,14 @@ export function ExplorerLink({
     <button
       type="button"
       title={title ?? label}
-      onClick={() => {
-        const url = resolveUrl();
-        void openExternal(url);
-      }}
+      onClick={() => void openExternal(resolveUrl())}
       className={cn(
-        "inline-flex items-center gap-1 rounded text-xs text-fg-muted transition-colors hover:text-fg",
-        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent",
+        "inline-flex items-center gap-1 text-xs text-accent underline-offset-2 hover:underline",
         className,
       )}
     >
       {label}
-      {showIcon && <ExternalLink className="h-3 w-3" />}
+      {showIcon && <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />}
     </button>
   );
 }

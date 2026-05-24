@@ -8,6 +8,8 @@ import {
   CardTitle,
 } from "@/components/ui/Card";
 import { WalletUnlockForm } from "@/components/WalletUnlockForm";
+import { coinQueryKey } from "@/lib/coin/profile";
+import { useActiveCoin } from "@/lib/coin/context";
 import { rpcGetWalletInfo } from "@/lib/rpc/client";
 import { isWalletLocked } from "@/lib/wallet-unlock";
 
@@ -15,20 +17,19 @@ interface WalletUnlockGateProps {
   children: ReactNode;
   title?: string;
   description?: string;
+  mintingOnly?: boolean;
 }
 
-/**
- * Blocks children until an encrypted wallet is unlocked. Unencrypted wallets
- * pass through immediately.
- */
 export function WalletUnlockGate({
   children,
   title,
   description,
+  mintingOnly,
 }: WalletUnlockGateProps) {
+  const coin = useActiveCoin();
   const wallet = useQuery({
-    queryKey: ["getwalletinfo"],
-    queryFn: rpcGetWalletInfo,
+    queryKey: coinQueryKey(coin, "getwalletinfo"),
+    queryFn: () => rpcGetWalletInfo(coin),
     refetchInterval: 5_000,
   });
 
@@ -60,7 +61,11 @@ export function WalletUnlockGate({
     return (
       <Card>
         <CardContent className="py-6">
-          <WalletUnlockForm title={title} description={description} />
+          <WalletUnlockForm
+            title={title}
+            description={description}
+            mintingOnly={mintingOnly}
+          />
         </CardContent>
       </Card>
     );

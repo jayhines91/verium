@@ -45,7 +45,7 @@ export class AppErrorBoundary extends Component<
       componentStack,
     };
     try {
-      const diag = await tauriDiagnosticBundle();
+      const diag = await tauriDiagnosticBundle("verium");
       bundle = { ...bundle, ...diag };
     } catch {
       // Diagnostic command may not be available if Tauri itself died.

@@ -3,52 +3,41 @@ import { useMutation } from "@tanstack/react-query";
 import { Copy, Pencil, QrCode, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ExplorerLink } from "@/components/ExplorerLink";
+import { QrCodeDisplay } from "@/components/QrCodeDisplay";
 import { rpcGetNewAddress } from "@/lib/rpc/client";
-import { cn, formatVrm } from "@/lib/utils";
-
-const STORAGE_KEY = "verium-receive-requests";
-
-export interface ReceiveRequest {
-  id: string;
-  createdAt: number;
-  label: string;
-  message: string;
-  amount: number | null;
-  address: string;
-}
-
-function loadRequests(): ReceiveRequest[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as ReceiveRequest[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveRequests(requests: ReceiveRequest[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(requests));
-}
+import { useActiveCoin } from "@/lib/coin/context";
+import { formatCoinAmount } from "@/lib/units";
+import {
+  receiveRequestsList,
+  receiveRequestsSave,
+  type ReceiveRequest,
+} from "@/lib/security/client";
+import { cn } from "@/lib/utils";
 
 interface ReceivePanelProps {
   className?: string;
 }
 
 export function ReceivePanel({ className }: ReceivePanelProps) {
+  const coin = useActiveCoin();
   const [label, setLabel] = useState("");
   const [amount, setAmount] = useState("");
   const [message, setMessage] = useState("");
-  const [requests, setRequests] = useState<ReceiveRequest[]>(() =>
-    loadRequests(),
-  );
+  const [requests, setRequests] = useState<ReceiveRequest[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showDetail, setShowDetail] = useState(false);
 
   useEffect(() => {
-    saveRequests(requests);
-  }, [requests]);
+    void receiveRequestsList(coin).then(setRequests);
+  }, [coin]);
+
+  const persist = useCallback(
+    (next: ReceiveRequest[]) => {
+      setRequests(next);
+      void receiveRequestsSave(coin, next);
+    },
+    [coin],
+  );
 
   const selected = useMemo(
     () => requests.find((r) => r.id === selectedId) ?? null,
@@ -63,11 +52,11 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
 
   const create = useMutation({
     mutationFn: async () => {
-      const address = await rpcGetNewAddress(label.trim() || undefined);
+      const address = await rpcGetNewAddress(coin, label.trim() || undefined);
       const parsedAmount = amount.trim() ? Number(amount) : null;
       const entry: ReceiveRequest = {
         id: crypto.randomUUID(),
-        createdAt: Date.now(),
+        created_at: Math.floor(Date.now() / 1000),
         label: label.trim(),
         message: message.trim(),
         amount:
@@ -79,7 +68,7 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
       return entry;
     },
     onSuccess: (entry) => {
-      setRequests((prev) => [entry, ...prev]);
+      persist([entry, ...requests]);
       setSelectedId(entry.id);
       setShowDetail(true);
       clearForm();
@@ -88,7 +77,7 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
 
   const removeSelected = useCallback(() => {
     if (!selectedId) return;
-    setRequests((prev) => prev.filter((r) => r.id !== selectedId));
+    persist(requests.filter((r) => r.id !== selectedId));
     setSelectedId(null);
     setShowDetail(false);
   }, [selectedId]);
@@ -222,7 +211,7 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
                     )}
                   >
                     <td className="px-4 py-2 text-xs text-fg-muted whitespace-nowrap">
-                      {new Date(row.createdAt).toLocaleString()}
+                      {new Date(row.created_at * 1000).toLocaleString()}
                     </td>
                     <td className="max-w-[120px] truncate px-4 py-2">
                       {row.label || "—"}
@@ -231,7 +220,7 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
                       {row.message || "—"}
                     </td>
                     <td className="px-4 py-2 text-right tabular-nums">
-                      {row.amount != null ? formatVrm(row.amount, 8) : "—"}
+                      {row.amount != null ? formatCoinAmount(row.amount, coin, 8) : "—"}
                     </td>
                   </tr>
                 );
@@ -299,11 +288,19 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
 
           {selected.amount != null && (
             <p className="mb-3 text-lg font-semibold tabular-nums">
-              {formatVrm(selected.amount, 8)}
+              {formatCoinAmount(selected.amount, coin, 8)}
             </p>
           )}
 
-          <div className="flex items-center gap-2 rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs">
+          <QrCodeDisplay
+            coin={coin}
+            address={selected.address}
+            amount={selected.amount}
+            label={selected.label || undefined}
+            message={selected.message || undefined}
+          />
+
+          <div className="mt-3 flex items-center gap-2 rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs">
             <span className="min-w-0 flex-1 break-all">{selected.address}</span>
             <button
               type="button"
@@ -321,15 +318,9 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
               label="View on explorer"
             />
             <span className="text-fg-subtle">
-              Created {new Date(selected.createdAt).toLocaleString()}
+              Created {new Date(selected.created_at * 1000).toLocaleString()}
             </span>
           </div>
-
-          <p className="mt-3 text-[11px] text-fg-subtle">
-            QR code and BIP21 URI generation coming soon — address is live on
-            the network via{" "}
-            <span className="font-mono">getnewaddress</span>.
-          </p>
         </div>
       )}
     </div>

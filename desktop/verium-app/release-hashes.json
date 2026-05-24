@@ -1,0 +1,6 @@
+{
+  "app": "",
+  "veriumd": "",
+  "generated_at": "",
+  "note": "Populate with SHA-256 hashes at release time. CI cosign step updates this."
+}

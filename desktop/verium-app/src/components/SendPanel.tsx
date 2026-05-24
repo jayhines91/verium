@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookUser,
   ClipboardPaste,
   Coins,
   Plus,
+  QrCode,
   SendHorizontal,
   X,
 } from "lucide-react";
@@ -19,14 +20,26 @@ import {
   type SelectedUtxoSet,
 } from "@/components/CoinControlDialog";
 import { FeeRateDialog } from "@/components/FeeRateDialog";
+import { QrScanModal } from "@/components/QrScanModal";
+import { TwoFactorPrompt } from "@/components/TwoFactorPrompt";
 import {
   rpcGetWalletInfo,
   rpcSendToAddress,
   rpcWalletSendWithInputs,
   rpcWalletSetTxFee,
 } from "@/lib/rpc/client";
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { useUserPreferences } from "@/lib/user-preferences";
-import { cn, formatNumber, formatVrm } from "@/lib/utils";
+import { formatCoinAmount } from "@/lib/units";
+import { cn, formatNumber } from "@/lib/utils";
+import {
+  auditLogRecord,
+  spendingControlsCheckSend,
+  spendingControlsGet,
+  spendingControlsRecordSend,
+  twoFactorIsGated,
+} from "@/lib/security/client";
 
 const EXAMPLE_ADDRESS = "VY6E3KSqrMk1hcy5Cu4EGyHrdDS5ch3YHU";
 const DEFAULT_FEE_RATE = 0.001;
@@ -55,15 +68,24 @@ function parseAmount(value: string): number | null {
 
 interface SendPanelProps {
   className?: string;
+  initialAddress?: string;
+  initialAmount?: string;
+  initialLabel?: string;
 }
 
-export function SendPanel({ className }: SendPanelProps) {
+export function SendPanel({
+  className,
+  initialAddress,
+  initialAmount,
+  initialLabel,
+}: SendPanelProps) {
+  const coin = useActiveCoin();
   const queryClient = useQueryClient();
   const prefs = useUserPreferences((s) => s.prefs);
   const updatePrefs = useUserPreferences((s) => s.update);
   const wallet = useQuery({
-    queryKey: ["getwalletinfo"],
-    queryFn: rpcGetWalletInfo,
+    queryKey: coinQueryKey(coin, "getwalletinfo"),
+    queryFn: () => rpcGetWalletInfo(coin),
     refetchInterval: 10_000,
   });
 
@@ -79,10 +101,33 @@ export function SendPanel({ className }: SendPanelProps) {
   const [addressBookFor, setAddressBookFor] = useState<string | null>(null);
   const [coinControlOpen, setCoinControlOpen] = useState(false);
   const [coinControl, setCoinControl] = useState<SelectedUtxoSet>([]);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrTargetId, setQrTargetId] = useState<string | null>(null);
+  const [twoFaOpen, setTwoFaOpen] = useState(false);
+  const [clipboardGuardError, setClipboardGuardError] = useState<string | null>(null);
+  const [spendWarning, setSpendWarning] = useState<string | null>(null);
+  const clipboardSnapshot = useRef<Map<string, string>>(new Map());
+
+  const spendingCfg = useQuery({
+    queryKey: ["spending-controls"],
+    queryFn: spendingControlsGet,
+  });
+
+  useEffect(() => {
+    if (!initialAddress && !initialAmount && !initialLabel) return;
+    setRecipients([
+      {
+        ...newRecipient(),
+        address: initialAddress ?? "",
+        amount: initialAmount ?? "",
+        label: initialLabel ?? "",
+      },
+    ]);
+  }, [initialAddress, initialAmount, initialLabel]);
 
   // Keep daemon's settxfee aligned with the persisted preference.
   useEffect(() => {
-    rpcWalletSetTxFee(feeRate).catch(() => {
+    rpcWalletSetTxFee(coin, feeRate).catch(() => {
       /* daemon may not be ready; the next send will retry. */
     });
   }, [feeRate]);
@@ -120,7 +165,10 @@ export function SendPanel({ className }: SendPanelProps) {
   const pasteAddress = useCallback(async (id: string) => {
     try {
       const text = await navigator.clipboard.readText();
-      if (text.trim()) updateRecipient(id, { address: text.trim() });
+      if (text.trim()) {
+        clipboardSnapshot.current.set(id, text.trim());
+        updateRecipient(id, { address: text.trim() });
+      }
     } catch {
       // Clipboard unavailable
     }
@@ -156,6 +204,7 @@ export function SendPanel({ className }: SendPanelProps) {
           outputs[row.address.trim()] = parseAmount(row.amount)!;
         }
         const txid = await rpcWalletSendWithInputs(
+          coin,
           coinControl.map((u) => ({ txid: u.txid, vout: u.vout })),
           outputs,
           undefined,
@@ -167,6 +216,7 @@ export function SendPanel({ className }: SendPanelProps) {
       for (const row of validRows) {
         const amount = parseAmount(row.amount)!;
         const txid = await rpcSendToAddress(
+          coin,
           row.address.trim(),
           amount,
           row.label.trim() || undefined,
@@ -175,13 +225,17 @@ export function SendPanel({ className }: SendPanelProps) {
       }
       return txids;
     },
-    onSuccess: () => {
+    onSuccess: async (txids) => {
       setConfirmOpen(false);
       clearAll();
       setCoinControl([]);
-      queryClient.invalidateQueries({ queryKey: ["listtransactions"] });
-      queryClient.invalidateQueries({ queryKey: ["getwalletinfo"] });
-      queryClient.invalidateQueries({ queryKey: ["listunspent"] });
+      for (const row of validRows) {
+        await spendingControlsRecordSend(parseAmount(row.amount)!, coin, row.address.trim());
+        await auditLogRecord("send", `Sent to ${row.address.trim()} tx ${txids[0] ?? ""}`, coin);
+      }
+      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "listtransactions") });
+      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getwalletinfo") });
+      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "listunspent") });
     },
     onError: () => {
       setConfirmOpen(false);
@@ -190,8 +244,65 @@ export function SendPanel({ className }: SendPanelProps) {
 
   const canSend = validRows.length > 0 && !send.isPending;
 
+  const openConfirm = async () => {
+    setClipboardGuardError(null);
+    setSpendWarning(null);
+
+    if (spendingCfg.data?.clipboard_guard_enabled) {
+      for (const row of validRows) {
+        const snap = clipboardSnapshot.current.get(row.id);
+        if (snap && snap !== row.address.trim()) {
+          setClipboardGuardError(
+            "Clipboard contents changed since paste — possible hijack. Re-paste the address.",
+          );
+          return;
+        }
+      }
+    }
+
+    const total = validRows.reduce((s, r) => s + parseAmount(r.amount)!, 0);
+    const check = await spendingControlsCheckSend(total, coin, validRows[0]!.address.trim());
+    if (!check.allowed) {
+      setSpendWarning(check.reason ?? "Send blocked by spending controls.");
+      return;
+    }
+    if (check.look_alike_warning) setSpendWarning(check.look_alike_warning);
+
+    const gated = await twoFactorIsGated("send", coin, total);
+    if (gated) {
+      setTwoFaOpen(true);
+      return;
+    }
+    setConfirmOpen(true);
+  };
+
   return (
     <div className={cn("flex flex-col", className)}>
+      <TwoFactorPrompt
+        open={twoFaOpen}
+        title="Confirm send with 2FA"
+        onVerified={() => {
+          setTwoFaOpen(false);
+          setConfirmOpen(true);
+        }}
+        onCancel={() => setTwoFaOpen(false)}
+      />
+
+      <QrScanModal
+        open={qrOpen}
+        onClose={() => {
+          setQrOpen(false);
+          setQrTargetId(null);
+        }}
+        onScan={(address, amount) => {
+          if (qrTargetId) {
+            updateRecipient(qrTargetId, {
+              address,
+              ...(amount != null ? { amount: amount.toFixed(8) } : {}),
+            });
+          }
+        }}
+      />
       <SendConfirmDialog
         open={confirmOpen}
         recipients={confirmRecipients}
@@ -281,6 +392,19 @@ export function SendPanel({ className }: SendPanelProps) {
                     onClick={() => void pasteAddress(row.id)}
                   >
                     <ClipboardPaste className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-10 w-10 shrink-0 px-0"
+                    title="Scan QR code"
+                    onClick={() => {
+                      setQrTargetId(row.id);
+                      setQrOpen(true);
+                    }}
+                  >
+                    <QrCode className="h-4 w-4" />
                   </Button>
                   <Button
                     type="button"
@@ -415,6 +539,16 @@ export function SendPanel({ className }: SendPanelProps) {
         )}
       </div>
 
+      {clipboardGuardError && (
+        <div className="mt-3 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+          {clipboardGuardError}
+        </div>
+      )}
+      {spendWarning && (
+        <div className="mt-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          {spendWarning}
+        </div>
+      )}
       {send.error && (
         <div className="mt-3 text-xs text-danger">{String(send.error)}</div>
       )}
@@ -446,7 +580,7 @@ export function SendPanel({ className }: SendPanelProps) {
             size="lg"
             className="border-0 bg-white text-accent hover:bg-white/90"
             disabled={!canSend}
-            onClick={() => setConfirmOpen(true)}
+            onClick={() => void openConfirm()}
           >
             <SendHorizontal className="h-4 w-4" />
             {send.isPending ? "Sending…" : "Send"}
@@ -472,7 +606,7 @@ export function SendPanel({ className }: SendPanelProps) {
           </Button>
         </div>
         <div className="text-sm font-semibold tabular-nums">
-          Balance: {formatVrm(balance, 8)}
+          Balance: {formatCoinAmount(balance, coin, 8)}
         </div>
       </div>
     </div>

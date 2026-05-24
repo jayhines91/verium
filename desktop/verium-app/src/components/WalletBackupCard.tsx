@@ -1,7 +1,9 @@
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { Download, HardDrive } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { Download, HardDrive, Upload } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -13,16 +15,26 @@ import { Button } from "@/components/ui/Button";
 import {
   rpcWalletBackup,
   rpcWalletChangePassphrase,
+  rpcWalletRestore,
   tauriWalletFileStatus,
 } from "@/lib/rpc/client";
+import { invalidateWalletQueries } from "@/lib/invalidate-wallet-queries";
+import { TwoFactorPrompt } from "@/components/TwoFactorPrompt";
+import { useTwoFactorGate } from "@/hooks/useTwoFactorGate";
 
 export function WalletBackupCard() {
+  const coin = useActiveCoin();
+  const queryClient = useQueryClient();
+  const twoFa = useTwoFactorGate(coin);
   const fileStatus = useQuery({
-    queryKey: ["wallet-file-status"],
-    queryFn: tauriWalletFileStatus,
+    queryKey: coinQueryKey(coin, "wallet-file-status"),
+    queryFn: () => tauriWalletFileStatus(coin),
   });
 
   const [showRestoreNote, setShowRestoreNote] = useState(false);
+  const [pendingRestorePath, setPendingRestorePath] = useState<string | null>(
+    null,
+  );
   const [phase, setPhase] = useState<{ old: string; next: string; confirm: string }>(
     { old: "", next: "", confirm: "" },
   );
@@ -36,19 +48,45 @@ export function WalletBackupCard() {
         filters: [{ name: "Wallet file", extensions: ["dat"] }],
       });
       if (!dest) return null;
-      return rpcWalletBackup(dest);
+      return rpcWalletBackup(coin, dest);
     },
   });
 
   const changePass = useMutation({
-    mutationFn: () => rpcWalletChangePassphrase(phase.old, phase.next),
+    mutationFn: () => rpcWalletChangePassphrase(coin, phase.old, phase.next),
     onSuccess: () => setPhase({ old: "", next: "", confirm: "" }),
   });
+
+  const restore = useMutation({
+    mutationFn: (sourcePath: string) => rpcWalletRestore(coin, sourcePath),
+    onSuccess: async () => {
+      setPendingRestorePath(null);
+      await invalidateWalletQueries(queryClient, coin);
+    },
+  });
+
+  const pickRestoreFile = async () => {
+    const picked = await openDialog({
+      defaultPath: fileStatus.data?.backup_folder,
+      filters: [{ name: "Wallet file", extensions: ["dat"] }],
+      multiple: false,
+    });
+    if (!picked || Array.isArray(picked)) return;
+    setPendingRestorePath(picked);
+    restore.reset();
+  };
 
   const passphraseValid =
     phase.old.length > 0 && phase.next.length >= 10 && phase.next === phase.confirm;
 
   return (
+    <>
+      <TwoFactorPrompt
+        open={twoFa.open}
+        title={twoFa.title}
+        onVerified={twoFa.verified}
+        onCancel={twoFa.cancel}
+      />
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
@@ -91,10 +129,19 @@ export function WalletBackupCard() {
           <Button
             size="sm"
             onClick={() => backup.mutate()}
-            disabled={backup.isPending}
+            disabled={backup.isPending || restore.isPending}
           >
             <Download className="h-3.5 w-3.5" />
             {backup.isPending ? "Saving…" : "Back up wallet.dat"}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void pickRestoreFile()}
+            disabled={backup.isPending || restore.isPending}
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Restore from backup
           </Button>
           <Button
             size="sm"
@@ -104,6 +151,77 @@ export function WalletBackupCard() {
             {showRestoreNote ? "Hide" : "Show"} restore instructions
           </Button>
         </div>
+        {pendingRestorePath && (
+          <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-3 text-xs">
+            <p className="font-medium text-fg">Restore this wallet backup?</p>
+            <p className="break-all font-mono text-[11px] text-fg-muted">
+              {pendingRestorePath}
+            </p>
+            <p className="text-fg-muted">
+              Restore <span className="font-medium text-fg">replaces the entire wallet</span>{" "}
+              — your current keys, addresses, and transaction history are swapped
+              for the backup snapshot. The app stops the node, saves your current{" "}
+              <span className="font-mono">wallet.dat</span> to the backups folder
+              (if one exists), clears stale wallet cache files, copies the backup
+              in, restarts veriumd, and starts a background chain rescan.
+            </p>
+            <p className="text-fg-muted">
+              Unlock afterward with the passphrase from when that backup was
+              made — not your current passphrase unless they match.
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() =>
+                  void twoFa.gate(
+                    "restore_wallet",
+                    () => restore.mutate(pendingRestorePath),
+                    { title: "Confirm wallet restore with 2FA" },
+                  )
+                }
+                disabled={restore.isPending}
+              >
+                {restore.isPending ? "Restoring…" : "Restore wallet"}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setPendingRestorePath(null);
+                  restore.reset();
+                }}
+                disabled={restore.isPending}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+        {restore.data && (
+          <div className="space-y-1 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
+            <p>{restore.data.message}</p>
+            {restore.data.previous_wallet_backup && (
+              <p>
+                Previous wallet saved to{" "}
+                <span className="font-mono">
+                  {restore.data.previous_wallet_backup}
+                </span>
+              </p>
+            )}
+            {restore.data.rescan_started && (
+              <p className="text-fg-muted">
+                Background rescan in progress — balances may update over the
+                next few minutes.
+              </p>
+            )}
+          </div>
+        )}
+        {restore.error && (
+          <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+            {String(restore.error)}
+          </div>
+        )}
         {backup.data && (
           <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
             Saved to <span className="font-mono">{backup.data.destination}</span>
@@ -121,17 +239,20 @@ export function WalletBackupCard() {
               How to restore a wallet.dat backup
             </p>
             <ol className="ml-4 list-decimal space-y-1">
-              <li>Close the wallet completely.</li>
               <li>
-                Replace the file shown above with your backup (same filename,{" "}
+                Use <span className="font-medium text-fg">Restore from backup</span>{" "}
+                above, or close the wallet completely and replace the file
+                shown above manually (same filename,{" "}
                 <span className="font-mono">wallet.dat</span>).
               </li>
               <li>Re-open the wallet and unlock with your original passphrase.</li>
             </ol>
             <p>
-              Restoring a backup that contains keys older than your current
-              wallet may require a rescan; the daemon does this automatically
-              when it loads.
+              Restoring replaces your entire wallet with the backup snapshot.
+              Transaction history in the list is not a running balance — sends
+              spend earlier receives, and mined rewards stay immature until 101
+              confirmations. After restore, unlock with the backup&apos;s
+              passphrase; a background rescan reconciles UTXOs with the chain.
             </p>
           </div>
         )}
@@ -169,7 +290,13 @@ export function WalletBackupCard() {
           )}
           <Button
             size="sm"
-            onClick={() => changePass.mutate()}
+            onClick={() =>
+              void twoFa.gate(
+                "change_passphrase",
+                () => changePass.mutate(),
+                { title: "Confirm passphrase change with 2FA" },
+              )
+            }
             disabled={!passphraseValid || changePass.isPending}
           >
             {changePass.isPending ? "Updating…" : "Update passphrase"}
@@ -183,6 +310,7 @@ export function WalletBackupCard() {
         </div>
       </CardContent>
     </Card>
+    </>
   );
 }
 

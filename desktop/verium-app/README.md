@@ -1,21 +1,21 @@
 # Vericonomy Wallet (desktop)
 
-Modern desktop wallet for [Verium](https://vericonomy.com) (VRM), built on **Tauri 2 + React + TypeScript**. It bundles and manages a `veriumd` node, provides an encrypted wallet UI, built-in CPU mining, and replaces the legacy Qt client for end-user installs.
+Modern desktop wallet for [Verium](https://vericonomy.com) (VRM) and [Vericoin](https://vericonomy.com) (VRC), built on **Tauri 2 + React + TypeScript**. It bundles and manages independent `veriumd` and `vericoind` nodes, provides encrypted wallet UIs for both chains, CPU mining (VRM), PoST staking (VRC), and replaces the legacy Qt clients for end-user installs.
 
-**Branch:** [`tippy-gui-changes-modern-template`](https://github.com/JoshiOS-VRY/verium/tree/tippy-gui-changes-modern-template)  
-**Location in repo:** `desktop/verium-app/`
+**Location in repo:** `desktop/verium-app/` (package name: `vericonomy-app`)
 
 ---
 
 ## Overview
 
-| Legacy (`verium-qt`) | New wallet (`verium-app`) |
+| Legacy (`verium-qt` / `vericoin-qt`) | Vericonomy Wallet |
 | --- | --- |
 | Qt GUI embedded in the same process as the node | React UI in a Tauri webview |
-| In-process C++ interfaces | JSON-RPC to a managed `veriumd` subprocess |
-| Single monolithic binary | App + bundled `veriumd` sidecar |
+| In-process C++ interfaces | JSON-RPC to managed daemon subprocesses |
+| Separate apps per chain | Single app with coin switcher + blended dashboard |
+| Single monolithic binary | App + bundled `veriumd` + `vericoind` sidecars |
 
-Consensus, wallet cryptography, P2P, and mining logic stay in the existing C++ core (`src/`). This app is a **control shell**: it starts/stops `veriumd`, calls wallet/mining RPCs, reads `debug.log`, and stores app preferences locally.
+Consensus, wallet cryptography, P2P, mining, and staking logic stay in the existing C++ cores. This app is a **control shell**: it starts/stops daemons, calls wallet/mining/staking RPCs, reads `debug.log`, and stores app preferences locally.
 
 For the migration rationale and phased rollout plan, see [`doc/desktop-modernization-plan.md`](../../doc/desktop-modernization-plan.md).
 

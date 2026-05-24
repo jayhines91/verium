@@ -8,6 +8,8 @@ import {
   type AddressBookEntry,
 } from "@/lib/address-book";
 import { cn } from "@/lib/utils";
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 
 interface AddressBookPickerProps {
   open: boolean;
@@ -22,11 +24,12 @@ export function AddressBookPicker({
   onPick,
   category = "send",
 }: AddressBookPickerProps) {
+  const coin = useActiveCoin();
   const [query, setQuery] = useState("");
 
   const entries = useQuery({
-    queryKey: ["address-book"],
-    queryFn: listAddressBookEntries,
+    queryKey: coinQueryKey(coin, "address-book"),
+    queryFn: () => listAddressBookEntries(coin),
     enabled: open,
   });
 

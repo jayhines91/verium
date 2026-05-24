@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { CoinId } from "@/lib/coin/profile";
 
 export type AddressBookCategory = "send" | "receive";
 
@@ -20,14 +21,18 @@ export type AddressBookUpsert = Omit<
   updated_at?: number;
 };
 
-export async function listAddressBookEntries(): Promise<AddressBookEntry[]> {
-  return invoke<AddressBookEntry[]>("address_book_list");
+export async function listAddressBookEntries(
+  coin: CoinId,
+): Promise<AddressBookEntry[]> {
+  return invoke<AddressBookEntry[]>("address_book_list", { coin });
 }
 
 export async function upsertAddressBookEntry(
+  coin: CoinId,
   entry: AddressBookUpsert,
 ): Promise<AddressBookEntry> {
   return invoke<AddressBookEntry>("address_book_upsert", {
+    coin,
     entry: {
       created_at: 0,
       updated_at: 0,
@@ -36,6 +41,9 @@ export async function upsertAddressBookEntry(
   });
 }
 
-export async function deleteAddressBookEntry(id: string): Promise<void> {
-  return invoke<void>("address_book_delete", { id });
+export async function deleteAddressBookEntry(
+  coin: CoinId,
+  id: string,
+): Promise<void> {
+  return invoke<void>("address_book_delete", { coin, id });
 }

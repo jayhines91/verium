@@ -143,6 +143,17 @@ function archiveUrlsFor(triple, version) {
   ];
 }
 
+const MIN_REAL_BINARY_BYTES = 100_000;
+
+function isStubSidecar(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    return stat.size < MIN_REAL_BINARY_BYTES;
+  } catch {
+    return false;
+  }
+}
+
 function sidecarPath(triple) {
   const ext = isWindowsTriple(triple) ? ".exe" : "";
   return path.join(BINARIES_DIR, `veriumd-${triple}${ext}`);
@@ -261,11 +272,15 @@ async function main() {
   ensureBinariesDir();
 
   if (fs.existsSync(dest) && process.env.VERIUMD_FORCE !== "1") {
-    if (process.env.VERIUMD_SKIP_IF_PRESENT === "1" || args["skip-if-present"]) {
+    if (isStubSidecar(dest)) {
+      log(`Removing stub sidecar at ${dest} (too small to be a real binary).`);
+      fs.unlinkSync(dest);
+    } else if (process.env.VERIUMD_SKIP_IF_PRESENT === "1" || args["skip-if-present"]) {
       log(`Sidecar already present (${dest}); skipping.`);
       return;
+    } else {
+      log(`Overwriting existing sidecar at ${dest} (set VERIUMD_FORCE=0 to skip).`);
     }
-    log(`Overwriting existing sidecar at ${dest} (set VERIUMD_FORCE=0 to skip).`);
   }
 
   // Path 0: stub mode — write a placeholder so `cargo check` / `tauri build`

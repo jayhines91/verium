@@ -1,3 +1,5 @@
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -32,29 +34,30 @@ import {
 import { formatNumber, formatVrm } from "@/lib/utils";
 
 export function YourMiningPanel() {
+  const coin = useActiveCoin();
   const minerState = useQuery({
-    queryKey: ["get_miner_state"],
-    queryFn: rpcGetMinerState,
+    queryKey: coinQueryKey(coin, "get_miner_state"),
+    queryFn: () => rpcGetMinerState(coin),
     refetchInterval: 5_000,
   });
   const minerActive = minerState.data?.active ?? false;
   const minerStartedAt = minerState.data?.started_at;
   const mining = useQuery({
-    queryKey: ["getmininginfo"],
-    queryFn: rpcGetMiningInfo,
+    queryKey: coinQueryKey(coin, "getmininginfo"),
+    queryFn: () => rpcGetMiningInfo(coin),
     refetchInterval: (query) => {
       const hr = query.state.data?.hashrate ?? 0;
       return miningInfoRefetchMs(minerActive, hr, minerStartedAt, 5_000);
     },
   });
   const wallet = useQuery({
-    queryKey: ["getwalletinfo"],
-    queryFn: rpcGetWalletInfo,
+    queryKey: coinQueryKey(coin, "getwalletinfo"),
+    queryFn: () => rpcGetWalletInfo(coin),
     refetchInterval: 10_000,
   });
   const txs = useQuery({
-    queryKey: ["listtransactions", "mining-panel"],
-    queryFn: () => rpcListTransactions(50, 0),
+    queryKey: coinQueryKey(coin, "listtransactions", "mining-panel"),
+    queryFn: () => rpcListTransactions(coin, 50, 0),
     refetchInterval: 30_000,
   });
   const explorerEnabled = useQuery({
@@ -63,8 +66,8 @@ export function YourMiningPanel() {
     staleTime: Infinity,
   });
   const explorerStats = useQuery({
-    queryKey: ["explorer-stats"],
-    queryFn: fetchExplorerStats,
+    queryKey: coinQueryKey(coin, "explorer-stats"),
+    queryFn: () => fetchExplorerStats(coin),
     enabled: explorerEnabled.data === true,
     refetchInterval: 30_000,
     retry: 0,

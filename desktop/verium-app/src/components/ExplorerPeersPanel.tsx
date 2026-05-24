@@ -1,3 +1,5 @@
+import { useActiveCoin } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Loader2, RefreshCw } from "lucide-react";
@@ -15,7 +17,7 @@ import {
   fetchExplorerPeers,
   isExplorerApiEnabled,
 } from "@/lib/explorer-api";
-import { EXPLORER_PEERS } from "@/lib/verium-links";
+import { explorerPeersHash } from "@/lib/explorer-links";
 import {
   rpcAddNode,
   rpcGetAddedNodeInfo,
@@ -23,6 +25,7 @@ import {
 } from "@/lib/rpc/client";
 
 export function ExplorerPeersPanel() {
+  const coin = useActiveCoin();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
   const explorerEnabled = useQuery({
@@ -32,22 +35,22 @@ export function ExplorerPeersPanel() {
   });
 
   const explorerPeers = useQuery({
-    queryKey: ["explorer-peers"],
-    queryFn: fetchExplorerPeers,
+    queryKey: coinQueryKey(coin, "explorer-peers"),
+    queryFn: () => fetchExplorerPeers(coin),
     enabled: explorerEnabled.data === true,
     refetchInterval: 300_000,
     retry: 0,
   });
 
   const localPeers = useQuery({
-    queryKey: ["getpeerinfo"],
-    queryFn: rpcGetPeerInfo,
+    queryKey: coinQueryKey(coin, "getpeerinfo"),
+    queryFn: () => rpcGetPeerInfo(coin),
     refetchInterval: 5_000,
   });
 
   const addedNodes = useQuery({
-    queryKey: ["getaddednodeinfo"],
-    queryFn: rpcGetAddedNodeInfo,
+    queryKey: coinQueryKey(coin, "getaddednodeinfo"),
+    queryFn: () => rpcGetAddedNodeInfo(coin),
     refetchInterval: 10_000,
   });
 
@@ -67,11 +70,11 @@ export function ExplorerPeersPanel() {
 
   const addNode = useMutation({
     mutationFn: ({ node, command }: { node: string; command: "add" | "onetry" }) =>
-      rpcAddNode(node, command),
+      rpcAddNode(coin, node, command),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["getpeerinfo"] });
-      void queryClient.invalidateQueries({ queryKey: ["getaddednodeinfo"] });
-      void queryClient.invalidateQueries({ queryKey: ["getnetworkinfo"] });
+      void queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getpeerinfo") });
+      void queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getaddednodeinfo") });
+      void queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getnetworkinfo") });
     },
   });
 
@@ -97,7 +100,7 @@ export function ExplorerPeersPanel() {
             Peers seen by the official explorer in the last 24 hours. Add nodes
             to your local <span className="font-mono">veriumd</span> with one
             click — same list as{" "}
-            <ExplorerLink target={{ kind: "raw", url: EXPLORER_PEERS }} label="Peers on explorer" />.
+            <ExplorerLink coin={coin} target={{ kind: "raw", url: explorerPeersHash(coin) }} label="Peers on explorer" />.
           </CardDescription>
         </div>
         <Button

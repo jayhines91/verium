@@ -1,21 +1,24 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { coinQueryKey } from "@/lib/coin/profile";
 import {
   rpcListAddressGroupings,
   rpcListTransactions,
 } from "@/lib/rpc/client";
 
+const VERIUM = "verium" as const;
+
 export function useWalletMiningContext() {
   const addresses = useQuery({
-    queryKey: ["listaddressgroupings"],
-    queryFn: rpcListAddressGroupings,
+    queryKey: coinQueryKey(VERIUM, "listaddressgroupings"),
+    queryFn: () => rpcListAddressGroupings(VERIUM),
     refetchInterval: 60_000,
     retry: 0,
   });
 
   const txs = useQuery({
-    queryKey: ["listtransactions", "wallet-mining-context"],
-    queryFn: () => rpcListTransactions(100, 0),
+    queryKey: coinQueryKey(VERIUM, "listtransactions", "wallet-mining-context"),
+    queryFn: () => rpcListTransactions(VERIUM, 100, 0),
     refetchInterval: 30_000,
   });
 

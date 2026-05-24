@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useActiveCoin, useCoinProfile } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import {
@@ -13,6 +15,7 @@ import { ConfirmationProgress } from "@/components/ConfirmationProgress";
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { ReceivePanel } from "@/components/ReceivePanel";
 import { SendPanel } from "@/components/SendPanel";
+import { WalletBalanceSummary } from "@/components/WalletBalanceSummary";
 import { WalletUnlockGate } from "@/components/WalletUnlockGate";
 import {
   fetchExplorerTransactions,
@@ -22,7 +25,9 @@ import {
   rpcListTransactions,
   type TransactionItem,
 } from "@/lib/rpc/client";
-import { cn, formatNumber, formatVrm } from "@/lib/utils";
+import { formatCoinAmount } from "@/lib/units";
+import { cn, formatNumber } from "@/lib/utils";
+import { consumePendingPaymentUri } from "@/lib/payment-uri-pending";
 
 type TransferMode = "send" | "receive";
 
@@ -81,7 +86,10 @@ function categoryTone(category: string): "success" | "danger" | "warning" | "neu
       return "success";
     case "send":
       return "danger";
-    case "orphan":
+    case "stake":
+    case "stake-mint":
+      return "success";
+    case "stake-orphan":
       return "warning";
     default:
       return "neutral";
@@ -89,10 +97,31 @@ function categoryTone(category: string): "success" | "danger" | "warning" | "neu
 }
 
 export function Transactions() {
+  const coin = useActiveCoin();
+  const profile = useCoinProfile();
   const [mode, setMode] = useState<TransferMode>("send");
+  const [prefill, setPrefill] = useState<{
+    address?: string;
+    amount?: string;
+    label?: string;
+  }>({});
+
+  useEffect(() => {
+    const pending = consumePendingPaymentUri();
+    if (!pending) return;
+    setMode("send");
+    setPrefill({
+      address: pending.address,
+      amount:
+        pending.amount != null && pending.amount > 0
+          ? String(pending.amount)
+          : undefined,
+      label: pending.label ?? undefined,
+    });
+  }, []);
   const txs = useQuery({
-    queryKey: ["listtransactions"],
-    queryFn: () => rpcListTransactions(50, 0),
+    queryKey: coinQueryKey(coin, "listtransactions"),
+    queryFn: () => rpcListTransactions(coin, 50, 0),
     refetchInterval: 10_000,
     retry: 0,
   });
@@ -104,8 +133,8 @@ export function Transactions() {
   });
 
   const explorerTxs = useQuery({
-    queryKey: ["explorer-transactions"],
-    queryFn: () => fetchExplorerTransactions(25),
+    queryKey: coinQueryKey(coin, "explorer-transactions"),
+    queryFn: () => fetchExplorerTransactions(coin, 25),
     enabled:
       explorerEnabled.data === true &&
       (txs.isError || !txs.data || txs.data.length === 0),
@@ -122,9 +151,11 @@ export function Transactions() {
   return (
     <WalletUnlockGate
       title="Unlock to send and view transactions"
-      description="Enter your wallet passphrase to send or receive VRM and view your transaction history."
+      description={`Enter your wallet passphrase to send or receive ${profile.symbol} and view your transaction history.`}
     >
       <div className="flex flex-col gap-6">
+        <WalletBalanceSummary />
+
         <Card>
           <CardHeader className="flex-row flex-wrap items-start justify-between gap-4">
             <div>
@@ -138,7 +169,15 @@ export function Transactions() {
             <TransferModeToggle value={mode} onChange={setMode} />
           </CardHeader>
           <CardContent>
-            {mode === "send" ? <SendPanel /> : <ReceivePanel />}
+            {mode === "send" ? (
+              <SendPanel
+                initialAddress={prefill.address}
+                initialAmount={prefill.amount}
+                initialLabel={prefill.label}
+              />
+            ) : (
+              <ReceivePanel />
+            )}
           </CardContent>
         </Card>
 
@@ -225,7 +264,7 @@ export function Transactions() {
                         {tx.address ?? "—"}
                       </td>
                       <td className="px-4 py-2 text-right tabular-nums">
-                        {formatVrm(tx.amount, 8)}
+                        {formatCoinAmount(tx.amount, coin, 8)}
                       </td>
                       <td className="px-4 py-2 text-right">
                         <ConfirmationProgress

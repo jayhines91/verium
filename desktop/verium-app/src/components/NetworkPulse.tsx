@@ -2,23 +2,29 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { ExplorerLink } from "@/components/ExplorerLink";
+import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
-import { EXPLORER_HOME } from "@/lib/verium-links";
-import { formatNumber } from "@/lib/utils";
 import { networkHashToKhm } from "@/lib/mining-revenue";
+import { formatNumber } from "@/lib/utils";
 
-interface ComparisonProps {
+interface NetworkPulseProps {
+  coin: CoinId;
   localHeight?: number;
   localNetworkHash?: number;
 }
 
-export function NetworkPulse({ localHeight, localNetworkHash }: ComparisonProps) {
+export function NetworkPulse({
+  coin,
+  localHeight,
+  localNetworkHash,
+}: NetworkPulseProps) {
+  const profile = getCoinProfile(coin);
+
   const enabled = useQuery({
     queryKey: ["explorer-api-enabled"],
     queryFn: isExplorerApiEnabled,
@@ -26,8 +32,8 @@ export function NetworkPulse({ localHeight, localNetworkHash }: ComparisonProps)
   });
 
   const stats = useQuery({
-    queryKey: ["explorer-stats"],
-    queryFn: fetchExplorerStats,
+    queryKey: coinQueryKey(coin, "explorer-stats"),
+    queryFn: () => fetchExplorerStats(coin),
     enabled: enabled.data === true,
     refetchInterval: 60_000,
     retry: 0,
@@ -46,18 +52,14 @@ export function NetworkPulse({ localHeight, localNetworkHash }: ComparisonProps)
     <Card>
       <CardHeader className="flex-row items-start justify-between">
         <div>
-          <CardTitle>Network pulse</CardTitle>
-          <CardDescription>
-            Side-by-side comparison of your local node and the official Verium
-            explorer.
-          </CardDescription>
+          <CardTitle>{profile.displayName} info</CardTitle>
         </div>
         <div className="flex items-center gap-2">
           {stats.data?.source && (
             <Badge tone="accent">via {stats.data.source}</Badge>
           )}
           <ExplorerLink
-            target={{ kind: "raw", url: EXPLORER_HOME }}
+            target={{ kind: "raw", url: profile.explorerBase }}
             label="Open explorer"
           />
         </div>
@@ -68,7 +70,7 @@ export function NetworkPulse({ localHeight, localNetworkHash }: ComparisonProps)
             Explorer API unavailable; using local data only.
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
             <Metric label="Height (local)" value={localHeight} format="int" />
             <Metric
               label="Height (explorer)"
@@ -81,40 +83,30 @@ export function NetworkPulse({ localHeight, localNetworkHash }: ComparisonProps)
               format="int"
               suffix={heightDelta !== undefined ? "blocks" : undefined}
             />
-            <Metric
-              label="Net hashrate (local)"
-              value={
-                localNetworkHash !== undefined
-                  ? networkHashToKhm(localNetworkHash)
-                  : undefined
-              }
-              format="decimal"
-              suffix="kH/m"
-            />
-            <Metric
-              label="Net hashrate (explorer)"
-              value={
-                stats.data?.network_hash !== undefined
-                  ? networkHashToKhm(stats.data.network_hash)
-                  : undefined
-              }
-              format="decimal"
-              suffix="kH/m"
-            />
+            {coin === "verium" && localNetworkHash !== undefined && (
+              <Metric
+                label="Net hashrate (local)"
+                value={networkHashToKhm(localNetworkHash)}
+                format="decimal"
+                suffix="kH/m"
+              />
+            )}
+            {coin === "verium" && stats.data?.network_hash !== undefined && (
+              <Metric
+                label="Net hashrate (explorer)"
+                value={networkHashToKhm(stats.data.network_hash)}
+                format="decimal"
+                suffix="kH/m"
+              />
+            )}
             <Metric
               label="Supply"
               value={stats.data?.supply}
               format="decimal"
-              suffix="VRM"
+              suffix={profile.symbol}
             />
             <Metric
-              label="Mempool (explorer)"
-              value={stats.data?.pooled_tx}
-              format="int"
-              suffix="tx"
-            />
-            <Metric
-              label="VRM price"
+              label={`${profile.symbol} price`}
               value={stats.data?.price_usd}
               format="usd"
             />
@@ -147,7 +139,9 @@ function Metric({ label, value, format, suffix }: MetricProps) {
       <span className="text-base font-semibold tabular-nums">
         {text}
         {suffix && value !== undefined && value !== null && (
-          <span className="ml-1 text-xs font-normal text-fg-subtle">{suffix}</span>
+          <span className="ml-1 text-xs font-normal text-fg-subtle">
+            {suffix}
+          </span>
         )}
       </span>
     </div>

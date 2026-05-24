@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { rpcRaw } from "@/lib/rpc/client";
+import { useActiveCoin } from "@/lib/coin/context";
 import { cn } from "@/lib/utils";
 
 interface ConsoleEntry {
@@ -46,6 +47,7 @@ function saveHistory(history: string[]) {
 }
 
 export function RpcConsole() {
+  const coin = useActiveCoin();
   const [draft, setDraft] = useState("");
   const [entries, setEntries] = useState<ConsoleEntry[]>([]);
   const [history, setHistory] = useState<string[]>(() => loadHistory());
@@ -57,7 +59,7 @@ export function RpcConsole() {
       const [method, ...rest] = line.trim().split(/\s+/);
       if (!method) throw new Error("empty command");
       const params = rest.map(parseArg);
-      const result = await rpcRaw(method, params);
+      const result = await rpcRaw(coin, method, params);
       return { command: line, result };
     },
     onSuccess: ({ command, result }) => {

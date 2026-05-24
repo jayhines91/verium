@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
+use crate::coin_profile::CoinId;
+use crate::config::app_config_base;
 use crate::error::AppResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,22 +14,34 @@ pub struct UserPreferences {
     pub setup_completed: bool,
     #[serde(default)]
     pub bootstrap_dismissed_at: Option<i64>,
-    #[serde(default = "default_tx_template")]
+    #[serde(default = "default_active_coin")]
+    pub active_coin: String,
+    #[serde(default = "default_true")]
+    pub verium_enabled: bool,
+    #[serde(default = "default_true")]
+    pub vericoin_enabled: bool,
+    #[serde(default)]
     pub explorer_tx_url_template: String,
     #[serde(default)]
     pub explorer_block_url_template: Option<String>,
     #[serde(default)]
     pub explorer_address_url_template: Option<String>,
-  /// Start CPU mining automatically when the app opens (requires unlocked wallet).
-  #[serde(default)]
-  pub auto_mine_on_open: bool,
-  /// Play a chime when the wallet receives a new coinbase (block found).
-  #[serde(default)]
-  pub play_sound_on_block_mined: bool,
-  /// Toast + chime when incoming VRM is received while the app is open.
-  #[serde(default = "default_notify_on_vrm_received")]
-  pub notify_on_vrm_received: bool,
-  #[serde(default = "default_auto_mine_threads")]
+    /// Start CPU mining automatically when the app opens (requires unlocked wallet).
+    #[serde(default)]
+    pub auto_mine_on_open: bool,
+    /// Start staking automatically when the app opens (Vericoin).
+    #[serde(default)]
+    pub auto_stake_on_open: bool,
+    /// Play a chime when the wallet receives a new coinbase (block found).
+    #[serde(default)]
+    pub play_sound_on_block_mined: bool,
+    /// Toast + chime when incoming VRM is received while the app is open.
+    #[serde(default = "default_notify_on_vrm_received")]
+    pub notify_on_vrm_received: bool,
+    /// Toast + chime when incoming VRC is received while the app is open.
+    #[serde(default = "default_notify_on_vrc_received")]
+    pub notify_on_vrc_received: bool,
+    #[serde(default = "default_auto_mine_threads")]
     pub auto_mine_threads: u32,
     #[serde(default)]
     pub mining_power_watts: Option<f64>,
@@ -35,12 +50,26 @@ pub struct UserPreferences {
     /// "system" (follow OS), "light", or "dark". Defaults to "system".
     #[serde(default = "default_theme_mode")]
     pub theme_mode: String,
-    /// How long to keep the wallet unlocked after entering the passphrase (seconds).
+    /// Default unlock duration (seconds) when no per-coin override is set.
     #[serde(default = "default_wallet_unlock_duration")]
     pub wallet_unlock_duration_seconds: u32,
+    /// Optional per-coin unlock durations keyed by coin id (`verium`, `vericoin`).
+    #[serde(default)]
+    pub wallet_unlock_duration_by_coin: Option<HashMap<String, u32>>,
     /// Custom on-chain fee rate in VRM/kB. None falls back to the daemon default.
     #[serde(default)]
     pub tx_fee_rate_vrm_per_kb: Option<f64>,
+    /// Unix timestamp when bootstrap was last imported, keyed by coin id.
+    #[serde(default)]
+    pub bootstrap_imported_at_by_coin: Option<HashMap<String, i64>>,
+}
+
+fn default_active_coin() -> String {
+    "verium".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_auto_mine_threads() -> u32 {
@@ -59,6 +88,10 @@ fn default_notify_on_vrm_received() -> bool {
     true
 }
 
+fn default_notify_on_vrc_received() -> bool {
+    true
+}
+
 fn default_tx_template() -> String {
     "https://explorer-vrm.vericonomy.com/#tx/%s".to_string()
 }
@@ -68,18 +101,25 @@ impl Default for UserPreferences {
         Self {
             setup_completed: false,
             bootstrap_dismissed_at: None,
+            active_coin: default_active_coin(),
+            verium_enabled: true,
+            vericoin_enabled: true,
             explorer_tx_url_template: default_tx_template(),
             explorer_block_url_template: None,
             explorer_address_url_template: None,
             auto_mine_on_open: false,
+            auto_stake_on_open: false,
             play_sound_on_block_mined: false,
             notify_on_vrm_received: default_notify_on_vrm_received(),
+            notify_on_vrc_received: default_notify_on_vrc_received(),
             auto_mine_threads: default_auto_mine_threads(),
             mining_power_watts: None,
             mining_cost_per_kwh: None,
             theme_mode: default_theme_mode(),
             wallet_unlock_duration_seconds: default_wallet_unlock_duration(),
+            wallet_unlock_duration_by_coin: None,
             tx_fee_rate_vrm_per_kb: None,
+            bootstrap_imported_at_by_coin: None,
         }
     }
 }
@@ -88,21 +128,32 @@ impl Default for UserPreferences {
 pub struct PartialUserPreferences {
     pub setup_completed: Option<bool>,
     pub bootstrap_dismissed_at: Option<i64>,
+    pub active_coin: Option<String>,
+    pub verium_enabled: Option<bool>,
+    pub vericoin_enabled: Option<bool>,
     pub explorer_tx_url_template: Option<String>,
     pub explorer_block_url_template: Option<String>,
     pub explorer_address_url_template: Option<String>,
     pub auto_mine_on_open: Option<bool>,
+    pub auto_stake_on_open: Option<bool>,
     pub play_sound_on_block_mined: Option<bool>,
     pub notify_on_vrm_received: Option<bool>,
+    pub notify_on_vrc_received: Option<bool>,
     pub auto_mine_threads: Option<u32>,
     pub mining_power_watts: Option<f64>,
     pub mining_cost_per_kwh: Option<f64>,
     pub theme_mode: Option<String>,
     pub wallet_unlock_duration_seconds: Option<u32>,
+    pub wallet_unlock_duration_by_coin: Option<HashMap<String, u32>>,
     pub tx_fee_rate_vrm_per_kb: Option<f64>,
+    pub bootstrap_imported_at_by_coin: Option<HashMap<String, i64>>,
 }
 
 pub fn prefs_path() -> PathBuf {
+    app_config_base().join("prefs.json")
+}
+
+fn legacy_prefs_path() -> PathBuf {
     let base = if let Some(d) = dirs::config_dir() {
         d
     } else if let Some(d) = dirs::data_dir() {
@@ -115,16 +166,41 @@ pub fn prefs_path() -> PathBuf {
     base.join("Verium").join("desktop-app").join("prefs.json")
 }
 
+pub fn coin_enabled(prefs: &UserPreferences, coin: CoinId) -> bool {
+    match coin {
+        CoinId::Verium => prefs.verium_enabled,
+        CoinId::Vericoin => prefs.vericoin_enabled,
+    }
+}
+
+pub fn wallet_unlock_duration_for(prefs: &UserPreferences, coin: CoinId) -> u32 {
+    prefs
+        .wallet_unlock_duration_by_coin
+        .as_ref()
+        .and_then(|m| m.get(coin.as_str()).copied())
+        .unwrap_or(prefs.wallet_unlock_duration_seconds)
+}
+
+const PREFS_STORE_LABEL: &str = "user-preferences";
+
 pub async fn load() -> AppResult<UserPreferences> {
+    // Migrate legacy plaintext if present.
+    let legacy = legacy_prefs_path();
+    if legacy.exists() && !crate::secret_store::open(PREFS_STORE_LABEL)?.is_some() {
+        let raw = fs::read_to_string(&legacy).await?;
+        if let Ok(prefs) = serde_json::from_str::<UserPreferences>(&raw) {
+            save(&prefs).await?;
+            let _ = fs::remove_file(&legacy).await;
+            return Ok(prefs);
+        }
+    }
     let path = prefs_path();
-    if !path.exists() {
-        return Ok(UserPreferences::default());
-    }
-    let raw = fs::read_to_string(&path).await?;
-    match serde_json::from_str::<UserPreferences>(&raw) {
-        Ok(p) => Ok(p),
-        Err(_) => Ok(UserPreferences::default()),
-    }
+    crate::secret_store::migrate_plaintext_json(PREFS_STORE_LABEL, &path)?;
+    Ok(crate::secret_store::load_json(
+        PREFS_STORE_LABEL,
+        &path,
+        UserPreferences::default(),
+    )?)
 }
 
 pub async fn save(prefs: &UserPreferences) -> AppResult<()> {
@@ -132,8 +208,7 @@ pub async fn save(prefs: &UserPreferences) -> AppResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await?;
     }
-    let json = serde_json::to_string_pretty(prefs)?;
-    fs::write(&path, json).await?;
+    crate::secret_store::save_json(PREFS_STORE_LABEL, prefs)?;
     Ok(())
 }
 
@@ -143,6 +218,9 @@ pub fn merge(current: UserPreferences, partial: PartialUserPreferences) -> UserP
         bootstrap_dismissed_at: partial
             .bootstrap_dismissed_at
             .or(current.bootstrap_dismissed_at),
+        active_coin: partial.active_coin.unwrap_or(current.active_coin),
+        verium_enabled: partial.verium_enabled.unwrap_or(current.verium_enabled),
+        vericoin_enabled: partial.vericoin_enabled.unwrap_or(current.vericoin_enabled),
         explorer_tx_url_template: partial
             .explorer_tx_url_template
             .unwrap_or(current.explorer_tx_url_template),
@@ -153,12 +231,16 @@ pub fn merge(current: UserPreferences, partial: PartialUserPreferences) -> UserP
             .explorer_address_url_template
             .or(current.explorer_address_url_template),
         auto_mine_on_open: partial.auto_mine_on_open.unwrap_or(current.auto_mine_on_open),
+        auto_stake_on_open: partial.auto_stake_on_open.unwrap_or(current.auto_stake_on_open),
         play_sound_on_block_mined: partial
             .play_sound_on_block_mined
             .unwrap_or(current.play_sound_on_block_mined),
         notify_on_vrm_received: partial
             .notify_on_vrm_received
             .unwrap_or(current.notify_on_vrm_received),
+        notify_on_vrc_received: partial
+            .notify_on_vrc_received
+            .unwrap_or(current.notify_on_vrc_received),
         auto_mine_threads: partial.auto_mine_threads.unwrap_or(current.auto_mine_threads),
         mining_power_watts: partial.mining_power_watts.or(current.mining_power_watts),
         mining_cost_per_kwh: partial.mining_cost_per_kwh.or(current.mining_cost_per_kwh),
@@ -166,8 +248,36 @@ pub fn merge(current: UserPreferences, partial: PartialUserPreferences) -> UserP
         wallet_unlock_duration_seconds: partial
             .wallet_unlock_duration_seconds
             .unwrap_or(current.wallet_unlock_duration_seconds),
+        wallet_unlock_duration_by_coin: {
+            let mut merged = current
+                .wallet_unlock_duration_by_coin
+                .clone()
+                .unwrap_or_default();
+            if let Some(partial_map) = partial.wallet_unlock_duration_by_coin {
+                merged.extend(partial_map);
+            }
+            if merged.is_empty() {
+                None
+            } else {
+                Some(merged)
+            }
+        },
         tx_fee_rate_vrm_per_kb: partial
             .tx_fee_rate_vrm_per_kb
             .or(current.tx_fee_rate_vrm_per_kb),
+        bootstrap_imported_at_by_coin: {
+            let mut merged = current
+                .bootstrap_imported_at_by_coin
+                .clone()
+                .unwrap_or_default();
+            if let Some(partial_map) = partial.bootstrap_imported_at_by_coin {
+                merged.extend(partial_map);
+            }
+            if merged.is_empty() {
+                None
+            } else {
+                Some(merged)
+            }
+        },
     }
 }

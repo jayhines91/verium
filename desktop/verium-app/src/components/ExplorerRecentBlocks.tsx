@@ -46,14 +46,14 @@ import { BLOCK_AGE_TICK_MS } from "@/lib/block-tip";
 
 import { fetchExplorerBlocks, isExplorerApiEnabled } from "@/lib/explorer-api";
 
-import { EXPLORER_BLOCKS } from "@/lib/verium-links";
+import { explorerBlocksHash } from "@/lib/explorer-links";
 
 import { cn, formatBlockAge, formatNumber, formatVrm } from "@/lib/utils";
 
 
 
 interface ExplorerRecentBlocksProps {
-
+  coin: import("@/lib/coin/profile").CoinId;
   localTipHeight?: number;
 
   variant?: "default" | "dashboard";
@@ -126,6 +126,8 @@ interface CelebrationState {
 
 export function ExplorerRecentBlocks({
 
+  coin,
+
   localTipHeight,
 
   variant = "default",
@@ -180,7 +182,7 @@ export function ExplorerRecentBlocks({
 
     queryKey: ["explorer-blocks", isDashboard ? 50 : 10],
 
-    queryFn: () => fetchExplorerBlocks(isDashboard ? 50 : 10),
+    queryFn: () => fetchExplorerBlocks(coin, isDashboard ? 50 : 10),
 
     enabled: isDashboard || enabled.data === true,
 
@@ -349,11 +351,9 @@ export function ExplorerRecentBlocks({
         </div>
 
         <ExplorerLink
-
-          target={{ kind: "raw", url: EXPLORER_BLOCKS }}
-
+          coin={coin}
+          target={{ kind: "raw", url: explorerBlocksHash(coin) }}
           label="All blocks"
-
         />
 
       </CardHeader>
@@ -599,13 +599,10 @@ export function ExplorerRecentBlocks({
                           {block.miner_address ? (
 
                             <ExplorerLink
-
+                              coin={coin}
                               target={{
-
                                 kind: "address",
-
                                 address: block.miner_address,
-
                               }}
 
                               label={block.miner_address}

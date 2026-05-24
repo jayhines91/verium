@@ -198,6 +198,19 @@ body {
   }
 }
 
+@keyframes bootstrap-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.bootstrap-indeterminate-bar {
+  animation: bootstrap-indeterminate 1.4s ease-in-out infinite;
+}
+
 .toast-enter {
   animation: toast-enter 0.25s ease-out;
 }
