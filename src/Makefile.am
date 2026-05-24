@@ -57,6 +57,18 @@ if ENABLE_SHANI
 LIBBITCOIN_CRYPTO_SHANI = crypto/libbitcoin_crypto_shani.a
 LIBBITCOIN_CRYPTO += $(LIBBITCOIN_CRYPTO_SHANI)
 endif
+if ENABLE_AVX512
+LIBBITCOIN_CRYPTO_AVX512 = crypto/libbitcoin_crypto_avx512.a
+LIBBITCOIN_CRYPTO += $(LIBBITCOIN_CRYPTO_AVX512)
+endif
+if ENABLE_ARM_CRYPTO
+LIBBITCOIN_CRYPTO_ARM_CRYPTO = crypto/libscrypt_arm_crypto.a
+LIBBITCOIN_CRYPTO += $(LIBBITCOIN_CRYPTO_ARM_CRYPTO)
+endif
+if ENABLE_SCRYPT_SHANI
+LIBBITCOIN_CRYPTO_SCRYPT_SHANI = crypto/libscrypt_shani.a
+LIBBITCOIN_CRYPTO += $(LIBBITCOIN_CRYPTO_SCRYPT_SHANI)
+endif
 
 $(LIBSECP256K1): $(wildcard secp256k1/src/*.h) $(wildcard secp256k1/src/*.c) $(wildcard secp256k1/include/*)
 	$(AM_V_at)$(MAKE) $(AM_MAKEFLAGS) -C $(@D) $(@F)
@@ -390,7 +402,14 @@ crypto_libbitcoin_crypto_base_a_SOURCES = \
   crypto/scrypt-x64.S \
   crypto/scrypt.cpp \
   crypto/scrypt.h \
-  crypto/scrypt-armv8.c
+  crypto/scrypt-armv8.c \
+  crypto/scrypt_dispatch.cpp \
+  crypto/scrypt_dispatch.h \
+  crypto/scrypt_selftest.cpp \
+  crypto/scrypt_selftest.h \
+  crypto/scrypt_alloc.cpp \
+  crypto/scrypt_alloc.h \
+  crypto/scrypt_tier.h
 
 if USE_ASM
 crypto_libbitcoin_crypto_base_a_SOURCES += crypto/sha256_sse4.cpp
@@ -413,6 +432,24 @@ crypto_libbitcoin_crypto_shani_a_CPPFLAGS = $(AM_CPPFLAGS)
 crypto_libbitcoin_crypto_shani_a_CXXFLAGS += $(SHANI_CXXFLAGS)
 crypto_libbitcoin_crypto_shani_a_CPPFLAGS += -DENABLE_SHANI
 crypto_libbitcoin_crypto_shani_a_SOURCES = crypto/sha256_shani.cpp
+
+crypto_libbitcoin_crypto_avx512_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_libbitcoin_crypto_avx512_a_CPPFLAGS = $(AM_CPPFLAGS)
+crypto_libbitcoin_crypto_avx512_a_CXXFLAGS += $(AVX512_CXXFLAGS)
+crypto_libbitcoin_crypto_avx512_a_CPPFLAGS += -DENABLE_AVX512
+crypto_libbitcoin_crypto_avx512_a_SOURCES = crypto/scrypt-avx512.cpp
+
+crypto_libscrypt_arm_crypto_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_libscrypt_arm_crypto_a_CPPFLAGS = $(AM_CPPFLAGS)
+crypto_libscrypt_arm_crypto_a_CXXFLAGS += $(ARM_CRYPTO_CXXFLAGS)
+crypto_libscrypt_arm_crypto_a_CPPFLAGS += -DENABLE_ARM_CRYPTO
+crypto_libscrypt_arm_crypto_a_SOURCES = crypto/scrypt-arm-crypto.cpp
+
+crypto_libscrypt_shani_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_libscrypt_shani_a_CPPFLAGS = $(AM_CPPFLAGS)
+crypto_libscrypt_shani_a_CXXFLAGS += $(SHANI_CXXFLAGS)
+crypto_libscrypt_shani_a_CPPFLAGS += -DENABLE_SHANI
+crypto_libscrypt_shani_a_SOURCES = crypto/scrypt_shani.cpp
 
 # consensus: shared between all executables that validate any consensus rules.
 libbitcoin_consensus_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
@@ -562,7 +599,7 @@ veriumd_LDADD = \
   $(LIBMEMENV) \
   $(LIBSECP256K1)
 
-veriumd_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(MINIZIP_LIBS) $(CURL_LIBS)
+veriumd_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(MINIZIP_LIBS) $(CURL_LIBS) $(LIBBITCOIN_CRYPTO_BASE)
 
 # verium-cli binary #
 verium_cli_SOURCES = bitcoin-cli.cpp

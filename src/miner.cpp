@@ -15,6 +15,8 @@
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <crypto/scrypt.h>
+#include <crypto/scrypt_dispatch.h>
+#include <crypto/scrypt_alloc.h>
 #include <logging.h>
 #include <net.h>
 #include <policy/feerate.h>
@@ -32,10 +34,18 @@
 #include <util/threadnames.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <mutex>
 #include <queue>
 #include <utility>
 #include <thread>
-#include <boost/thread/thread.hpp>
+#include <vector>
+
+#if defined(__linux__)
+#include <pthread.h>
+#include <sched.h>
+#endif
 
 #include <openssl/sha.h>
 
@@ -444,6 +454,37 @@ static int64_t timeElapsed = 30000;
 double dHashesPerMin = 0.0;
 int64_t nHPSTimerStart = 0;
 
+namespace {
+
+std::vector<std::thread> g_miner_threads;
+std::atomic<bool> g_miner_stop{false};
+
+int MinerThreadPriority()
+{
+    const std::string mode = gArgs.GetArg("-minerpriority", "idle");
+    if (mode == "above") return THREAD_PRIORITY_ABOVE_NORMAL;
+    if (mode == "normal") return THREAD_PRIORITY_NORMAL;
+    if (mode == "below") return THREAD_PRIORITY_BELOW_NORMAL;
+    return THREAD_PRIORITY_LOWEST;
+}
+
+void PinMinerThread(int thread_index, int thread_count)
+{
+    const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
+    const unsigned int cpu = static_cast<unsigned int>(thread_index) % hw;
+#if defined(__linux__)
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    CPU_SET(cpu, &mask);
+    pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask);
+#elif defined(_WIN32)
+    SetThreadAffinityMask(GetCurrentThread(), DWORD_PTR(1) << cpu);
+#endif
+    (void)thread_count;
+}
+
+} // namespace
+
 static const unsigned int pSHA256InitState[8] =
 {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
 
@@ -514,7 +555,7 @@ bool CheckWork(CBlock* pblock)
     CBlockIndex* pindexPrev = ::ChainActive().Tip();
 
     if (hashBlock > hashTarget){
-        return error("CheckWork() : proof-of-work not meeting target");
+        return error("CheckWork() : proof-of-work not meeting target (consensus hash mismatch — mining SIMD path rejected)");
     } else {
         if (pblock->hashPrevBlock != pindexPrev->GetBlockHash()){
             return error("CheckWork() : generated block is stale");
@@ -561,163 +602,162 @@ int GetNumPeers()
 }
 
 
-void Miner(CWallet *pwallet)
+void Miner(CWallet *pwallet, int thread_index, int thread_count, const CScript& scriptChange)
 {
-    LogPrintf("Miner started\n");
-    SetThreadPriority(THREAD_PRIORITY_LOWEST);
-    util::ThreadRename("verium-miner");
+    LogPrintf("Miner thread %d started\n", thread_index);
+    SetThreadPriority(MinerThreadPriority());
+    util::ThreadRename(strprintf("verium-miner-%d", thread_index));
+    PinMinerThread(thread_index, thread_count);
 
-    //Build buffer and check for memory availability
-    bool memory = true;
-    unsigned char *scratchbuf = scrypt_buffer_alloc();
-    if(!scratchbuf){memory = false;}
-
-    // Each thread has it's own nonce
-    ReserveDestination reservedest(pwallet);
-
-    CTxDestination dest;
-    bool ret = reservedest.GetReservedDestination(DEFAULT_ADDRESS_TYPE, dest, true);
-    if (!ret)
+    if (!ScryptDispatchInit()) {
+        LogPrintf("Miner thread %d: scrypt dispatch init failed\n", thread_index);
         return;
+    }
 
-    CScript scriptChange;
-    scriptChange = GetScriptForDestination(dest);
+    unsigned char* scratchbuf = ScryptDispatchBufferAlloc();
+    if (!scratchbuf) {
+        LogPrintf("Miner thread %d: scratch buffer allocation failed\n", thread_index);
+        return;
+    }
 
-    unsigned int nExtraNonce = 0;
-    try
-    {
-        while (fGenerateVerium && memory)
-        {
-            while (::ChainstateActive().IsInitialBlockDownload() || GetNumPeers() < 1 || ::ChainActive().Tip()->nHeight < GetNumBlocksOfPeers()){
-                LogPrintf("Mining inactive while chain is syncing...\n");
-                MilliSleep(5000);
-            }
+    unsigned int nExtraNonce = static_cast<unsigned int>(thread_index) << 16;
+    uint256 cachedPrevHash;
+    std::unique_ptr<CBlockTemplate> cachedTemplate;
+    unsigned int cachedMempoolVersion = 0;
+    int64_t cachedTemplateTime = 0;
 
-            // Create new block
-            unsigned int nTransactionsUpdatedLast = mempool.GetTransactionsUpdated();
-            CBlockIndex* pindexPrev = ::ChainActive().Tip();
+    while (fGenerateVerium && !g_miner_stop.load()) {
+        while (::ChainstateActive().IsInitialBlockDownload() || GetNumPeers() < 1 || ::ChainActive().Tip()->nHeight < GetNumBlocksOfPeers()) {
+            if (!fGenerateVerium || g_miner_stop.load()) break;
+            LogPrintf("Mining inactive while chain is syncing...\n");
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+        }
+        if (!fGenerateVerium || g_miner_stop.load()) break;
 
-            std::unique_ptr<CBlockTemplate> pblocktemplate;
-            try
-            {
-                pblocktemplate = BlockAssembler(Params()).CreateNewBlock(scriptChange);
-            }
-            catch(std::runtime_error& e)
-            {
+        CBlockIndex* pindexPrev = ::ChainActive().Tip();
+        const unsigned int mempoolVersion = mempool.GetTransactionsUpdated();
+        const int64_t now = GetTime();
+        const bool need_template = !cachedTemplate.get()
+            || pindexPrev->GetBlockHash() != cachedPrevHash
+            || (mempoolVersion != cachedMempoolVersion && now - cachedTemplateTime > 60);
+
+        if (need_template) {
+            try {
+                cachedTemplate = BlockAssembler(Params()).CreateNewBlock(scriptChange);
+                cachedPrevHash = pindexPrev->GetBlockHash();
+                cachedMempoolVersion = mempoolVersion;
+                cachedTemplateTime = now;
+            } catch (const std::runtime_error&) {
+                std::this_thread::yield();
                 continue;
             }
+        }
 
-            if (!pblocktemplate.get())
-                return;
+        if (!cachedTemplate.get()) {
+            std::this_thread::yield();
+            continue;
+        }
 
-            CBlock *pblock = &pblocktemplate->block;
-            IncrementExtraNonce(pblock, pindexPrev, nExtraNonce);
-            LogPrintf("Miner thread running on block %s (%lu bytes)\n", pindexPrev->nHeight, ::GetSerializeSize(*pblock, PROTOCOL_VERSION));
+        CBlock block = cachedTemplate->block;
+        IncrementExtraNonce(&block, pindexPrev, nExtraNonce);
+        if (thread_index == 0) {
+            LogPrintf("Miner running on block %s (%lu bytes), tier %s\n",
+                pindexPrev->GetBlockHash().ToString(), ::GetSerializeSize(block, PROTOCOL_VERSION),
+                ScryptDispatchTierNameActive());
+        }
 
-            // Pre-build hash buffers
-            char pmidstatebuf[32+16]; char* pmidstate = alignup<16>(pmidstatebuf);
-            char pdatabuf[128+16];    char* pdata     = alignup<16>(pdatabuf);
-            char phash1buf[64+16];    char* phash1    = alignup<16>(phash1buf);
-            FormatHashBuffers(pblock, pmidstate, pdata, phash1);
-            unsigned int& nBlockTime = *(unsigned int*)(pdata + 64 + 4);
+        char pmidstatebuf[32+16]; char* pmidstate = alignup<16>(pmidstatebuf);
+        char pdatabuf[128+16];    char* pdata     = alignup<16>(pdatabuf);
+        char phash1buf[64+16];    char* phash1    = alignup<16>(phash1buf);
+        FormatHashBuffers(&block, pmidstate, pdata, phash1);
+        unsigned int& nBlockTime = *(unsigned int*)(pdata + 64 + 4);
 
-            // Search
-            int64_t nStart = GetTime();
-            uint256 hashTarget = ArithToUint256(arith_uint256().SetCompact(pblock->nBits));
-            while (fGenerateVerium)
-            {
-                unsigned int nHashesDone = 0;
-                if (fGenerateVerium)
-                {
-                    // scrypt^2
-                    int nHashes = 0;
-                    if (scrypt_N_1_1_256_multi(BEGIN(pblock->nVersion), hashTarget, &nHashes, scratchbuf))
-                    {
-                        // Found a solution
-                        SetThreadPriority(THREAD_PRIORITY_NORMAL);
-                        CheckWork(pblock);
-                        SetThreadPriority(THREAD_PRIORITY_LOWEST);
-                    }
-                    nHashesDone += nHashes;
-                    pblock->nNonce += nHashes;
-                }
-
-                // Hash meter
-                static int64_t nHashCounter;
-                {
-                    static CCriticalSection cs;
-                    {
-                        LOCK(cs);
-                        if (nHPSTimerStart == 0)
-                        {
-                            nHPSTimerStart = GetTimeMillis();
-                            nHashCounter = 0;
-                        }
-                        else
-                            nHashCounter += nHashesDone;
-
-                        if (GetTimeMillis() - nHPSTimerStart > timeElapsed)
-                        {
-                            dHashesPerMin = 60000.0 * nHashCounter / (GetTimeMillis() - nHPSTimerStart);
-                            nHPSTimerStart = GetTimeMillis();
-                            nHashCounter = 0;
-                            updateHashrate(dHashesPerMin);
-                            LogPrintf("Total local hashrate: %6.0f hashes/min\n", hashrate);
-                        }
-                    }
-                }
-
-                // Check for stop or if block needs to be rebuilt
-                boost::this_thread::interruption_point();
-                if (!fGenerateVerium)
-                    break;
-                if (ShutdownRequested())
-                    return;
-                if ( GetNumPeers() < 1)
-                    break;
-                if (pblock->nNonce >= 0xffff0000)
-                    break;
-                if (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - nStart > 60)
-                    break;
-                if (pindexPrev != ::ChainActive().Tip())
-                    break;
-
-                // Update nTime every few seconds
-                UpdateTime(pblock, Params().GetConsensus(), pindexPrev);
-                nBlockTime = ByteReverse(pblock->nTime);
+        int64_t nStart = GetTime();
+        uint256 hashTarget = ArithToUint256(arith_uint256().SetCompact(block.nBits));
+        while (fGenerateVerium && !g_miner_stop.load()) {
+            unsigned int nHashesDone = 0;
+            int nHashes = 0;
+            if (ScryptDispatch_N_1_1_256_multi(BEGIN(block.nVersion), hashTarget, &nHashes, scratchbuf)) {
+                SetThreadPriority(THREAD_PRIORITY_NORMAL);
+                CheckWork(&block);
+                SetThreadPriority(MinerThreadPriority());
+                cachedTemplate.reset();
             }
+            nHashesDone += nHashes;
+            block.nNonce += nHashes;
+
+            static std::atomic<int64_t> nHashCounter{0};
+            static std::atomic<int64_t> nHPSTimerStartAtomic{0};
+            const int64_t timerStart = nHPSTimerStartAtomic.load();
+            if (timerStart == 0) {
+                nHPSTimerStartAtomic.store(GetTimeMillis());
+                nHashCounter.store(0);
+            } else {
+                nHashCounter.fetch_add(nHashesDone);
+            }
+            const int64_t elapsed = GetTimeMillis() - nHPSTimerStartAtomic.load();
+            if (elapsed > timeElapsed) {
+                const double local = 60000.0 * nHashCounter.exchange(0) / elapsed;
+                nHPSTimerStartAtomic.store(GetTimeMillis());
+                updateHashrate(local);
+                if (thread_index == 0) {
+                    LogPrintf("Total local hashrate: %6.0f hashes/min (tier %s)\n",
+                        hashrate, ScryptDispatchTierNameActive());
+                }
+            }
+
+            if (!fGenerateVerium || g_miner_stop.load()) break;
+            if (ShutdownRequested()) break;
+            if (GetNumPeers() < 1) break;
+            if (block.nNonce >= 0xffff0000) break;
+            if (mempool.GetTransactionsUpdated() != cachedMempoolVersion && GetTime() - nStart > 60) break;
+            if (pindexPrev != ::ChainActive().Tip()) break;
+
+            UpdateTime(&block, Params().GetConsensus(), pindexPrev);
+            nBlockTime = ByteReverse(block.nTime);
+            std::this_thread::yield();
         }
     }
-    catch (boost::thread_interrupted)
-    {
-        free(scratchbuf);
+
+    ScryptDispatchBufferFree(scratchbuf);
+    if (thread_index == 0) {
         hashrate = 0;
         LogPrintf("Miner terminated\n");
-        throw;
     }
 }
 
 void GenerateVerium(bool fGenerate, CWallet* pwallet, int nThreads)
 {
     fGenerateVerium = fGenerate;
-    static boost::thread_group* minerThreads = NULL;
+    g_miner_stop.store(true);
+    for (auto& t : g_miner_threads) {
+        if (t.joinable()) t.join();
+    }
+    g_miner_threads.clear();
+    g_miner_stop.store(false);
 
     if (nThreads < 0)
         nThreads = std::thread::hardware_concurrency();
 
-    if (minerThreads != NULL)
-    {
-        minerThreads->interrupt_all();
-        delete minerThreads;
-        minerThreads = NULL;
-    }
-
     if (nThreads == 0 || !fGenerate)
         return;
 
-    minerThreads = new boost::thread_group();
-    for (int i = 0; i < nThreads; i++)
-        minerThreads->create_thread(std::bind(&Miner, pwallet));
+    CScript scriptChange;
+    {
+        LOCK(cs_main);
+        ReserveDestination reservedest(pwallet);
+        CTxDestination dest;
+        if (!reservedest.GetReservedDestination(DEFAULT_ADDRESS_TYPE, dest, true))
+            return;
+        scriptChange = GetScriptForDestination(dest);
+    }
+
+    g_miner_threads.reserve(nThreads);
+    for (int i = 0; i < nThreads; ++i) {
+        g_miner_threads.emplace_back([pwallet, i, nThreads, scriptChange]() {
+            Miner(pwallet, i, nThreads, scriptChange);
+        });
+    }
 }
 
 void updateHashrate(double nHashrate)

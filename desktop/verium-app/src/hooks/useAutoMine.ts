@@ -4,6 +4,11 @@ import { coinQueryKey } from "@/lib/coin/profile";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import { useUserPreferences } from "@/lib/user-preferences";
 import {
+  fetchCpuTopology,
+  isOnAcPower,
+  resolveMiningThreads,
+} from "@/lib/mining-opt";
+import {
   rpcGetBlockchainInfo,
   rpcGetMinerState,
   rpcGetWalletInfo,
@@ -18,6 +23,7 @@ const VERIUM = "verium" as const;
 /**
  * When enabled in Settings, starts the built-in CPU miner once the verium
  * daemon is synced, the wallet is unlocked, and mining is not already active.
+ * Thread count follows auto-adjust preference or manual override.
  */
 export function useAutoMine() {
   const queryClient = useQueryClient();
@@ -25,6 +31,13 @@ export function useAutoMine() {
   const loaded = useUserPreferences((s) => s.loaded);
   const { data: status } = useDaemonStatus(VERIUM);
   const lastErrorRef = useRef<string | null>(null);
+
+  const topology = useQuery({
+    queryKey: ["cpu-topology"],
+    queryFn: fetchCpuTopology,
+    staleTime: 60_000,
+    enabled: loaded && prefs.auto_mine_on_open === true && prefs.verium_enabled !== false,
+  });
 
   const blockchain = useQuery({
     queryKey: coinQueryKey(VERIUM, "getblockchaininfo"),
@@ -53,11 +66,21 @@ export function useAutoMine() {
     const tryStart = async () => {
       if (wasMiningStoppedByUser()) return;
       if (minerState.data?.active) return;
+      try {
+        const onAc = await isOnAcPower();
+        if (!onAc) return;
+      } catch {
+        /* ignore battery probe errors */
+      }
       if (!status?.connected || status.warming_up || status.sync_stalled) return;
       if (blockchain.data?.initialblockdownload) return;
       if (!isWalletUnlocked(wallet.data)) return;
 
-      const threads = Math.max(1, Math.min(64, prefs.auto_mine_threads ?? 2));
+      const threads = resolveMiningThreads(
+        topology.data,
+        prefs.auto_adjust_mine_threads !== false,
+        prefs.auto_mine_threads ?? 2,
+      );
       try {
         await rpcMinerStart(VERIUM, threads);
         lastErrorRef.current = null;
@@ -78,8 +101,10 @@ export function useAutoMine() {
   }, [
     loaded,
     prefs.auto_mine_on_open,
-    prefs.auto_mine_threads,
     prefs.verium_enabled,
+    prefs.auto_adjust_mine_threads,
+    prefs.auto_mine_threads,
+    topology.data,
     status?.connected,
     status?.warming_up,
     status?.sync_stalled,

@@ -11,6 +11,7 @@
 #include <consensus/validation.h>
 #include <core_io.h>
 #include <key_io.h>
+#include <crypto/scrypt_dispatch.h>
 #include <miner.h>
 #include <net.h>
 #include <policy/fees.h>
@@ -170,6 +171,8 @@ static UniValue getmininginfo(const JSONRPCRequest& request)
     obj.pushKV("estimateblockrate",           (double)minerate);
     obj.pushKV("hashrate (H/m)",           (double)totalhashrate);
     obj.pushKV("hashrate",           (double)totalhashrate);
+    obj.pushKV("scryptdispatchtier", ScryptDispatchTierNameActive());
+    obj.pushKV("scryptthroughput",   ScryptDispatchBestThroughput());
     obj.pushKV("nethashrate (kH/m)",           nethashrate);
     obj.pushKV("networkhashps",    ((nethashrate*1000)/60));
     obj.pushKV("pooledtx",         (uint64_t)mempool.size());

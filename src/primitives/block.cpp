@@ -19,6 +19,7 @@ uint256 CBlockHeader::GetHash() const
 uint256 CBlockHeader::GetWorkHash() const
 {
     uint256 thash;
+    // Consensus-critical: always use the reference scrypt^2 path (never SIMD dispatch).
     scryptHash(BEGIN(nVersion), BEGIN(thash));
     return thash;
 }

@@ -39,9 +39,15 @@ import {
   networkSharePercent,
   revenuePeriodLabel,
   scaleDailyValue,
-  suggestedThreadCount,
   type RevenuePeriod,
 } from "@/lib/mining-revenue";
+import {
+  fetchCpuTopology,
+  maxMiningThreads,
+  optimizedMiningThreads,
+  resolveMiningThreads,
+} from "@/lib/mining-opt";
+import { MiningThreadControls } from "@/components/MiningThreadControls";
 import {
   rpcGetBlockchainInfo,
   rpcGetMinerState,
@@ -73,21 +79,25 @@ interface HashSample {
 const MAX_SAMPLES = 60;
 const SAMPLE_MIN_MS = 5_000;
 
-function clampMiningThreads(value: number, fallback = 2): number {
-  const n = Number.isFinite(value) ? value : fallback;
-  return Math.max(1, Math.min(64, Math.round(n)));
-}
-
 export function Mining() {
   const coin = useActiveCoin();
   const queryClient = useQueryClient();
   const prefs = useUserPreferences((s) => s.prefs);
   const updatePrefs = useUserPreferences((s) => s.update);
-  const suggested = suggestedThreadCount();
-  const savedThreads = clampMiningThreads(
-    prefs.auto_mine_threads ?? suggested,
-    suggested,
+  const topology = useQuery({
+    queryKey: ["cpu-topology"],
+    queryFn: fetchCpuTopology,
+    staleTime: 60_000,
+  });
+  const autoAdjustThreads = prefs.auto_adjust_mine_threads !== false;
+  const miningThreads = resolveMiningThreads(
+    topology.data,
+    autoAdjustThreads,
+    prefs.auto_mine_threads ?? 2,
   );
+  const suggestedThreads = optimizedMiningThreads(topology.data);
+  const maxThreads = maxMiningThreads(topology.data);
+  const logicalCpus = topology.data?.logicalCpus;
   const [samples, setSamples] = useState<HashSample[]>([]);
   const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>("day");
   const lastSampleRef = useRef<{ t: number; hr: number } | null>(null);
@@ -146,8 +156,27 @@ export function Mining() {
     );
   }, [mining.data]);
 
+  useEffect(() => {
+    if (!topology.data) return;
+    const max = maxMiningThreads(topology.data);
+    const current = prefs.auto_mine_threads ?? 2;
+    if (current > max) {
+      void updatePrefs({ auto_mine_threads: max });
+    }
+  }, [topology.data, prefs.auto_mine_threads, updatePrefs]);
+
+  const handleAutoAdjustChange = (checked: boolean) => {
+    const updates: Partial<typeof prefs> = {
+      auto_adjust_mine_threads: checked,
+    };
+    if (!checked && topology.data) {
+      updates.auto_mine_threads = optimizedMiningThreads(topology.data);
+    }
+    void updatePrefs(updates);
+  };
+
   const start = useMutation({
-    mutationFn: () => rpcMinerStart(coin, savedThreads),
+    mutationFn: () => rpcMinerStart(coin, miningThreads),
     onSuccess: (state) => {
       clearMiningStoppedByUser();
       queryClient.setQueryData(coinQueryKey(coin, "get_miner_state"), state);
@@ -175,7 +204,7 @@ export function Mining() {
     stop.isPending,
   );
   const displayThreads =
-    active && minerState.data ? minerState.data.threads : savedThreads;
+    active && minerState.data ? minerState.data.threads : miningThreads;
   const networkStats = buildNetworkStats(explorerStats.data, mining.data);
   const networkHash = networkStats?.networkHash;
   const networkKhm =
@@ -281,28 +310,18 @@ export function Mining() {
                 Play sound when block mined
               </label>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <label className="text-sm text-fg-muted">Threads</label>
-              <input
-                type="number"
-                min={1}
-                max={64}
-                value={displayThreads}
-                onChange={(e) =>
-                  void updatePrefs({
-                    auto_mine_threads: clampMiningThreads(
-                      Number(e.target.value),
-                      savedThreads,
-                    ),
-                  })
-                }
-                disabled={active}
-                className="h-9 w-20 rounded-md border border-border bg-bg-subtle px-3 text-sm tabular-nums outline-none focus:border-accent disabled:opacity-50"
-              />
-              <span className="text-xs text-fg-subtle">
-                Max Recommended: {suggested}
-              </span>
-            </div>
+            <MiningThreadControls
+              autoAdjust={autoAdjustThreads}
+              manualThreads={prefs.auto_mine_threads ?? 2}
+              suggestedThreads={suggestedThreads}
+              maxThreads={maxThreads}
+              logicalCpus={logicalCpus}
+              disabled={active || start.isPending || stop.isPending}
+              onAutoAdjustChange={handleAutoAdjustChange}
+              onManualThreadsChange={(threads) =>
+                void updatePrefs({ auto_mine_threads: threads })
+              }
+            />
             {(start.error || stop.error) && (
               <div className="max-w-[calc(100%-12rem)] text-xs text-danger">
                 {String(start.error ?? stop.error)}

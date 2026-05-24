@@ -152,20 +152,37 @@ export PATH="${BASEPREFIX}/${HOST}/native/bin:${PATH}"
 
     # Configure this DISTSRC for $HOST
     # shellcheck disable=SC2086
+    PGO_FLAGS=""
+    if [[ "${ENABLE_PGO:-}" == "1" ]]; then
+        echo "PGO stage 1/3: generating profile..."
+        PGO_FLAGS="--enable-pgo-generate"
+    elif [[ -f "${DISTSRC}/default.profdata" || -f "${DISTSRC}/default.gcda" ]]; then
+        echo "PGO stage 3/3: using collected profile..."
+        PGO_FLAGS="--enable-pgo-use"
+    fi
+
     env CONFIG_SITE="${BASEPREFIX}/${HOST}/share/config.site" \
         ./configure --prefix=/ \
                     --disable-ccache \
                     --disable-maintainer-mode \
                     --disable-dependency-tracking \
                     ${CONFIGFLAGS} \
-                    CFLAGS="${HOST_CFLAGS}" \
-                    CXXFLAGS="${HOST_CXXFLAGS}" \
+                    ${PGO_FLAGS} \
+                    CFLAGS="${HOST_CFLAGS} -O3 -fno-plt" \
+                    CXXFLAGS="${HOST_CXXFLAGS} -O3 -flto -fno-plt -fvisibility=hidden -fno-semantic-interposition" \
                     LDFLAGS="${HOST_LDFLAGS}"
 
     sed -i.old 's/-lstdc++ //g' config.status libtool src/univalue/config.status src/univalue/libtool
 
     # Build Verium Core
     make --jobs="$MAX_JOBS" ${V:+V=1}
+
+    if [[ "${ENABLE_PGO:-}" == "1" ]]; then
+        echo "PGO stage 2/3: training with verium-bench scrypt workload (5 minutes)..."
+        if [[ -x "${DISTSRC}/src/bench/bench_verium" ]]; then
+            timeout 300 "${DISTSRC}/src/bench/bench_verium" -filter=Scrypt -evals=3 || true
+        fi
+    fi
 
     # Perform basic ELF security checks on a series of executables.
     make -C src --jobs=1 check-security ${V:+V=1}

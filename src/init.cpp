@@ -8,6 +8,7 @@
 #endif
 
 #include <init.h>
+#include <crypto/scrypt_dispatch.h>
 
 #include <addrman.h>
 #include <amount.h>
@@ -1162,6 +1163,10 @@ bool AppInitSanityChecks()
     // Sanity check
     if (!InitSanityCheck())
         return InitError(strprintf(_("Initialization sanity check failed. %s is shutting down.").translated, PACKAGE_NAME));
+
+    if (!ScryptDispatchInit()) {
+        return InitError(_("Scrypt consensus self-test failed. Verium cannot mine or validate safely; shutting down."));
+    }
 
     // Probe the data directory lock to give an early error message, if possible
     // We cannot hold the data directory lock here, as the forking for daemon() hasn't yet happened,

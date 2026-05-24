@@ -190,7 +190,10 @@ export function formatSessionDuration(startedAtSec: number): string {
   return `${elapsed}s`;
 }
 
-export function suggestedThreadCount(): number {
+export function suggestedThreadCount(performanceCores?: number): number {
+  if (performanceCores != null && performanceCores > 0) {
+    return Math.max(1, Math.min(64, performanceCores));
+  }
   const cores =
     typeof navigator !== "undefined" ? navigator.hardwareConcurrency : 4;
   return Math.max(1, Math.min(64, (cores || 4) - 1));

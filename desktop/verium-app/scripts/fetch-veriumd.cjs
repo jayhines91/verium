@@ -154,8 +154,31 @@ function isStubSidecar(filePath) {
   }
 }
 
+function detectX86SimdSuffix() {
+  if (process.arch !== "x64") return "";
+  try {
+    if (process.platform === "linux") {
+      const info = fs.readFileSync("/proc/cpuinfo", "utf8");
+      if (/avx512f/.test(info)) return "-avx512";
+      if (/avx2/.test(info)) return "-avx2";
+    }
+    if (process.platform === "win32") {
+      return "-avx2";
+    }
+    if (process.platform === "darwin") {
+      return "";
+    }
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
+
 function sidecarPath(triple) {
   const ext = isWindowsTriple(triple) ? ".exe" : "";
+  const suffix = detectX86SimdSuffix();
+  const suffixed = path.join(BINARIES_DIR, `veriumd-${triple}${suffix}${ext}`);
+  if (suffix && fs.existsSync(suffixed)) return suffixed;
   return path.join(BINARIES_DIR, `veriumd-${triple}${ext}`);
 }
 

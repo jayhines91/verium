@@ -43,6 +43,13 @@ pub struct UserPreferences {
     pub notify_on_vrc_received: bool,
     #[serde(default = "default_auto_mine_threads")]
     pub auto_mine_threads: u32,
+    /// When true, thread count follows CPU topology; when false, uses auto_mine_threads.
+    #[serde(default = "default_auto_adjust_mine_threads")]
+    pub auto_adjust_mine_threads: bool,
+    #[serde(default)]
+    pub pause_mine_on_battery: bool,
+    #[serde(default = "default_mine_core_affinity")]
+    pub mine_core_affinity: String,
     #[serde(default)]
     pub mining_power_watts: Option<f64>,
     #[serde(default)]
@@ -74,6 +81,14 @@ fn default_true() -> bool {
 
 fn default_auto_mine_threads() -> u32 {
     2
+}
+
+fn default_auto_adjust_mine_threads() -> bool {
+    true
+}
+
+fn default_mine_core_affinity() -> String {
+    "performance".to_string()
 }
 
 fn default_theme_mode() -> String {
@@ -113,6 +128,9 @@ impl Default for UserPreferences {
             notify_on_vrm_received: default_notify_on_vrm_received(),
             notify_on_vrc_received: default_notify_on_vrc_received(),
             auto_mine_threads: default_auto_mine_threads(),
+            auto_adjust_mine_threads: default_auto_adjust_mine_threads(),
+            pause_mine_on_battery: false,
+            mine_core_affinity: default_mine_core_affinity(),
             mining_power_watts: None,
             mining_cost_per_kwh: None,
             theme_mode: default_theme_mode(),
@@ -140,6 +158,9 @@ pub struct PartialUserPreferences {
     pub notify_on_vrm_received: Option<bool>,
     pub notify_on_vrc_received: Option<bool>,
     pub auto_mine_threads: Option<u32>,
+    pub auto_adjust_mine_threads: Option<bool>,
+    pub pause_mine_on_battery: Option<bool>,
+    pub mine_core_affinity: Option<String>,
     pub mining_power_watts: Option<f64>,
     pub mining_cost_per_kwh: Option<f64>,
     pub theme_mode: Option<String>,
@@ -242,6 +263,15 @@ pub fn merge(current: UserPreferences, partial: PartialUserPreferences) -> UserP
             .notify_on_vrc_received
             .unwrap_or(current.notify_on_vrc_received),
         auto_mine_threads: partial.auto_mine_threads.unwrap_or(current.auto_mine_threads),
+        auto_adjust_mine_threads: partial
+            .auto_adjust_mine_threads
+            .unwrap_or(current.auto_adjust_mine_threads),
+        pause_mine_on_battery: partial
+            .pause_mine_on_battery
+            .unwrap_or(current.pause_mine_on_battery),
+        mine_core_affinity: partial
+            .mine_core_affinity
+            .unwrap_or(current.mine_core_affinity),
         mining_power_watts: partial.mining_power_watts.or(current.mining_power_watts),
         mining_cost_per_kwh: partial.mining_cost_per_kwh.or(current.mining_cost_per_kwh),
         theme_mode: partial.theme_mode.unwrap_or(current.theme_mode),

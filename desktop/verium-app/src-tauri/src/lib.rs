@@ -9,9 +9,11 @@ mod config;
 mod daemon;
 mod error;
 mod explorer_api;
+mod gpu_miner;
 mod hardware_wallet;
 mod installer_verify;
 mod logs;
+mod mining_opt;
 mod multisig;
 mod passkey;
 mod prefs;
@@ -53,6 +55,7 @@ pub fn run() {
                 commands::startup_daemon_connect(&startup_state).await;
             });
             app.manage(state);
+            app.manage(gpu_miner::GpuMinerHandle::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -133,6 +136,12 @@ pub fn run() {
             commands::address_book_upsert,
             commands::address_book_delete,
             commands::diagnostic_bundle,
+            mining_opt::cpu_topology,
+            mining_opt::bench_scrypt,
+            mining_opt::battery_on_ac_power,
+            gpu_miner::gpu_miner_status,
+            gpu_miner::gpu_miner_start,
+            gpu_miner::gpu_miner_stop,
             security_commands::recovery_generate_mnemonic,
             security_commands::recovery_validate_mnemonic,
             security_commands::recovery_verification_indices,

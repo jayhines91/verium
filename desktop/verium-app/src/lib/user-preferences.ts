@@ -19,6 +19,8 @@ export interface UserPreferences {
   play_sound_on_block_mined?: boolean;
   notify_on_vrm_received?: boolean;
   notify_on_vrc_received?: boolean;
+  /** When true, thread count follows CPU topology; when false, uses auto_mine_threads. */
+  auto_adjust_mine_threads?: boolean;
   auto_mine_threads?: number;
   mining_power_watts?: number;
   mining_cost_per_kwh?: number;
@@ -48,6 +50,7 @@ const DEFAULT_PREFS: UserPreferences = {
   play_sound_on_block_mined: false,
   notify_on_vrm_received: true,
   notify_on_vrc_received: true,
+  auto_adjust_mine_threads: true,
   auto_mine_threads: 2,
   theme_mode: "system",
   wallet_unlock_duration_seconds: DEFAULT_WALLET_UNLOCK_SECONDS,

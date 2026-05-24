@@ -345,7 +345,9 @@ fi
 enable_hwcrc32=no
 enable_sse41=no
 enable_avx2=no
+enable_avx512=no
 enable_shani=no
+enable_arm_crypto=no
 
 if test "x$use_asm" = "xyes"; then
 
@@ -355,6 +357,7 @@ if test "x$use_asm" = "xyes"; then
 AX_CHECK_COMPILE_FLAG([-msse4.2],[[SSE42_CXXFLAGS="-msse4.2"]],,[[$CXXFLAG_WERROR]])
 AX_CHECK_COMPILE_FLAG([-msse4.1],[[SSE41_CXXFLAGS="-msse4.1"]],,[[$CXXFLAG_WERROR]])
 AX_CHECK_COMPILE_FLAG([-mavx -mavx2],[[AVX2_CXXFLAGS="-mavx -mavx2"]],,[[$CXXFLAG_WERROR]])
+AX_CHECK_COMPILE_FLAG([-mavx512f -mavx512bw -mavx512vl],[[AVX512_CXXFLAGS="-mavx512f -mavx512bw -mavx512vl"]],,[[$CXXFLAG_WERROR]])
 AX_CHECK_COMPILE_FLAG([-msse4 -msha],[[SHANI_CXXFLAGS="-msse4 -msha"]],,[[$CXXFLAG_WERROR]])
 
 TEMP_CXXFLAGS="$CXXFLAGS"
@@ -410,6 +413,21 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
 CXXFLAGS="$TEMP_CXXFLAGS"
 
 TEMP_CXXFLAGS="$CXXFLAGS"
+CXXFLAGS="$CXXFLAGS $AVX512_CXXFLAGS"
+AC_MSG_CHECKING(for AVX-512 intrinsics)
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+    #include <stdint.h>
+    #include <immintrin.h>
+  ]],[[
+    __m512i l = _mm512_set1_epi32(0);
+    return _mm512_extract_epi32(l, 15);
+  ]])],
+ [ AC_MSG_RESULT(yes); enable_avx512=yes; AC_DEFINE(ENABLE_AVX512, 1, [Define this symbol to build AVX-512 scrypt paths]) ],
+ [ AC_MSG_RESULT(no)]
+)
+CXXFLAGS="$TEMP_CXXFLAGS"
+
+TEMP_CXXFLAGS="$CXXFLAGS"
 CXXFLAGS="$CXXFLAGS $SHANI_CXXFLAGS"
 AC_MSG_CHECKING(for SHA-NI intrinsics)
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
@@ -426,6 +444,55 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
 )
 CXXFLAGS="$TEMP_CXXFLAGS"
 
+fi
+
+if test "x$host_cpu" = "xaarch64"; then
+  TEMP_CXXFLAGS="$CXXFLAGS"
+  AX_CHECK_COMPILE_FLAG([-march=armv8.2-a+crypto],[[ARM_CRYPTO_CXXFLAGS="-march=armv8.2-a+crypto"]],,[[$CXXFLAG_WERROR]])
+  CXXFLAGS="$CXXFLAGS $ARM_CRYPTO_CXXFLAGS"
+  AC_MSG_CHECKING(for ARMv8.2 SHA2 crypto extensions)
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+    #include <arm_neon.h>
+  ]],[[
+    uint32x4_t s0 = vdupq_n_u32(0);
+    uint32x4_t s1 = vdupq_n_u32(0);
+    uint32x4_t m = vdupq_n_u32(1);
+    s1 = vsha256hq_u32(s1, s0, m);
+    return vgetq_lane_u32(s1, 0);
+  ]])],
+   [ AC_MSG_RESULT(yes); enable_arm_crypto=yes; AC_DEFINE(ENABLE_ARM_CRYPTO, 1, [Define ARMv8.2 SHA2 scrypt path]) ],
+   [ AC_MSG_RESULT(no)]
+  )
+  CXXFLAGS="$TEMP_CXXFLAGS"
+fi
+
+AC_ARG_ENABLE([avx512],
+  [AS_HELP_STRING([--enable-avx512],[enable AVX-512 scrypt mining paths (default: auto)])],
+  [enable_avx512=$enableval],
+  [])
+
+AC_ARG_ENABLE([arm-crypto],
+  [AS_HELP_STRING([--enable-arm-crypto],[enable ARMv8.2 SHA2 scrypt path (default: auto)])],
+  [enable_arm_crypto=$enableval],
+  [])
+
+AC_ARG_ENABLE([pgo-generate],
+  [AS_HELP_STRING([--enable-pgo-generate],[build with profile generation instrumentation])],
+  [enable_pgo_generate=$enableval],
+  [enable_pgo_generate=no])
+
+AC_ARG_ENABLE([pgo-use],
+  [AS_HELP_STRING([--enable-pgo-use],[build using previously collected profile data])],
+  [enable_pgo_use=$enableval],
+  [enable_pgo_use=no])
+
+if test x$enable_pgo_generate = xyes; then
+  CXXFLAGS="$CXXFLAGS -fprofile-generate"
+  LDFLAGS="$LDFLAGS -fprofile-generate"
+fi
+if test x$enable_pgo_use = xyes; then
+  CXXFLAGS="$CXXFLAGS -fprofile-use -fprofile-correction"
+  LDFLAGS="$LDFLAGS -fprofile-use"
 fi
 
 CPPFLAGS="$CPPFLAGS -DHAVE_BUILD_INFO -D__STDC_FORMAT_MACROS"
@@ -1559,7 +1626,10 @@ AM_CONDITIONAL([HARDEN],[test x$use_hardening = xyes])
 AM_CONDITIONAL([ENABLE_HWCRC32],[test x$enable_hwcrc32 = xyes])
 AM_CONDITIONAL([ENABLE_SSE41],[test x$enable_sse41 = xyes])
 AM_CONDITIONAL([ENABLE_AVX2],[test x$enable_avx2 = xyes])
+AM_CONDITIONAL([ENABLE_AVX512],[test x$enable_avx512 = xyes])
 AM_CONDITIONAL([ENABLE_SHANI],[test x$enable_shani = xyes])
+AM_CONDITIONAL([ENABLE_SCRYPT_SHANI],[test x$enable_shani = xyes])
+AM_CONDITIONAL([ENABLE_ARM_CRYPTO],[test x$enable_arm_crypto = xyes])
 AM_CONDITIONAL([USE_ASM],[test x$use_asm = xyes])
 
 AC_DEFINE(CLIENT_VERSION_MAJOR, _CLIENT_VERSION_MAJOR, [Major version])
@@ -1606,7 +1676,9 @@ AC_SUBST(SANITIZER_LDFLAGS)
 AC_SUBST(SSE42_CXXFLAGS)
 AC_SUBST(SSE41_CXXFLAGS)
 AC_SUBST(AVX2_CXXFLAGS)
+AC_SUBST(AVX512_CXXFLAGS)
 AC_SUBST(SHANI_CXXFLAGS)
+AC_SUBST(ARM_CRYPTO_CXXFLAGS)
 AC_SUBST(LIBTOOL_APP_LDFLAGS)
 AC_SUBST(USE_UPNP)
 AC_SUBST(USE_QRCODE)

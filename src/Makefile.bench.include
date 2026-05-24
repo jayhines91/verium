@@ -39,6 +39,7 @@ bench_bench_verium_SOURCES = \
   bench/lockedpool.cpp \
   bench/poly1305.cpp \
   bench/prevector.cpp \
+  bench/scrypt_bench.cpp \
   test/setup_common.h \
   test/setup_common.cpp \
   test/util.h \
@@ -83,6 +84,8 @@ CLEANFILES += $(CLEAN_BITCOIN_BENCH)
 bench/data.cpp: bench/data/block413567.raw.h
 
 verium_bench: $(BENCH_BINARY)
+
+verium-bench: verium_bench
 
 bench: $(BENCH_BINARY) FORCE
 	$(BENCH_BINARY)

@@ -32,6 +32,12 @@ import {
 } from "@/lib/rpc/client";
 import { useUserPreferences } from "@/lib/user-preferences";
 import {
+  fetchCpuTopology,
+  maxMiningThreads,
+  optimizedMiningThreads,
+} from "@/lib/mining-opt";
+import { MiningThreadControls } from "@/components/MiningThreadControls";
+import {
   playBlockMinedSound,
   unlockBlockMinedAudio,
 } from "@/lib/block-mined-sound";
@@ -68,6 +74,26 @@ export function Settings() {
     queryFn: () => tauriDetectDaemon(daemonCoin),
     enabled: advancedOpen,
   });
+
+  const topology = useQuery({
+    queryKey: ["cpu-topology"],
+    queryFn: fetchCpuTopology,
+    staleTime: 60_000,
+  });
+  const autoAdjustThreads = prefs.auto_adjust_mine_threads !== false;
+  const suggestedThreads = optimizedMiningThreads(topology.data);
+  const maxThreads = maxMiningThreads(topology.data);
+  const logicalCpus = topology.data?.logicalCpus;
+
+  const handleAutoAdjustChange = (checked: boolean) => {
+    const updates: Partial<typeof prefs> = {
+      auto_adjust_mine_threads: checked,
+    };
+    if (!checked && topology.data) {
+      updates.auto_mine_threads = optimizedMiningThreads(topology.data);
+    }
+    void updatePrefs(updates);
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -223,29 +249,22 @@ export function Settings() {
             />
             <span>Auto-mine on open</span>
           </label>
+          <MiningThreadControls
+            autoAdjust={autoAdjustThreads}
+            manualThreads={prefs.auto_mine_threads ?? 2}
+            suggestedThreads={suggestedThreads}
+            maxThreads={maxThreads}
+            logicalCpus={logicalCpus}
+            onAutoAdjustChange={handleAutoAdjustChange}
+            onManualThreadsChange={(threads) =>
+              void updatePrefs({ auto_mine_threads: threads })
+            }
+          />
           {prefs.auto_mine_on_open && (
-            <div className="flex max-w-xs flex-col gap-1 text-sm">
-              <label className="text-fg-muted">Mining threads</label>
-              <input
-                type="number"
-                min={1}
-                max={64}
-                value={prefs.auto_mine_threads ?? 2}
-                onChange={(e) =>
-                  void updatePrefs({
-                    auto_mine_threads: Math.max(
-                      1,
-                      Math.min(64, Number(e.target.value) || 2),
-                    ),
-                  })
-                }
-                className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-sm tabular-nums outline-none focus:border-accent"
-              />
-              <p className="text-xs text-fg-subtle">
-                The miner retries every 10 seconds until the node is synced
-                and the wallet is unlocked on the Wallet or Mining page.
-              </p>
-            </div>
+            <p className="text-xs text-fg-subtle">
+              Auto-mine retries every 10 seconds until the node is synced and
+              the wallet is unlocked on the Wallet or Mining page.
+            </p>
           )}
           <label className="flex cursor-pointer items-center gap-3 text-sm">
             <input

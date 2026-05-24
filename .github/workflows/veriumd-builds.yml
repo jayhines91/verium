@@ -1,0 +1,96 @@
+name: veriumd multi-arch builds
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "src/crypto/**"
+      - "src/miner.cpp"
+      - "configure.ac"
+      - ".github/workflows/veriumd-builds.yml"
+  pull_request:
+    paths:
+      - "src/crypto/**"
+      - "src/miner.cpp"
+      - "configure.ac"
+      - ".github/workflows/veriumd-builds.yml"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: .
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64-baseline
+            os: ubuntu-latest
+            host: x86_64-linux-gnu
+            configure: --without-gui --enable-bench
+          - name: linux-x86_64-avx2-pgo
+            os: ubuntu-latest
+            host: x86_64-linux-gnu
+            configure: --without-gui --enable-bench --enable-avx2
+          - name: linux-x86_64-avx512-pgo
+            os: ubuntu-latest
+            host: x86_64-linux-gnu
+            configure: --without-gui --enable-bench --enable-avx512
+          - name: linux-aarch64
+            os: ubuntu-latest
+            host: aarch64-linux-gnu
+            configure: --without-gui --enable-bench --enable-arm-crypto
+          - name: macos-x86_64
+            os: macos-13
+            host: x86_64-apple-darwin
+            configure: --without-gui --enable-bench
+          - name: macos-aarch64-crypto
+            os: macos-14
+            host: aarch64-apple-darwin
+            configure: --without-gui --enable-bench --enable-arm-crypto
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libtool autotools-dev automake pkg-config bsdmainutils python3
+          if [ "${{ matrix.host }}" = "aarch64-linux-gnu" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          fi
+
+      - name: Build depends (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          make -C depends HOST=${{ matrix.host }} -j"$(nproc)"
+
+      - name: Autogen
+        run: ./autogen.sh
+
+      - name: Configure
+        run: |
+          CONFIG_SITE=$PWD/depends/${{ matrix.host }}/share/config.site \
+            ./configure --host=${{ matrix.host }} ${{ matrix.configure }}
+
+      - name: Build
+        run: make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu)" src/veriumd src/bench/bench_verium
+
+      - name: KAT gate (scrypt self-test via dispatch init)
+        run: |
+          ./src/veriumd -version
+          test -x ./src/bench/bench_verium
+          ./src/bench/bench_verium -list -filter=Scrypt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: veriumd-${{ matrix.name }}
+          path: |
+            src/veriumd
+            src/bench/bench_verium
