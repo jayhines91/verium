@@ -207,6 +207,10 @@ private:
     /** Open the OptionsDialog on the specified tab index */
     void openOptionsDialogWithTab(OptionsDialog::Tab tab);
 
+    /** Deferred bootstrap/update prompts after client model is ready. */
+    void deferredStartupChecks();
+    void checkForBootStrap();
+
 Q_SIGNALS:
     /** Signal raised when a URI was entered or dragged to the GUI */
     void receivedURI(const QString &uri);

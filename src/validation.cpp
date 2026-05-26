@@ -52,6 +52,7 @@
 #include <sstream>
 #include <string>
 #include <limits> // for std::numeric_limits<int>
+#include <atomic>
 
 
 #include <boost/algorithm/string/replace.hpp>
@@ -60,6 +61,19 @@
 #if defined(NDEBUG)
 # error "Verium cannot be compiled without assertions."
 #endif
+
+static std::atomic<bool> g_chain_sync_paused_for_bootstrap{false};
+
+bool IsChainSyncPausedForBootstrap()
+{
+    return g_chain_sync_paused_for_bootstrap.load();
+}
+
+void SetChainSyncPausedForBootstrap(bool pause)
+{
+    g_chain_sync_paused_for_bootstrap.store(pause);
+    LogPrintf("bootstrap: chain sync %s for bootstrap download\n", pause ? "paused" : "resumed");
+}
 
 #define MICRO 0.000001
 #define MILLI 0.001
@@ -2680,6 +2694,13 @@ bool CChainState::ActivateBestChain(CValidationState &state, const CChainParams&
     CBlockIndex *pindexNewTip = nullptr;
     int nStopAtHeight = gArgs.GetArg("-stopatheight", DEFAULT_STOPATHEIGHT);
     do {
+        while (IsChainSyncPausedForBootstrap()) {
+            if (ShutdownRequested()) {
+                return false;
+            }
+            UninterruptibleSleep(std::chrono::milliseconds{100});
+        }
+
         boost::this_thread::interruption_point();
 
         // Block until the validation queue drains. This should largely
@@ -3306,26 +3327,27 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block,
         }
     }
 
-    // Height gate for stricter timestamp header consensus checks.
-    const bool enforce_time = EnforceStricterTimeRulesAtHeight(params.GetConsensus(), nHeight);
+    // --- Legacy header timestamp checks (Verium 1.3.5.2, always enforced) ---
 
     // Not older than MedianTimePast
-    if (enforce_time && block.GetBlockTime() <= pindexPrev->GetMedianTimePast()) {
-        return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID,
-                             "time-too-old", "block's timestamp is too early");
-    }
-
-    // Stricter rule from version-2.0.1:
-    // do not allow a block timestamp that is older than previous block time by more than MAX_FUTURE_BLOCK_TIME.
-    if (enforce_time && block.GetBlockTime() + MAX_FUTURE_BLOCK_TIME < pindexPrev->GetBlockTime()) {
+    if (block.GetBlockTime() <= pindexPrev->GetMedianTimePast()) {
         return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID,
                              "time-too-old", "block's timestamp is too early");
     }
 
     // Not too far into the future
-    if (enforce_time && block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME) {
+    if (block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME) {
         return state.Invalid(ValidationInvalidReason::BLOCK_TIME_FUTURE, false, REJECT_INVALID,
                              "time-too-new", "block timestamp too far in the future");
+    }
+
+    // --- Stricter rules (2.x hardfork only, gated by nTimeRulesActivationHeight) ---
+    if (EnforceStricterTimeRulesAtHeight(params.GetConsensus(), nHeight)) {
+        // do not allow a block timestamp that is older than previous block time by more than MAX_FUTURE_BLOCK_TIME.
+        if (block.GetBlockTime() + MAX_FUTURE_BLOCK_TIME < pindexPrev->GetBlockTime()) {
+            return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID,
+                                 "time-too-old", "block's timestamp is too early");
+        }
     }
 
     return true;
@@ -3453,6 +3475,9 @@ bool BlockManager::AcceptBlockHeader(const CBlockHeader& block, CValidationState
 // Exposed wrapper for AcceptBlockHeader
 bool ProcessNewBlockHeaders(const std::vector<CBlockHeader>& headers, CValidationState& state, const CChainParams& chainparams, const CBlockIndex** ppindex, CBlockHeader *first_invalid)
 {
+    if (IsChainSyncPausedForBootstrap()) {
+        return true;
+    }
     if (first_invalid != nullptr) first_invalid->SetNull();
     {
         LOCK(cs_main);

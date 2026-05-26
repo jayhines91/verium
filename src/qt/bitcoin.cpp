@@ -9,6 +9,12 @@
 #include <qt/bitcoin.h>
 #include <qt/bitcoingui.h>
 
+#include <util/devhelperconfig.h>
+#if ENABLE_DEV_HELPER_WINDOW
+#include <qt/devtools.h>
+#endif
+#include <util/devedition.h>
+
 #include <chainparams.h>
 #include <fs.h>
 #include <qt/clientmodel.h>
@@ -33,6 +39,7 @@
 #include <noui.h>
 #include <ui_interface.h>
 #include <uint256.h>
+#include <util/activitylog.h>
 #include <util/system.h>
 #include <util/threadnames.h>
 
@@ -117,10 +124,23 @@ static void initTranslations(QTranslator &qtTranslatorBase, QTranslator &qtTrans
         QApplication::installTranslator(&translator);
 }
 
-/* qDebug() message handler --> debug.log */
+/* qDebug() message handler --> debug.log and activity.log */
 void DebugMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString &msg)
 {
-    Q_UNUSED(context);
+    ActivityLevel level = ActivityLevel::Info;
+    switch (type) {
+    case QtDebugMsg: level = ActivityLevel::Debug; break;
+    case QtWarningMsg: level = ActivityLevel::Warning; break;
+    case QtCriticalMsg:
+    case QtFatalMsg: level = ActivityLevel::Error; break;
+    case QtInfoMsg: level = ActivityLevel::Info; break;
+    default: break;
+    }
+
+    const char* file = context.file ? context.file : nullptr;
+    const char* function = context.function ? context.function : nullptr;
+    LogActivityEx(level, file, context.line, function, "GUI: %s", msg.toStdString().c_str());
+
     if (type == QtDebugMsg) {
         LogPrint(BCLog::QT, "GUI: %s\n", msg.toStdString());
     } else {
@@ -410,6 +430,9 @@ static void SetupUIArgs()
     gArgs.AddArg("-resetguisettings", "Reset all settings changed in the GUI", ArgsManager::ALLOW_ANY, OptionsCategory::GUI);
     gArgs.AddArg("-rootcertificates=<file>", "Set SSL root certificates for payment request (default: -system-)", ArgsManager::ALLOW_ANY, OptionsCategory::GUI);
     gArgs.AddArg("-splash", strprintf("Show splash screen on startup (default: %u)", DEFAULT_SPLASHSCREEN), ArgsManager::ALLOW_ANY, OptionsCategory::GUI);
+#if ENABLE_DEV_HELPER_WINDOW
+    gArgs.AddArg("-devedition", "Enable Developer Edition branding and tools (requires compile flag and master password for tools)", ArgsManager::ALLOW_ANY, OptionsCategory::GUI);
+#endif
     gArgs.AddArg("-uiplatform", strprintf("Select platform to customize UI for (one of windows, macosx, other; default: %s)", BitcoinGUI::DEFAULT_UIPLATFORM), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::GUI);
 }
 
@@ -584,6 +607,11 @@ int GuiMain(int argc, char* argv[])
     try
     {
         app.createWindow(networkStyle.data());
+#if ENABLE_DEV_HELPER_WINDOW
+        // Blocking prompt before init/bootstrap so trace captures the full startup path.
+        if (IsDeveloperEditionActive())
+            DevTools::OfferStartupTraceWindow(app.getWindow());
+#endif
         // Perform base initialization before spinning up initialization/shutdown thread
         // This is acceptable because this function only contains steps that are quick to execute,
         // so the GUI thread won't be held up.

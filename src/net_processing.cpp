@@ -1643,6 +1643,10 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
         return true;
     }
 
+    if (IsChainSyncPausedForBootstrap()) {
+        return true;
+    }
+
     bool received_new_header = false;
     const CBlockIndex *pindexLast = nullptr;
     {

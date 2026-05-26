@@ -14,6 +14,8 @@
 #include <interfaces/wallet.h>
 #include <qt/guiutil.h>
 #include <qt/networkstyle.h>
+#include <util/devhelperconfig.h>
+#include <util/devedition.h>
 #include <ui_interface.h>
 #include <util/system.h>
 #include <util/translation.h>
@@ -36,6 +38,10 @@ SplashScreen::SplashScreen(interfaces::Node& node, Qt::WindowFlags f, const Netw
     // define text to place
     QString titleText       = PACKAGE_NAME;
     QString versionText     = QString(PACKAGE_VERSION);
+#if ENABLE_DEV_HELPER_WINDOW
+    if (IsDeveloperEditionActive())
+        versionText = QString::fromStdString(GetDeveloperEditionVersionString());
+#endif
     QString titleAddText    = networkStyle->getTitleAddText();
     QString font            = QApplication::font().toString();
 
@@ -91,7 +97,13 @@ SplashScreen::SplashScreen(interfaces::Node& node, Qt::WindowFlags f, const Netw
     pixPaint.end();
 
     // Set window title
-    setWindowTitle(titleText + " " + titleAddText);
+#if ENABLE_DEV_HELPER_WINDOW
+    if (IsDeveloperEditionActive())
+        setWindowTitle(QString::fromStdString(GetDeveloperEditionTitle())
+                       + (titleAddText.isEmpty() ? QString() : QStringLiteral(" · ") + titleAddText));
+    else
+#endif
+        setWindowTitle(titleText + " " + titleAddText);
 
     // Resize window and move to center of desktop, disallow resizing
     QRect r(QPoint(), QSize(pixmap.size().width()/devicePixelRatio,pixmap.size().height()/devicePixelRatio));

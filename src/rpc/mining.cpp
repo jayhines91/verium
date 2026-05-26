@@ -520,6 +520,9 @@ static UniValue getblocktemplate(const JSONRPCRequest& request)
 
     // Update nTime
     UpdateTime(pblock, consensusParams, pindexPrev);
+    if (pindexPrev->nHeight + 1 >= consensusParams.nTimeRulesActivationHeight) {
+        SyncCoinbaseTimestamp(pblock);
+    }
     pblock->nNonce = 0;
 
     UniValue aCaps(UniValue::VARR); aCaps.push_back("proposal");

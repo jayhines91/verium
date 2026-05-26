@@ -19,6 +19,7 @@
 #include <script/script.h>
 #include <script/standard.h>
 #include <util/system.h>
+#include <util/activitylog.h>
 
 #ifdef WIN32
 #ifdef _WIN32_IE
@@ -380,6 +381,14 @@ void openDebugLogfile()
     /* Open debug.log with the associated application */
     if (fs::exists(pathDebug))
         QDesktopServices::openUrl(QUrl::fromLocalFile(boostPathToQString(pathDebug)));
+}
+
+void openActivityLogfile()
+{
+    const fs::path pathActivity = GetActivityLogPath();
+
+    if (fs::exists(pathActivity))
+        QDesktopServices::openUrl(QUrl::fromLocalFile(boostPathToQString(pathActivity)));
 }
 
 bool openBitcoinConf()

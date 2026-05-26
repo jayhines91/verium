@@ -13,6 +13,10 @@
 #include <QWidget>
 #include <QCompleter>
 #include <QThread>
+#include <QPlainTextEdit>
+#include <QPushButton>
+
+#include <boost/signals2/connection.hpp>
 
 class ClientModel;
 class PlatformStyle;
@@ -78,6 +82,7 @@ private Q_SLOTS:
     void on_tabWidget_currentChanged(int index);
     /** open the debug.log from the current datadir */
     void on_openDebugLogfileButton_clicked();
+    void on_openActivityLogButton_clicked();
     /** change the time range of the network traffic graph */
     void on_sldGraphRange_valueChanged(int value);
     /** update traffic statistics */
@@ -114,6 +119,7 @@ public Q_SLOTS:
     void browseHistory(int offset);
     /** Scroll console view to end */
     void scrollToEnd();
+    void appendActivityLine(const QString& line);
     /** Handle selection of peer in peers list */
     void peerSelected(const QItemSelection &selected, const QItemSelection &deselected);
     /** Handle selection caching before update */
@@ -164,6 +170,9 @@ private:
     QCompleter *autoCompleter = nullptr;
     QThread thread;
     WalletModel* m_last_wallet_model{nullptr};
+    QPlainTextEdit* m_activityWidget = nullptr;
+    QPushButton* m_openActivityLogButton = nullptr;
+    boost::signals2::scoped_connection m_activity_connection;
 
     /** Update UI with latest network info from model. */
     void updateNetworkState();

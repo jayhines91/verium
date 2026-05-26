@@ -9,6 +9,8 @@
 
 #include <init.h>
 
+#include <util/devedition.h>
+
 #include <addrman.h>
 #include <amount.h>
 #include <banman.h>
@@ -49,6 +51,8 @@
 #include <ui_interface.h>
 #include <util/moneystr.h>
 #include <util/system.h>
+#include <util/activitylog.h>
+#include <util/devhelperconfig.h>
 #include <util/threadnames.h>
 #include <util/translation.h>
 #include <util/validation.h>
@@ -267,10 +271,15 @@ void Shutdown(InitInterfaces& interfaces)
 #endif
 
     if(fBootstrap) {
+        /* Legacy in-memory flag from older builds; current flow applies on next startup. */
         try {
+            LogActivity("Bootstrap apply: legacy shutdown-path starting");
             applyBootstrap();
+            clearBootstrapApplyPending();
+            fBootstrap = false;
         } catch(std::exception &e) {
-            LogPrintf("%s: Unable to change databse: %s\n",__func__,e.what());
+            LogActivity("Bootstrap apply: legacy shutdown-path failed: %s", e.what());
+            LogPrintf("%s: Unable to change database: %s\n",__func__,e.what());
         }
     }
 
@@ -1199,6 +1208,35 @@ bool AppInitMain(InitInterfaces& interfaces)
     if (!LogInstance().StartLogging()) {
             return InitError(strprintf("Could not open debug log file %s",
                 LogInstance().m_file_path.string()));
+    }
+
+    InitActivityLog();
+    InitDevHelperLogMirror();
+    uiInterface.InitMessage_connect([](const std::string& message) {
+        LogActivityEx(ActivityLevel::Info, nullptr, 0, nullptr, "Init: %s", message.c_str());
+    });
+    uiInterface.ShowProgress_connect([](const std::string& title, int nProgress, bool resume_possible) {
+        (void)resume_possible;
+        LogActivityEx(ActivityLevel::Progress, nullptr, 0, nullptr, "Progress: %s (%d%%)", title.c_str(), nProgress);
+    });
+
+    LogActivity("Startup: AppInitMain entered");
+#if ENABLE_DEV_HELPER_WINDOW
+    if (IsDeveloperEditionActive()) {
+        LogActivityEx(ActivityLevel::Info, __FILE__, __LINE__, __func__,
+            "Developer Edition active (%s)", GetDeveloperEditionVersionString().c_str());
+    }
+#endif
+
+    if (bootstrapApplyPending()) {
+        uiInterface.InitMessage(_("Applying bootstrap chain data...").translated);
+        try {
+            applyBootstrap();
+            clearBootstrapApplyPending();
+        } catch (const std::exception& e) {
+            LogActivity("Bootstrap apply: startup failed: %s", e.what());
+            return InitError(strprintf(_("Failed to apply bootstrap: %s").translated, e.what()));
+        }
     }
 
     if (!LogInstance().m_log_timestamps)

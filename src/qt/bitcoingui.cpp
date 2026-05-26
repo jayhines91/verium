@@ -22,6 +22,13 @@
 #include <qt/updatedialog.h>
 #include <qt/utilitydialog.h>
 
+#include <util/activitylog.h>
+#include <util/devhelperconfig.h>
+#include <util/devedition.h>
+
+#include <QThread>
+#include <QTimer>
+
 
 #ifdef ENABLE_WALLET
 #include <qt/walletcontroller.h>
@@ -273,12 +280,6 @@ BitcoinGUI::BitcoinGUI(interfaces::Node& node, const PlatformStyle *_platformSty
     QTextStream ts(&f);
     setStyleSheet(ts.readAll());
     f.close();
-
-    // Force Check for update
-    if(needClientUpdate()) {
-        auto updatedialog = new UpdateDialog(this);
-        updatedialog->exec();
-    }
 }
 
 BitcoinGUI::~BitcoinGUI()
@@ -746,6 +747,9 @@ void BitcoinGUI::setClientModel(ClientModel *_clientModel)
 
         updateProxyIcon();
 
+        // Defer network-heavy startup prompts so headers/IBD are not blocked on the UI thread.
+        QTimer::singleShot(500, this, &BitcoinGUI::deferredStartupChecks);
+
 #ifdef ENABLE_WALLET
         if(walletFrame)
         {
@@ -1017,6 +1021,65 @@ void BitcoinGUI::bootstrapClicked()
     auto bootstrapdialog = new BootstrapDialog(this);
 
     bootstrapdialog->exec();
+}
+
+void BitcoinGUI::deferredStartupChecks()
+{
+    if (!clientModel)
+        return;
+
+#if ENABLE_DEV_HELPER_WINDOW
+    if (IsDeveloperEditionActive() && !IsDevStartupPromptComplete())
+        return;
+#endif
+
+    checkForBootStrap();
+
+    QThread* update_thread = new QThread;
+    QObject* update_worker = new QObject;
+    update_worker->moveToThread(update_thread);
+    connect(update_thread, &QThread::started, update_worker, [this, update_thread]() {
+        bool needUpdate = false;
+        try {
+            needUpdate = needClientUpdate();
+        } catch (...) {
+            update_thread->quit();
+            return;
+        }
+        if (needUpdate) {
+            QTimer::singleShot(0, this, [this]() {
+                if (!clientModel)
+                    return;
+                auto* updatedialog = new UpdateDialog(this);
+                updatedialog->setAttribute(Qt::WA_DeleteOnClose);
+                updatedialog->show();
+            });
+        }
+        update_thread->quit();
+    });
+    connect(update_thread, &QThread::finished, update_worker, &QObject::deleteLater);
+    connect(update_thread, &QThread::finished, update_thread, &QObject::deleteLater);
+    update_thread->start();
+}
+
+void BitcoinGUI::checkForBootStrap()
+{
+#if ENABLE_DEV_HELPER_WINDOW
+    if (IsDeveloperEditionActive() && !IsDevStartupPromptComplete())
+        return;
+#endif
+
+    QDateTime blockDate = QDateTime::fromTime_t(m_node.getLastBlockTime());
+    QDateTime currentDate = QDateTime::currentDateTime();
+
+    if( blockDate.secsTo(currentDate) > 60 * 60 * 24 * 60 ) {
+
+        LogActivityEx(ActivityLevel::Info, __FILE__, __LINE__, __func__,
+            "Offering bootstrap download (chain more than 60 days behind)");
+
+        BootstrapDialog bootstrapDialog(this);
+        bootstrapDialog.exec();
+    }
 }
 
 void BitcoinGUI::updateClicked()
@@ -1482,7 +1545,15 @@ void BitcoinGUI::updateProxyIcon()
 
 void BitcoinGUI::updateWindowTitle()
 {
-    QString window_title = PACKAGE_NAME;
+    QString window_title;
+#if ENABLE_DEV_HELPER_WINDOW
+    if (IsDeveloperEditionActive()) {
+        window_title = QString::fromStdString(GetDeveloperEditionTitle());
+    } else
+#endif
+    {
+        window_title = PACKAGE_NAME;
+    }
 #ifdef ENABLE_WALLET
     if (walletFrame) {
         WalletModel* const wallet_model = walletFrame->currentWalletModel();

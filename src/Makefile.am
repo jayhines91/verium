@@ -513,6 +513,8 @@ libbitcoin_util_a_SOURCES = \
   util/moneystr.cpp \
   util/rbf.cpp \
   util/threadnames.cpp \
+  util/activitylog.cpp \
+  util/devedition.cpp \
   util/strencodings.cpp \
   util/string.cpp \
   util/time.cpp \

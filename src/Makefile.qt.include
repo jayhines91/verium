@@ -46,6 +46,7 @@ QT_MOC_CPP = \
   qt/moc_bitcoingui.cpp \
   qt/moc_bitcoinunits.cpp \
   qt/moc_bootstrapdialog.cpp \
+  qt/moc_devhelperwindow.cpp \
   qt/moc_clientmodel.cpp \
   qt/moc_coincontroldialog.cpp \
   qt/moc_coincontroltreewidget.cpp \
@@ -126,6 +127,8 @@ BITCOIN_QT_H = \
   qt/bitcoingui.h \
   qt/bitcoinunits.h \
   qt/bootstrapdialog.h \
+  qt/devhelperwindow.h \
+  qt/devtools.h \
   qt/clientmodel.h \
   qt/coincontroldialog.h \
   qt/coincontroltreewidget.h \
@@ -246,6 +249,8 @@ BITCOIN_QT_BASE_CPP = \
   qt/bitcoingui.cpp \
   qt/bitcoinunits.cpp \
   qt/bootstrapdialog.cpp \
+  qt/devhelperwindow.cpp \
+  qt/devtools.cpp \
   qt/clientmodel.cpp \
   qt/csvmodelwriter.cpp \
   qt/guiutil.cpp \
