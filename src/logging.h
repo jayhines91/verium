@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <list>
 #include <mutex>
 #include <string>
@@ -31,6 +32,10 @@ struct CLogCategoryActive
 };
 
 namespace BCLog {
+
+/** True while a print callback is running (avoids LogPrint re-entry deadlocks). */
+extern thread_local bool g_logger_in_print_callback;
+
     enum LogFlags : uint32_t {
         NONE        = 0,
         NET         = (1 <<  0),
@@ -77,6 +82,9 @@ namespace BCLog {
 
         std::string LogTimestampStr(const std::string& str);
 
+        /** Slots that connect to the print signal */
+        std::list<std::function<void(const std::string&)>> m_print_callbacks /* GUARDED_BY(m_cs) */ {};
+
     public:
         bool m_print_to_console = false;
         bool m_print_to_file = false;
@@ -95,7 +103,22 @@ namespace BCLog {
         bool Enabled() const
         {
             std::lock_guard<std::mutex> scoped_lock(m_cs);
-            return m_buffering || m_print_to_console || m_print_to_file;
+            return m_buffering || m_print_to_console || m_print_to_file || !m_print_callbacks.empty();
+        }
+
+        /** Connect a slot to the print signal and return the connection */
+        std::list<std::function<void(const std::string&)>>::iterator PushBackCallback(std::function<void(const std::string&)> fun)
+        {
+            std::lock_guard<std::mutex> scoped_lock(m_cs);
+            m_print_callbacks.push_back(std::move(fun));
+            return --m_print_callbacks.end();
+        }
+
+        /** Delete a connection */
+        void DeleteCallback(std::list<std::function<void(const std::string&)>>::iterator it)
+        {
+            std::lock_guard<std::mutex> scoped_lock(m_cs);
+            m_print_callbacks.erase(it);
         }
 
         /** Start logging (and flush all buffered messages) */

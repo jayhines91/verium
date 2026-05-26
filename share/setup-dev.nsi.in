@@ -11,10 +11,10 @@ SetCompressor /SOLID lzma
 !define URL https://vericonomy.com/
 
 !define MUI_ICON "@ROOT@/share/pixmaps/verium.ico"
-!define MUI_WELCOMEFINISHPAGE_BITMAP "@ROOT@/share/pixmaps/nsis-wizard-vrc.bmp"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "@ROOT@/share/pixmaps/nsis-wizard.bmp"
 !define MUI_HEADERIMAGE
 !define MUI_HEADERIMAGE_RIGHT
-!define MUI_HEADERIMAGE_BITMAP "@ROOT@/share/pixmaps/nsis-header-vrc.bmp"
+!define MUI_HEADERIMAGE_BITMAP "@ROOT@/share/pixmaps/nsis-header.bmp"
 !define MUI_FINISHPAGE_NOAUTOCLOSE
 !define MUI_STARTMENUPAGE_REGISTRY_ROOT HKCU
 !define MUI_STARTMENUPAGE_REGISTRY_KEY "SOFTWARE\VeriumDevEdition"
@@ -23,7 +23,7 @@ SetCompressor /SOLID lzma
 !define MUI_FINISHPAGE_RUN "$WINDIR\explorer.exe"
 !define MUI_FINISHPAGE_RUN_PARAMETERS $INSTDIR\verium-qt.exe
 !define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
-!define MUI_UNWELCOMEFINISHPAGE_BITMAP "@ROOT@/share/pixmaps/nsis-wizard-vrc.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "@ROOT@/share/pixmaps/nsis-wizard.bmp"
 !define MUI_UNFINISHPAGE_NOAUTOCLOSE
 
 !include Sections.nsh

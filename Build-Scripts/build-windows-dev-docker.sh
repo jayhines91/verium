@@ -19,8 +19,11 @@ ROOT="$(pwd)"
 source Build-Scripts/build-common.sh
 require_dev_helper_enabled "$ROOT"
 
+mapfile -t PRESEED_MOUNT < <(docker_shared_preseed_mount_args "$ROOT")
+
 docker run --rm \
   -v "$ROOT:/build" \
+  "${PRESEED_MOUNT[@]}" \
   -w /build \
   ubuntu:22.04 \
   bash -c "

@@ -46,8 +46,16 @@ ensure_depends() {
     local extra_make_args="${3:-}"
     cd "$root"
 
-    # Use monorepo shared macOS SDKs when available (see shared/depends-preseed/).
-    local shared_preseed="${SHARED_DEPENDS_PRESEED:-$(cd "${root}/../shared/depends-preseed" 2>/dev/null && pwd || true)}"
+    local cache_root="${SHARED_DEPENDS_PRESEED:-$(cd "${root}/../shared/depends-preseed" 2>/dev/null && pwd || true)}"
+    if [ -f "${cache_root}/depends-cache.sh" ]; then
+        # shellcheck source=/dev/null
+        source "${cache_root}/depends-cache.sh"
+        ensure_depends_with_shared_preseed "$host_triplet" "$root" "$extra_make_args" 4
+        return
+    fi
+
+    # Fallback when shared preseed bundle is unavailable.
+    local shared_preseed="$cache_root"
     if [ -n "$shared_preseed" ] && [ -d "${shared_preseed}/SDKs" ] && [[ "$extra_make_args" != *SDK_PATH=* ]]; then
         extra_make_args="SDK_PATH=${shared_preseed}/SDKs ${extra_make_args}"
     fi
@@ -119,6 +127,15 @@ prepare_output_dirs() {
     fi
 }
 
+# Docker helpers: mount monorepo shared depends preseed (SDKs + built/<family>/ caches).
+docker_shared_preseed_mount_args() {
+    local root="${1:-$BUILD_COMMON_ROOT}"
+    local shared="${SHARED_DEPENDS_PRESEED:-$(cd "${root}/../shared/depends-preseed" 2>/dev/null && pwd || true)}"
+    if [ -d "$shared" ]; then
+        printf '%s\n' "-v" "${shared}:/shared/depends-preseed" "-e" "SHARED_DEPENDS_PRESEED=/shared/depends-preseed"
+    fi
+}
+
 # --- Windows Developer Edition (debug machine) --------------------------------
 
 WINDOWS_DEV_HOST_TRIPLET="${WINDOWS_DEV_HOST_TRIPLET:-x86_64-w64-mingw32}"
@@ -159,7 +176,7 @@ patch_curl_mk_for_windows_cross() {
         cat >> "$f" <<'EOF'
 
 # CI: cross-compile opts for Windows
-$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp
+$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp --disable-smb
 $(package)_config_opts_mingw32 += --with-winssl
 $(package)_config_opts_mingw64 += --with-winssl
 $(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes
