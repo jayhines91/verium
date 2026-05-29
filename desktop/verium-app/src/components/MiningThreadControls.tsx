@@ -1,4 +1,5 @@
 import {
+  ADAPTIVE_MINING_POLL_MS,
   clampMiningThreads,
   MINING_THREADS_MIN,
 } from "@/lib/mining-opt";
@@ -6,9 +7,13 @@ import {
 interface MiningThreadControlsProps {
   autoAdjust: boolean;
   manualThreads: number;
+  /** Device-tuned max threads when auto-adjust is on. */
   suggestedThreads?: number;
   maxThreads: number;
   logicalCpus?: number;
+  /** Active miner thread count (when mining with auto-adjust). */
+  activeThreads?: number;
+  isMining?: boolean;
   disabled?: boolean;
   compact?: boolean;
   onAutoAdjustChange: (autoAdjust: boolean) => void;
@@ -21,13 +26,18 @@ export function MiningThreadControls({
   suggestedThreads,
   maxThreads,
   logicalCpus,
+  activeThreads,
+  isMining = false,
   disabled = false,
   compact = false,
   onAutoAdjustChange,
   onManualThreadsChange,
 }: MiningThreadControlsProps) {
+  const deviceCeiling = suggestedThreads ?? manualThreads;
   const effectiveThreads = autoAdjust
-    ? suggestedThreads ?? manualThreads
+    ? isMining && activeThreads != null && activeThreads > 0
+      ? activeThreads
+      : deviceCeiling
     : clampMiningThreads(manualThreads, maxThreads);
 
   const cpuHint =
@@ -71,7 +81,25 @@ export function MiningThreadControls({
           ) : (
             " based on CPU topology"
           )}
-          {suggestedThreads == null ? " (detecting…)" : "."}
+          {suggestedThreads == null ? (
+            " (detecting…)"
+          ) : (
+            <>
+              {" "}
+              (up to{" "}
+              <span className="tabular-nums">{deviceCeiling}</span> for this
+              device).
+            </>
+          )}
+          {isMining ? (
+            <>
+              {" "}
+              Adjusts every {ADAPTIVE_MINING_POLL_MS / 1000}s from CPU load
+              {suggestedThreads != null ? "." : ""}
+            </>
+          ) : suggestedThreads != null ? (
+            "."
+          ) : null}
         </p>
       ) : (
         <div className={`flex flex-col gap-1 ${compact ? "text-xs" : "text-sm"}`}>
@@ -100,7 +128,7 @@ export function MiningThreadControls({
         </div>
       )}
 
-      {disabled && (
+      {disabled && !autoAdjust && (
         <p className="text-xs text-fg-subtle">
           Stop mining to change thread settings.
         </p>

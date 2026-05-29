@@ -65,10 +65,7 @@ export function WalletCreateForm({
   });
 
   const disabled =
-    !matches ||
-    score.score < 2 ||
-    !acknowledged ||
-    create.isPending;
+    !matches || score.score < 2 || !acknowledged || create.isPending;
 
   return (
     <form
@@ -86,9 +83,10 @@ export function WalletCreateForm({
           <h2 className="text-lg font-semibold">Create your wallet</h2>
           <p className="mt-1 text-sm text-fg-muted">
             Choose a passphrase. The wallet file (
-            <span className="font-mono text-xs">wallet.dat</span>) is encrypted
-            with this passphrase locally. <strong>If you lose it, your VRM
-            is gone</strong> — there is no recovery service.
+            <span className="text-xs">wallet.dat</span>) is encrypted with this
+            passphrase locally.{" "}
+            <strong>If you lose it, your VRM is gone</strong> — there is no
+            recovery service.
           </p>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { Outlet } from "react-router-dom";
-import { DaemonConnectionBanner } from "./DaemonConnectionBanner";
+import { NodeRecoveryBanner } from "./NodeRecoveryBanner";
+import { NetworkModeBanner } from "./NetworkModeBanner";
 import { SyncStallBanner } from "./SyncStallBanner";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
@@ -9,10 +10,13 @@ export function AppShell() {
     <div className="flex h-screen w-screen overflow-hidden bg-bg text-fg">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* Network mode banner: persistent at the very top when on
+            binarytest. See vericoin/doc/dace/binarytest-network.md. */}
+        <NetworkModeBanner />
         <TopBar />
         <main className="flex-1 overflow-y-auto px-8 py-6">
           <div className="mx-auto flex max-w-7xl flex-col gap-4">
-            <DaemonConnectionBanner />
+            <NodeRecoveryBanner />
             <SyncStallBanner />
             <Outlet />
           </div>

@@ -6,6 +6,7 @@ import {
   Coins,
   Cpu,
   Gauge,
+  Link2,
   Lock,
   Network as NetworkIcon,
   ScrollText,
@@ -15,8 +16,10 @@ import {
   Wallet as WalletIcon,
 } from "lucide-react";
 import { CoinSwitcher } from "@/components/CoinSwitcher";
+import { QuitWalletButton } from "@/components/QuitWalletButton";
 import { useActiveCoin, useEnabledCoins } from "@/lib/coin/context";
 import { getCoinProfile } from "@/lib/coin/profile";
+import { useIsTestNetwork } from "@/lib/network-mode";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -24,6 +27,8 @@ interface NavItem {
   label: string;
   icon: typeof Gauge;
   coins?: ("verium" | "vericoin")[];
+  /** Shown only while the wallet is in binarytest (DACE) mode. */
+  testNetworkOnly?: boolean;
 }
 
 const items: NavItem[] = [
@@ -32,6 +37,7 @@ const items: NavItem[] = [
   { to: "/mining", label: "Mining", icon: Cpu, coins: ["verium"] },
   { to: "/staking", label: "Staking", icon: Coins, coins: ["vericoin"] },
   { to: "/network", label: "Network", icon: NetworkIcon },
+  { to: "/binary-chain", label: "Binary Chain", icon: Link2, testNetworkOnly: true },
   { to: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { to: "/addresses", label: "Address book", icon: BookUser },
   { to: "/security", label: "Security", icon: Lock },
@@ -50,8 +56,10 @@ export function Sidebar() {
   const activeCoin = useActiveCoin();
   const enabledCoins = useEnabledCoins();
   const profile = getCoinProfile(activeCoin);
+  const isTestNetwork = useIsTestNetwork();
 
   const visibleItems = items.filter((item) => {
+    if (item.testNetworkOnly && !isTestNetwork) return false;
     if (!item.coins) return true;
     return item.coins.some(
       (coin) => enabledCoins.includes(coin) && coin === activeCoin,
@@ -85,11 +93,26 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t border-border px-5 py-3 text-xs text-fg-subtle">
+        <QuitWalletButton />
         Vericonomy Wallet v{APP_VERSION}
-        <div className="mt-0.5 text-[10px] uppercase tracking-wider">
-          {profile.symbol} · {profile.displayName}
+        <div className="mt-0.5 text-[10px] uppercase tracking-wider flex items-center gap-2">
+          <span>{profile.symbol} · {profile.displayName}</span>
+          <NetworkBadge />
         </div>
       </div>
     </aside>
+  );
+}
+
+/** Small inline badge that appears in the sidebar footer when the wallet
+ *  is pointed at the binarytest (DACE) network. Mirrors the persistent
+ *  banner at the top of AppShell. */
+function NetworkBadge() {
+  const isTest = useIsTestNetwork();
+  if (!isTest) return null;
+  return (
+    <span className="rounded bg-amber-500/20 border border-amber-500/40 text-amber-200 px-1.5 py-[1px] text-[9px] font-semibold normal-case">
+      binarytest
+    </span>
   );
 }

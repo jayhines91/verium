@@ -55,14 +55,18 @@ export function AddressBook() {
       }),
     onSuccess: () => {
       setDraft(null);
-      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "address-book") });
+      queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "address-book"),
+      });
     },
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => deleteAddressBookEntry(coin, id),
     onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "address-book") }),
+      queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "address-book"),
+      }),
   });
 
   const filtered = useMemo(() => {
@@ -194,7 +198,7 @@ function DraftRow({
           value={draft.address}
           onChange={(e) => onChange({ ...draft, address: e.target.value })}
           spellCheck={false}
-          className="h-9 rounded-md border border-border bg-bg-subtle px-3 font-mono text-xs outline-none focus:border-accent"
+          className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-xs outline-none focus:border-accent"
           placeholder="VTDns…"
         />
       </div>
@@ -215,9 +219,7 @@ function DraftRow({
         <Button
           size="sm"
           onClick={onSave}
-          disabled={
-            !draft.address.trim() || !draft.label.trim() || saving
-          }
+          disabled={!draft.address.trim() || !draft.label.trim() || saving}
         >
           <Save className="h-3.5 w-3.5" /> {saving ? "Saving…" : "Save"}
         </Button>
@@ -244,7 +246,7 @@ function EntryRow({
           </span>
           <Badge tone="neutral">{entry.category}</Badge>
         </div>
-        <div className="mt-0.5 break-all font-mono text-[11px] text-fg-muted">
+        <div className="mt-0.5 break-all text-[11px] text-fg-muted">
           {entry.address}
         </div>
         {entry.notes && (

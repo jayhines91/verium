@@ -1,14 +1,16 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 use tokio::sync::RwLock;
 
 use crate::coin_profile::CoinId;
-use crate::config::{ensure_first_run_config, load_or_default_config, refresh_config_paths, DaemonConfig};
+use crate::config::{ensure_first_run_config, load_config_for_network, refresh_config_paths, DaemonConfig};
 use crate::daemon::DaemonManager;
 use crate::error::{AppError, AppResult};
+use crate::prefs;
 use crate::rpc::RpcClient;
 
 #[derive(Clone)]
@@ -19,13 +21,25 @@ pub struct AppState {
 struct Inner {
     coins: HashMap<CoinId, CoinRuntime>,
     bootstrap_cancel: Mutex<HashMap<CoinId, Arc<AtomicBool>>>,
+    /// Suppress competing daemon starts while veriumd loads imported chainstate.
+    bootstrap_loading_until: Mutex<HashMap<CoinId, Instant>>,
+    auto_reindex_attempted: Mutex<HashSet<CoinId>>,
+    /// When the wallet last spawned a daemon for each coin (suppresses duplicate auto-starts).
+    last_spawn_at: Mutex<HashMap<CoinId, Instant>>,
+    /// Throttle automatic chain repair retries per coin.
+    last_repair_at: Mutex<HashMap<CoinId, Instant>>,
+    daemon_phase: Mutex<HashMap<CoinId, String>>,
 }
+
+pub use crate::node::constants::{BOOTSTRAP_LOADING_GRACE, REPAIR_BACKOFF, SPAWN_COOLDOWN};
 
 pub struct CoinRuntime {
     pub coin: CoinId,
     pub config: RwLock<DaemonConfig>,
     pub earn: RwLock<EarnLocalState>,
     pub daemon: DaemonManager,
+    /// Serializes ensure/start/restart for this coin.
+    pub ensure_lock: tokio::sync::Mutex<()>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -40,9 +54,10 @@ pub type MinerLocalState = EarnLocalState;
 
 impl AppState {
     pub fn initialize(app: AppHandle) -> AppResult<Self> {
+        let prefs = tauri::async_runtime::block_on(prefs::load()).unwrap_or_default();
         let mut coins = HashMap::new();
         for coin in CoinId::all() {
-            let mut config = load_or_default_config(*coin)?;
+            let mut config = load_config_for_network(*coin, prefs.network_mode)?;
             if let Err(e) = ensure_first_run_config(*coin, &mut config) {
                 tracing::warn!("first-run config bootstrap failed for {}: {e}", coin.as_str());
             }
@@ -53,6 +68,7 @@ impl AppState {
                     config: RwLock::new(config),
                     earn: RwLock::new(EarnLocalState::default()),
                     daemon: DaemonManager::new(app.clone(), *coin),
+                    ensure_lock: tokio::sync::Mutex::new(()),
                 },
             );
         }
@@ -60,6 +76,11 @@ impl AppState {
             inner: Arc::new(Inner {
                 coins,
                 bootstrap_cancel: Mutex::new(HashMap::new()),
+                bootstrap_loading_until: Mutex::new(HashMap::new()),
+                auto_reindex_attempted: Mutex::new(HashSet::new()),
+                last_spawn_at: Mutex::new(HashMap::new()),
+                last_repair_at: Mutex::new(HashMap::new()),
+                daemon_phase: Mutex::new(HashMap::new()),
             }),
         })
     }
@@ -89,6 +110,115 @@ impl AppState {
         if let Ok(mut sessions) = self.inner.bootstrap_cancel.lock() {
             sessions.remove(&coin);
         }
+    }
+
+    /// True while any bootstrap import is in progress (blocks auto daemon start).
+    pub fn bootstrap_session_active(&self) -> bool {
+        self.inner
+            .bootstrap_cancel
+            .lock()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// After bootstrap restart, block ensure/start from spawning a competing daemon.
+    pub fn mark_bootstrap_loading(&self, coin: CoinId, grace: Duration) {
+        if let Ok(mut map) = self.inner.bootstrap_loading_until.lock() {
+            map.insert(coin, Instant::now() + grace);
+        }
+    }
+
+    pub fn clear_bootstrap_loading(&self, coin: CoinId) {
+        if let Ok(mut map) = self.inner.bootstrap_loading_until.lock() {
+            map.remove(&coin);
+        }
+    }
+
+    pub fn bootstrap_loading_active(&self, coin: CoinId) -> bool {
+        let Ok(mut map) = self.inner.bootstrap_loading_until.lock() else {
+            return false;
+        };
+        match map.get(&coin) {
+            Some(until) if Instant::now() < *until => true,
+            Some(_) => {
+                map.remove(&coin);
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Record a one-shot automatic `-reindex` attempt per coin per wallet session.
+    pub fn try_mark_auto_reindex(&self, coin: CoinId) -> bool {
+        self.inner
+            .auto_reindex_attempted
+            .lock()
+            .map(|mut set| set.insert(coin))
+            .unwrap_or(false)
+    }
+
+    pub fn clear_auto_reindex_attempt(&self, coin: CoinId) {
+        if let Ok(mut set) = self.inner.auto_reindex_attempted.lock() {
+            set.remove(&coin);
+        }
+    }
+
+    pub fn auto_reindex_was_attempted(&self, coin: CoinId) -> bool {
+        self.inner
+            .auto_reindex_attempted
+            .lock()
+            .map(|set| set.contains(&coin))
+            .unwrap_or(false)
+    }
+
+    pub fn mark_spawn(&self, coin: CoinId) {
+        if let Ok(mut map) = self.inner.last_spawn_at.lock() {
+            map.insert(coin, Instant::now());
+        }
+    }
+
+    pub fn clear_spawn(&self, coin: CoinId) {
+        if let Ok(mut map) = self.inner.last_spawn_at.lock() {
+            map.remove(&coin);
+        }
+    }
+
+    pub fn spawn_recent(&self, coin: CoinId) -> bool {
+        let Ok(map) = self.inner.last_spawn_at.lock() else {
+            return false;
+        };
+        map.get(&coin)
+            .map(|t| t.elapsed() < SPAWN_COOLDOWN)
+            .unwrap_or(false)
+    }
+
+    pub fn mark_repair_attempt(&self, coin: CoinId) {
+        if let Ok(mut map) = self.inner.last_repair_at.lock() {
+            map.insert(coin, Instant::now());
+        }
+    }
+
+    pub fn repair_backoff_active(&self, coin: CoinId) -> bool {
+        let Ok(map) = self.inner.last_repair_at.lock() else {
+            return false;
+        };
+        map.get(&coin)
+            .map(|t| t.elapsed() < REPAIR_BACKOFF)
+            .unwrap_or(false)
+    }
+
+    pub fn set_daemon_phase(&self, coin: CoinId, phase: &str) {
+        if let Ok(mut map) = self.inner.daemon_phase.lock() {
+            map.insert(coin, phase.to_string());
+        }
+    }
+
+    pub fn daemon_phase_label(&self, coin: CoinId) -> Option<String> {
+        self.inner
+            .daemon_phase
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&coin).cloned())
     }
 
     pub fn runtime(&self, coin: CoinId) -> AppResult<&CoinRuntime> {
@@ -134,6 +264,6 @@ impl AppState {
 
     pub async fn rpc_client(&self, coin: CoinId) -> AppResult<RpcClient> {
         let cfg = self.config_fresh(coin).await?;
-        RpcClient::from_config(&cfg)
+        RpcClient::from_config_for_coin(coin, &cfg)
     }
 }

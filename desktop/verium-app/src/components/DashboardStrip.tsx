@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeftRight, Coins, Cpu, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
-import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
+import { fetchExplorerStats } from "@/lib/explorer-api";
+import { useExplorerQueriesEnabled } from "@/lib/network-mode";
+import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import {
   rpcGetMinerState,
   rpcGetMiningInfo,
@@ -14,7 +16,10 @@ import {
   type TransactionItem,
 } from "@/lib/rpc/client";
 import { formatCoinAmount } from "@/lib/units";
-import { networkCoinsStakingPercent, mergeStakingNetworkKpis } from "@/lib/staking-stats";
+import {
+  networkCoinsStakingPercent,
+  mergeStakingNetworkKpis,
+} from "@/lib/staking-stats";
 import { formatNumber } from "@/lib/utils";
 
 function isEarnActivity(tx: TransactionItem, coin: CoinId): boolean {
@@ -54,6 +59,9 @@ function activityLabel(tx: TransactionItem): string {
 
 export function DashboardStrip({ coin }: { coin: CoinId }) {
   const profile = getCoinProfile(coin);
+  const { data: status } = useDaemonStatus(coin);
+  const connected = status?.connected === true;
+  const showRpcData = connected;
 
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
@@ -89,15 +97,11 @@ export function DashboardStrip({ coin }: { coin: CoinId }) {
     refetchInterval: 10_000,
     enabled: coin === "vericoin",
   });
-  const explorerEnabled = useQuery({
-    queryKey: ["explorer-api-enabled"],
-    queryFn: isExplorerApiEnabled,
-    staleTime: Infinity,
-  });
+  const explorerEnabled = useExplorerQueriesEnabled();
   const stats = useQuery({
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
-    enabled: explorerEnabled.data === true,
+    enabled: explorerEnabled,
     refetchInterval: 60_000,
   });
 
@@ -127,13 +131,15 @@ export function DashboardStrip({ coin }: { coin: CoinId }) {
           <div>
             <div className="text-xs text-fg-subtle">Balance</div>
             <div className="font-semibold tabular-nums">
-              {wallet.data ? formatCoinAmount(wallet.data.balance, coin, 4) : "—"}
+              {showRpcData && wallet.data
+                ? formatCoinAmount(wallet.data.balance, coin, 4)
+                : "—"}
             </div>
           </div>
           <div>
             <div className="text-xs text-fg-subtle">Immature</div>
             <div className="font-semibold tabular-nums">
-              {wallet.data
+              {showRpcData && wallet.data
                 ? formatCoinAmount(wallet.data.immature_balance, coin, 4)
                 : "—"}
             </div>
@@ -244,7 +250,8 @@ export function DashboardStrip({ coin }: { coin: CoinId }) {
       <Card className="lg:col-span-2">
         <CardHeader className="flex-row items-center justify-between pb-2 pt-4">
           <CardTitle className="flex items-center gap-2 text-base normal-case">
-            <ArrowLeftRight className="h-4 w-4" /> Recent {profile.symbol} activity
+            <ArrowLeftRight className="h-4 w-4" /> Recent {profile.symbol}{" "}
+            activity
           </CardTitle>
           <Link to="/transactions" className="text-xs text-accent underline">
             All transactions →
@@ -264,7 +271,7 @@ export function DashboardStrip({ coin }: { coin: CoinId }) {
                 >
                   <div className="min-w-0">
                     <div className="font-medium">{activityLabel(tx)}</div>
-                    <div className="truncate font-mono text-xs text-fg-subtle">
+                    <div className="truncate text-xs text-fg-subtle">
                       {tx.txid.slice(0, 16)}…
                     </div>
                   </div>

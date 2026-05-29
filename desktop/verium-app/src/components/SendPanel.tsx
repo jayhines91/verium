@@ -22,6 +22,7 @@ import {
 import { FeeRateDialog } from "@/components/FeeRateDialog";
 import { QrScanModal } from "@/components/QrScanModal";
 import { TwoFactorPrompt } from "@/components/TwoFactorPrompt";
+import { ExplorerLink } from "@/components/ExplorerLink";
 import {
   rpcGetWalletInfo,
   rpcSendToAddress,
@@ -29,7 +30,7 @@ import {
   rpcWalletSetTxFee,
 } from "@/lib/rpc/client";
 import { useActiveCoin } from "@/lib/coin/context";
-import { coinQueryKey } from "@/lib/coin/profile";
+import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { formatCoinAmount } from "@/lib/units";
 import { cn, formatNumber } from "@/lib/utils";
@@ -64,6 +65,109 @@ function parseAmount(value: string): number | null {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return null;
   return n;
+}
+
+interface SendSuccessResult {
+  txids: string[];
+  recipients: SendConfirmRecipient[];
+  totalAmount: number;
+  completedAt: number;
+}
+
+function SendSuccessBanner({
+  result,
+  coin,
+  onDismiss,
+}: {
+  result: SendSuccessResult;
+  coin: CoinId;
+  onDismiss: () => void;
+}) {
+  const symbol = getCoinProfile(coin).symbol;
+  const singleTx = result.txids.length === 1;
+
+  return (
+    <div className="mt-3 rounded-md border border-success/30 bg-success/10 px-3 py-3 text-xs text-success">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-sm font-semibold text-fg">Payment submitted</p>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="shrink-0 text-fg-muted hover:text-fg"
+          aria-label="Dismiss"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <p className="mt-1 tabular-nums text-fg">
+        Total sent:{" "}
+        <span className="font-semibold">
+          {formatCoinAmount(result.totalAmount, coin, 8)}
+        </span>
+        {result.recipients.length > 1 && (
+          <span className="text-fg-muted">
+            {" "}
+            · {result.recipients.length} recipients
+          </span>
+        )}
+      </p>
+      <ul className="mt-2 space-y-2 border-t border-success/20 pt-2">
+        {result.recipients.map((recipient, index) => {
+          const txid = singleTx ? result.txids[0] : result.txids[index];
+          return (
+            <li key={`${recipient.address}-${index}`} className="text-fg">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+                <span className="text-[11px] break-all">
+                  {recipient.address}
+                </span>
+                <span className="shrink-0 tabular-nums font-medium">
+                  {formatCoinAmount(recipient.amount, coin, 8)}
+                </span>
+              </div>
+              {recipient.label && (
+                <p className="mt-0.5 text-fg-muted">{recipient.label}</p>
+              )}
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                {txid && (
+                  <>
+                    <span className="text-[10px] text-fg-muted break-all">
+                      {txid}
+                    </span>
+                    <ExplorerLink
+                      coin={coin}
+                      target={{ kind: "tx", txid }}
+                      label="View tx"
+                      className="text-accent"
+                    />
+                  </>
+                )}
+                <ExplorerLink
+                  coin={coin}
+                  target={{ kind: "address", address: recipient.address }}
+                  label="View address"
+                  className="text-accent"
+                />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {singleTx && result.recipients.length > 1 && (
+        <div className="mt-2 border-t border-success/20 pt-2">
+          <ExplorerLink
+            coin={coin}
+            target={{ kind: "tx", txid: result.txids[0]! }}
+            label={`View combined transaction on ${symbol} explorer`}
+            className="text-accent"
+          />
+        </div>
+      )}
+      <p className="mt-2 text-[10px] text-fg-muted">
+        Submitted {new Date(result.completedAt).toLocaleString()} — awaiting network
+        confirmation.
+      </p>
+    </div>
+  );
 }
 
 interface SendPanelProps {
@@ -106,6 +210,7 @@ export function SendPanel({
   const [twoFaOpen, setTwoFaOpen] = useState(false);
   const [clipboardGuardError, setClipboardGuardError] = useState<string | null>(null);
   const [spendWarning, setSpendWarning] = useState<string | null>(null);
+  const [lastSend, setLastSend] = useState<SendSuccessResult | null>(null);
   const clipboardSnapshot = useRef<Map<string, string>>(new Map());
 
   const spendingCfg = useQuery({
@@ -196,8 +301,16 @@ export function SendPanel({
 
   const send = useMutation({
     mutationFn: async () => {
+      const sentRecipients: SendConfirmRecipient[] = validRows.map((row) => ({
+        address: row.address.trim(),
+        label: row.label.trim() || undefined,
+        amount: parseAmount(row.amount)!,
+      }));
+      const totalAmount = sentRecipients.reduce((sum, r) => sum + r.amount, 0);
+
       // Coin control path uses createraw/fundraw/signraw/sendraw for one tx
       // covering all outputs with explicit UTXO selection.
+      let txids: string[];
       if (coinControl.length > 0) {
         const outputs: Record<string, number> = {};
         for (const row of validRows) {
@@ -210,28 +323,41 @@ export function SendPanel({
           undefined,
           feeRate,
         );
-        return [txid];
+        txids = [txid];
+      } else {
+        txids = [];
+        for (const row of validRows) {
+          const amount = parseAmount(row.amount)!;
+          const txid = await rpcSendToAddress(
+            coin,
+            row.address.trim(),
+            amount,
+            row.label.trim() || undefined,
+          );
+          txids.push(txid);
+        }
       }
-      const txids: string[] = [];
-      for (const row of validRows) {
-        const amount = parseAmount(row.amount)!;
-        const txid = await rpcSendToAddress(
-          coin,
-          row.address.trim(),
-          amount,
-          row.label.trim() || undefined,
-        );
-        txids.push(txid);
-      }
-      return txids;
+
+      return {
+        txids,
+        recipients: sentRecipients,
+        totalAmount,
+        completedAt: Date.now(),
+      };
     },
-    onSuccess: async (txids) => {
+    onMutate: () => setLastSend(null),
+    onSuccess: async (result) => {
       setConfirmOpen(false);
+      setLastSend(result);
       clearAll();
       setCoinControl([]);
-      for (const row of validRows) {
-        await spendingControlsRecordSend(parseAmount(row.amount)!, coin, row.address.trim());
-        await auditLogRecord("send", `Sent to ${row.address.trim()} tx ${txids[0] ?? ""}`, coin);
+      for (const row of result.recipients) {
+        await spendingControlsRecordSend(row.amount, coin, row.address);
+        await auditLogRecord(
+          "send",
+          `Sent ${formatCoinAmount(row.amount, coin, 8)} to ${row.address} tx ${result.txids[0] ?? ""}`,
+          coin,
+        );
       }
       queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "listtransactions") });
       queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getwalletinfo") });
@@ -371,7 +497,7 @@ export function SendPanel({
                       updateRecipient(row.id, { address: e.target.value })
                     }
                     placeholder={`Enter a Verium address (e.g. ${EXAMPLE_ADDRESS})`}
-                    className="h-10 min-w-0 flex-1 rounded-md border border-border bg-bg-panel px-3 font-mono text-xs outline-none focus:border-accent"
+                    className="h-10 min-w-0 flex-1 rounded-md border border-border bg-bg-panel px-3 text-xs outline-none focus:border-accent"
                   />
                   <Button
                     type="button"
@@ -552,24 +678,12 @@ export function SendPanel({
       {send.error && (
         <div className="mt-3 text-xs text-danger">{String(send.error)}</div>
       )}
-      {send.data && send.data.length > 0 && (
-        <div className="mt-3 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
-          {send.data.length === 1 ? (
-            <>
-              Submitted txid{" "}
-              <span className="font-mono">{send.data[0]}</span>
-            </>
-          ) : (
-            <>
-              Submitted {send.data.length} transactions:{" "}
-              {send.data.map((txid) => (
-                <span key={txid} className="mr-2 font-mono">
-                  {txid.slice(0, 12)}…
-                </span>
-              ))}
-            </>
-          )}
-        </div>
+      {lastSend && (
+        <SendSuccessBanner
+          result={lastSend}
+          coin={coin}
+          onDismiss={() => setLastSend(null)}
+        />
       )}
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-accent px-4 py-3 text-accent-fg">
@@ -589,7 +703,10 @@ export function SendPanel({
             type="button"
             variant="danger"
             size="lg"
-            onClick={clearAll}
+            onClick={() => {
+              clearAll();
+              setLastSend(null);
+            }}
           >
             <X className="h-4 w-4" />
             Clear All

@@ -21,10 +21,7 @@ import {
   fetchExplorerTransactions,
   isExplorerApiEnabled,
 } from "@/lib/explorer-api";
-import {
-  rpcListTransactions,
-  type TransactionItem,
-} from "@/lib/rpc/client";
+import { rpcListTransactions, type TransactionItem } from "@/lib/rpc/client";
 import { formatCoinAmount } from "@/lib/units";
 import { cn, formatNumber } from "@/lib/utils";
 import { consumePendingPaymentUri } from "@/lib/payment-uri-pending";
@@ -78,7 +75,9 @@ function TransferModeToggle({
   );
 }
 
-function categoryTone(category: string): "success" | "danger" | "warning" | "neutral" {
+function categoryTone(
+  category: string,
+): "success" | "danger" | "warning" | "neutral" {
   switch (category) {
     case "receive":
     case "generate":
@@ -193,107 +192,121 @@ export function Transactions() {
           </CardHeader>
           <CardContent className="p-0">
             <div className="max-h-[480px] overflow-auto">
-            {showExplorerFallback ? (
-              <table className="w-full border-collapse text-sm">
-                <thead className="sticky top-0 bg-bg-panel text-xs uppercase text-fg-subtle">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium">When</th>
-                    <th className="px-4 py-2 text-left font-medium">Txid</th>
-                    <th className="px-4 py-2 text-right font-medium">Amount</th>
-                    <th className="px-4 py-2 text-right font-medium">Block</th>
-                    <th className="px-4 py-2 text-right font-medium">Explorer</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {explorerTxs.data!.map((tx) => (
-                    <tr
-                      key={tx.txid}
-                      className="border-t border-border odd:bg-bg-subtle/30"
-                    >
-                      <td className="px-4 py-2 text-xs text-fg-muted">
-                        {new Date(tx.time * 1000).toLocaleString()}
-                      </td>
-                      <td className="truncate px-4 py-2 font-mono text-xs">
-                        {tx.txid.slice(0, 16)}…
-                      </td>
-                      <td className="px-4 py-2 text-right tabular-nums">
-                        {tx.output_total ?? "—"}
-                      </td>
-                      <td className="px-4 py-2 text-right tabular-nums">
-                        {tx.block_height !== undefined
-                          ? formatNumber(tx.block_height)
-                          : "—"}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <ExplorerLink
-                          target={{ kind: "tx", txid: tx.txid }}
-                          label="View"
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <table className="w-full border-collapse text-sm">
-                <thead className="sticky top-0 bg-bg-panel text-xs uppercase text-fg-subtle">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium">When</th>
-                    <th className="px-4 py-2 text-left font-medium">Type</th>
-                    <th className="px-4 py-2 text-left font-medium">Address</th>
-                    <th className="px-4 py-2 text-right font-medium">Amount</th>
-                    <th className="px-4 py-2 text-right font-medium">Confs</th>
-                    <th className="px-4 py-2 text-right font-medium">Explorer</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(txs.data ?? []).map((tx: TransactionItem) => (
-                    <tr
-                      key={`${tx.txid}-${tx.category}-${tx.address ?? ""}`}
-                      className="border-t border-border odd:bg-bg-subtle/30"
-                    >
-                      <td className="px-4 py-2 text-xs text-fg-muted">
-                        {new Date(tx.time * 1000).toLocaleString()}
-                      </td>
-                      <td className="px-4 py-2">
-                        <Badge tone={categoryTone(tx.category)}>
-                          {tx.category}
-                        </Badge>
-                      </td>
-                      <td className="truncate px-4 py-2 font-mono text-xs">
-                        {tx.address ?? "—"}
-                      </td>
-                      <td className="px-4 py-2 text-right tabular-nums">
-                        {formatCoinAmount(tx.amount, coin, 8)}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <ConfirmationProgress
-                          confirmations={tx.confirmations}
-                          category={tx.category}
-                        />
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <ExplorerLink
-                          target={{ kind: "tx", txid: tx.txid }}
-                          label="View"
-                          title={`Open tx ${tx.txid} on the explorer`}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                  {txs.data && txs.data.length === 0 && (
+              {showExplorerFallback ? (
+                <table className="w-full border-collapse text-sm">
+                  <thead className="sticky top-0 bg-bg-panel text-xs uppercase text-fg-subtle">
                     <tr>
-                      <td
-                        colSpan={6}
-                        className="px-4 py-6 text-center text-sm text-fg-subtle"
-                      >
-                        No transactions yet.
-                      </td>
+                      <th className="px-4 py-2 text-left font-medium">When</th>
+                      <th className="px-4 py-2 text-left font-medium">Txid</th>
+                      <th className="px-4 py-2 text-right font-medium">
+                        Amount
+                      </th>
+                      <th className="px-4 py-2 text-right font-medium">
+                        Block
+                      </th>
+                      <th className="px-4 py-2 text-right font-medium">
+                        Explorer
+                      </th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            )}
+                  </thead>
+                  <tbody>
+                    {explorerTxs.data!.map((tx) => (
+                      <tr
+                        key={tx.txid}
+                        className="border-t border-border odd:bg-bg-subtle/30"
+                      >
+                        <td className="px-4 py-2 text-xs text-fg-muted">
+                          {new Date(tx.time * 1000).toLocaleString()}
+                        </td>
+                        <td className="truncate px-4 py-2 text-xs">
+                          {tx.txid.slice(0, 16)}…
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {tx.output_total ?? "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {tx.block_height !== undefined
+                            ? formatNumber(tx.block_height)
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <ExplorerLink
+                            target={{ kind: "tx", txid: tx.txid }}
+                            label="View"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <table className="w-full border-collapse text-sm">
+                  <thead className="sticky top-0 bg-bg-panel text-xs uppercase text-fg-subtle">
+                    <tr>
+                      <th className="px-4 py-2 text-left font-medium">When</th>
+                      <th className="px-4 py-2 text-left font-medium">Type</th>
+                      <th className="px-4 py-2 text-left font-medium">
+                        Address
+                      </th>
+                      <th className="px-4 py-2 text-right font-medium">
+                        Amount
+                      </th>
+                      <th className="px-4 py-2 text-right font-medium">
+                        Confs
+                      </th>
+                      <th className="px-4 py-2 text-right font-medium">
+                        Explorer
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(txs.data ?? []).map((tx: TransactionItem) => (
+                      <tr
+                        key={`${tx.txid}-${tx.category}-${tx.address ?? ""}`}
+                        className="border-t border-border odd:bg-bg-subtle/30"
+                      >
+                        <td className="px-4 py-2 text-xs text-fg-muted">
+                          {new Date(tx.time * 1000).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-2">
+                          <Badge tone={categoryTone(tx.category)}>
+                            {tx.category}
+                          </Badge>
+                        </td>
+                        <td className="truncate px-4 py-2 text-xs">
+                          {tx.address ?? "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {formatCoinAmount(tx.amount, coin, 8)}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <ConfirmationProgress
+                            confirmations={tx.confirmations}
+                            category={tx.category}
+                          />
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <ExplorerLink
+                            target={{ kind: "tx", txid: tx.txid }}
+                            label="View"
+                            title={`Open tx ${tx.txid} on the explorer`}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                    {txs.data && txs.data.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="px-4 py-6 text-center text-sm text-fg-subtle"
+                        >
+                          No transactions yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
             </div>
           </CardContent>
         </Card>

@@ -23,7 +23,7 @@ export const COIN_PROFILES: Record<CoinId, CoinProfile> = {
     displayName: "Verium",
     tagline: "Reserve",
     binaryName: "veriumd",
-    confFilename: "verium.conf",
+    confFilename: "vericonomy.conf",
     defaultRpcPort: 33987,
     earnMode: "mining",
     confirmationsMatured: 100,

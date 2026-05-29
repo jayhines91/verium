@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::coin_profile::CoinId;
-use crate::daemon;
+use crate::coin_profile::{CoinId, CoinTarget, NetworkMode};
 use crate::error::{AppError, AppResult};
-use crate::wsl::{detect_wsl_datadirs, is_wsl_unc_path, normalize_wsl_unc_path};
+use crate::node::rpc_auth::restrict_conf_permissions;
+use crate::node::snapshot::is_wsl_unc_path;
+use crate::prefs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
@@ -31,18 +32,32 @@ impl Default for DaemonConfig {
 }
 
 pub fn default_config_for_coin(coin: CoinId) -> DaemonConfig {
-    let datadir = default_datadir(coin);
-    let cookie_path = Some(datadir.join(".cookie"));
-    DaemonConfig {
+    default_config_for_target(CoinTarget::mainnet(coin))
+}
+
+/// Build a default DaemonConfig for a (coin, network) pair. Binarytest
+/// targets use distinct ports / datadirs so they do not collide with mainnet.
+pub fn default_config_for_target(target: CoinTarget) -> DaemonConfig {
+    let datadir = target.datadir();
+    let chain = match target.network {
+        NetworkMode::Mainnet => target.coin.default_network_chain().to_string(),
+        NetworkMode::BinaryTest => match target.coin {
+            CoinId::Verium => "binarytest-verium".to_string(),
+            CoinId::Vericoin => "binarytest-vericoin".to_string(),
+        },
+    };
+    let mut cfg = DaemonConfig {
         datadir,
         rpc_host: "127.0.0.1".to_string(),
-        rpc_port: coin.default_rpc_port(),
-        chain: coin.default_network_chain().to_string(),
+        rpc_port: target.rpc_port(),
+        chain,
         rpc_user: None,
         rpc_password: None,
         rpc_password_set: false,
-        cookie_path,
-    }
+        cookie_path: None,
+    };
+    cfg.cookie_path = Some(chain_datadir(target.coin, &cfg).join(".cookie"));
+    cfg
 }
 
 pub fn default_datadir(coin: CoinId) -> PathBuf {
@@ -151,38 +166,33 @@ fn config_from_saved(saved: SavedDaemonConfig) -> DaemonConfig {
     }
 }
 
-fn config_from_wsl_autodetect(coin: CoinId) -> Option<DaemonConfig> {
-    if coin != CoinId::Verium {
-        return None;
-    }
-    if !cfg!(target_os = "windows") || daemon::bundled_sidecar_available(coin) {
-        return None;
-    }
-    let candidates = detect_wsl_datadirs().ok()?;
-    let best = candidates.first()?;
-    tracing::info!("auto-detected WSL datadir: {}", best.unc_path);
-    Some(DaemonConfig {
-        datadir: PathBuf::from(&best.unc_path),
-        ..default_config_for_coin(coin)
-    })
+pub fn load_or_default_config(coin: CoinId) -> AppResult<DaemonConfig> {
+    let prefs = tauri::async_runtime::block_on(prefs::load()).unwrap_or_default();
+    load_config_for_network(coin, prefs.network_mode)
 }
 
-pub fn load_or_default_config(coin: CoinId) -> AppResult<DaemonConfig> {
+/// Resolve daemon settings for a coin on a specific network mode. Uses the
+/// saved daemon-*.json when its chain matches the requested mode; otherwise
+/// returns fresh defaults for that network (binarytest ports/datadirs).
+pub fn load_config_for_network(coin: CoinId, mode: NetworkMode) -> AppResult<DaemonConfig> {
     let _ = migrate_legacy_configs();
+    let want_binarytest = mode.is_test();
     let mut cfg = if let Some(saved) = load_saved_daemon_config(coin)? {
-        config_from_saved(saved)
-    } else if let Some(auto) = config_from_wsl_autodetect(coin) {
-        auto
+        let saved_binarytest = saved.chain.starts_with("binarytest");
+        if saved_binarytest == want_binarytest {
+            config_from_saved(saved)
+        } else {
+            default_config_for_target(CoinTarget::new(coin, mode))
+        }
     } else {
-        default_config_for_coin(coin)
+        default_config_for_target(CoinTarget::new(coin, mode))
     };
-    // Shipped builds bundle sidecars natively — ignore leftover dev WSL datadir paths.
-    if daemon::bundled_sidecar_available(coin) && is_wsl_unc_path(&cfg.datadir) {
+    if is_wsl_unc_path(&cfg.datadir) {
         tracing::info!(
-            "bundled sidecar: using native datadir instead of {}",
+            "unsupported WSL datadir — using native default instead of {}",
             cfg.datadir.display()
         );
-        cfg.datadir = default_datadir(coin);
+        cfg.datadir = default_config_for_target(CoinTarget::new(coin, mode)).datadir;
     }
     refresh_config_paths(coin, &mut cfg)?;
     Ok(cfg)
@@ -193,6 +203,7 @@ pub fn load_or_default_config(coin: CoinId) -> AppResult<DaemonConfig> {
 /// writes when something is missing.
 pub fn ensure_first_run_config(coin: CoinId, cfg: &mut DaemonConfig) -> AppResult<bool> {
     fs::create_dir_all(&cfg.datadir)?;
+    fs::create_dir_all(chain_datadir(coin, cfg))?;
     refresh_config_paths(coin, cfg)?;
 
     let diag = rpc_auth_diagnostics(coin, cfg);
@@ -205,7 +216,7 @@ pub fn ensure_first_run_config(coin: CoinId, cfg: &mut DaemonConfig) -> AppResul
         .rpc_user
         .clone()
         .filter(|u| !u.is_empty())
-        .unwrap_or_else(|| coin.default_rpc_user().to_string());
+        .unwrap_or_else(generate_rpc_user);
     let password = generate_rpc_password();
     let overrides = vec![
         ("server", "1".to_string()),
@@ -215,28 +226,615 @@ pub fn ensure_first_run_config(coin: CoinId, cfg: &mut DaemonConfig) -> AppResul
         ("rpcuser", user.clone()),
         ("rpcpassword", password.clone()),
     ];
-    write_node_conf_overrides(coin, &cfg.datadir, &overrides)?;
+    write_node_conf_overrides(coin, &node_conf_dir(cfg), cfg, &overrides)?;
     cfg.rpc_user = Some(user);
     cfg.rpc_password = Some(password);
     refresh_config_paths(coin, cfg)?;
     save_app_daemon_config(coin, cfg)?;
-    tracing::info!("first-run: wrote rpc credentials to {}", cfg.datadir.display());
+    tracing::info!(
+        "first-run: wrote rpc credentials to {}",
+        node_conf_path(coin, cfg).display()
+    );
     Ok(true)
 }
 
-fn chain_datadir(cfg: &DaemonConfig) -> PathBuf {
+/// Config section name the unified daemon expects in vericonomy.conf (matches
+/// `SelectConfigNetwork` / `GetChainName()` — e.g. `binarytest-verium`, not `verium`).
+pub fn daemon_config_section(coin: CoinId, cfg: &DaemonConfig) -> String {
+    if cfg.chain.starts_with("binarytest-") {
+        return cfg.chain.clone();
+    }
+    match (coin, cfg.chain.as_str()) {
+        (CoinId::Verium, "main" | "verium") => "verium".to_string(),
+        (CoinId::Vericoin, "vericoin" | "main") => "vericoin".to_string(),
+        (_, chain) => chain.to_string(),
+    }
+}
+
+/// Parent `-datadir` passed to veriumd. Node config (`vericonomy.conf`) lives here.
+pub fn node_conf_dir(cfg: &DaemonConfig) -> PathBuf {
+    cfg.datadir.clone()
+}
+
+/// Network-specific datadir where veriumd writes blocks, debug.log, and .cookie
+/// (matches `GetDataDir(true)` / `BaseParams().DataDir()` in the daemon).
+pub fn chain_datadir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
     let mut p = cfg.datadir.clone();
-    if cfg.chain == "test" {
-        p.push("testnet3");
-    } else if cfg.chain == "regtest" {
-        p.push("regtest");
+    match cfg.chain.as_str() {
+        "test" => p.push("testnet3"),
+        "regtest" => p.push("regtest"),
+        "binarytest-verium" | "binarytest-vericoin" => p.push(&cfg.chain),
+        "main" | "verium" if coin == CoinId::Verium => p.push("verium"),
+        "vericoin" | "main" if coin == CoinId::Vericoin => p.push("vericoin"),
+        _ => {}
     }
     p
 }
 
+/// Remove corrupt block index LevelDB so veriumd can rebuild from existing blk*.dat via `-reindex`.
+/// Preserves a populated `chainstate/` when present (typical after bootstrap import).
+pub fn prepare_block_index_reindex(coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {
+    let datadir = chain_datadir(coin, cfg);
+    let index = datadir.join("blocks/index");
+    if index.exists() {
+        fs::remove_dir_all(&index)?;
+        tracing::info!("chain repair: removed {}", index.display());
+    }
+    clear_datadir_stale_lock(&datadir);
+    Ok(())
+}
+
+/// Remove corrupt LevelDB metadata so veriumd can rebuild from existing blk*.dat via `-reindex`.
+/// When chainstate already looks complete, only the block index is cleared.
+pub fn prepare_chain_for_reindex(coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {
+    let datadir = chain_datadir(coin, cfg);
+    let chainstate = datadir.join("chainstate");
+    let preserve_chainstate = chainstate_bytes(&chainstate) >= 1_000_000;
+    if preserve_chainstate {
+        prepare_block_index_reindex(coin, cfg)?;
+        tracing::info!(
+            "chain repair: preserving chainstate ({} bytes)",
+            chainstate_bytes(&chainstate)
+        );
+        return Ok(());
+    }
+    for sub in ["blocks/index", "chainstate"] {
+        let path = datadir.join(sub);
+        if path.exists() {
+            fs::remove_dir_all(&path)?;
+            tracing::info!("chain repair: removed {}", path.display());
+        }
+    }
+    clear_datadir_stale_lock(&datadir);
+    Ok(())
+}
+
+fn clear_datadir_stale_lock(datadir: &Path) {
+    let lock = datadir.join(".lock");
+    if lock.is_file() {
+        let _ = fs::remove_file(&lock);
+        tracing::info!("chain repair: removed stale lock {}", lock.display());
+    }
+}
+
+/// Pre-unified / mis-targeted bootstrap layouts stored `blocks/` and `chainstate/`
+/// directly under the parent `-datadir` (`…/Verium/blocks`) instead of the
+/// network subfolder veriumd actually uses (`…/Verium/verium/blocks`).
+pub fn legacy_root_chain_dir(cfg: &DaemonConfig) -> PathBuf {
+    cfg.datadir.clone()
+}
+
+/// Where bootstrap must extract `blocks/` and `chainstate/` so the running daemon reads them.
+/// Unified v2 builds use `GetDataDir(true)` (`…/verium/`); legacy v1.x single-chain
+/// binaries use the parent `-datadir` root.
+pub fn bootstrap_chain_datadir(coin: CoinId, cfg: &DaemonConfig, unified_chain: bool) -> PathBuf {
+    if unified_chain {
+        chain_datadir(coin, cfg)
+    } else {
+        legacy_root_chain_dir(cfg)
+    }
+}
+
+/// True when bootstrap/chain data under `…/verium/` is much larger than the legacy root
+/// layout (`…/Verium/blocks`) and should be promoted before starting legacy veriumd.
+pub fn legacy_subdir_chain_ahead(coin: CoinId, cfg: &DaemonConfig) -> bool {
+    let root = legacy_root_chain_dir(cfg);
+    let sub = chain_datadir(coin, cfg);
+    if root == sub {
+        return false;
+    }
+    let root_blocks = root.join("blocks");
+    let root_chainstate = root.join("chainstate");
+    let sub_blocks = sub.join("blocks");
+    let sub_chainstate = sub.join("chainstate");
+    if !chain_dir_has_snapshot(&sub_blocks, &sub_chainstate) {
+        return false;
+    }
+    let sub_bytes = chain_snapshot_bytes(&sub_blocks, &sub_chainstate);
+    let root_bytes = chain_snapshot_bytes(&root_blocks, &root_chainstate);
+    let sub_cs_bytes = dir_size(&sub_chainstate);
+    sub_bytes + 50_000_000 > root_bytes && sub_cs_bytes >= 1_000_000
+}
+
+/// Legacy veriumd reads `…/Verium/blocks`, but older wallet builds imported bootstrap into
+/// `…/Verium/verium/blocks`. Move the larger subdir snapshot to the root before apply/restart.
+pub fn promote_subdir_chain_data_for_legacy(coin: CoinId, cfg: &DaemonConfig) -> AppResult<bool> {
+    let root = legacy_root_chain_dir(cfg);
+    let sub = chain_datadir(coin, cfg);
+    if root == sub {
+        return Ok(false);
+    }
+
+    let root_blocks = root.join("blocks");
+    let root_chainstate = root.join("chainstate");
+    let sub_blocks = sub.join("blocks");
+    let sub_chainstate = sub.join("chainstate");
+
+    if !legacy_subdir_chain_ahead(coin, cfg) {
+        return Ok(false);
+    }
+
+    fs::create_dir_all(&root)?;
+    for name in ["blocks", "chainstate"] {
+        let src = sub.join(name);
+        let dst = root.join(name);
+        if dst.exists() {
+            fs::remove_dir_all(&dst)?;
+        }
+        fs::rename(&src, &dst)?;
+        tracing::info!(
+            "legacy chain promote ({}): moved {} -> {}",
+            coin.as_str(),
+            src.display(),
+            dst.display()
+        );
+    }
+    Ok(true)
+}
+
+fn dir_size(path: &Path) -> u64 {
+    if !path.is_dir() {
+        return 0;
+    }
+    let mut total = 0u64;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                total += p.metadata().map(|m| m.len()).unwrap_or(0);
+            } else if p.is_dir() {
+                total += dir_size(&p);
+            }
+        }
+    }
+    total
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> AppResult<()> {
+    if !src.is_dir() {
+        return Err(AppError::other(format!(
+            "copy_dir_recursive: {} is not a directory",
+            src.display()
+        )));
+    }
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
+fn chain_dir_has_snapshot(blocks: &Path, chainstate: &Path) -> bool {
+    blocks.is_dir()
+        && chainstate.is_dir()
+        && blocks.join("blk00000.dat").is_file()
+        && chainstate.join("CURRENT").is_file()
+}
+
+fn chain_snapshot_bytes(blocks: &Path, chainstate: &Path) -> u64 {
+    dir_size(blocks) + dir_size(chainstate)
+}
+
+/// Minimum chainstate size for a bootstrap archive to be considered complete.
+const MIN_BOOTSTRAP_CHAINSTATE_BYTES: u64 = 5_000_000;
+/// Minimum blocks/ payload for a bootstrap archive.
+const MIN_BOOTSTRAP_BLOCKS_BYTES: u64 = 50_000_000;
+
+pub fn chainstate_bytes(chainstate: &Path) -> u64 {
+    dir_size(chainstate)
+}
+
+pub fn blocks_data_bytes(blocks: &Path) -> u64 {
+    dir_size(blocks)
+}
+
+/// Validate extracted bootstrap staging before replacing live chain data.
+pub fn validate_bootstrap_staging(staging: &Path) -> AppResult<()> {
+    let blocks = staging.join("blocks");
+    let chainstate = staging.join("chainstate");
+    if !blocks.is_dir() || !chainstate.is_dir() {
+        return Err(AppError::other(
+            "Downloaded bootstrap zip did not contain blocks/ and chainstate/ directories.",
+        ));
+    }
+    if !blocks.join("blk00000.dat").is_file() {
+        return Err(AppError::other(
+            "Bootstrap blocks/ is missing blk00000.dat — the archive may be corrupt.",
+        ));
+    }
+    let cs = chainstate_bytes(&chainstate);
+    if cs < MIN_BOOTSTRAP_CHAINSTATE_BYTES {
+        return Err(AppError::other(format!(
+            "Bootstrap chainstate/ is too small ({cs} bytes). \
+             The archive may be corrupt, truncated, or still downloading."
+        )));
+    }
+    let blk = blocks_data_bytes(&blocks);
+    if blk < MIN_BOOTSTRAP_BLOCKS_BYTES {
+        return Err(AppError::other(format!(
+            "Bootstrap blocks/ is too small ({blk} bytes). \
+             The archive may be corrupt, truncated, or still downloading."
+        )));
+    }
+    Ok(())
+}
+
+/// `blocks/` has real data but `chainstate/` is empty — typical after interrupted bootstrap.
+pub fn chain_snapshot_needs_reindex(datadir: &Path) -> bool {
+    let blocks = datadir.join("blocks");
+    let chainstate = datadir.join("chainstate");
+    if !blocks.join("blk00000.dat").is_file() {
+        return false;
+    }
+    blocks_data_bytes(&blocks) > 10_000_000 && chainstate_bytes(&chainstate) < 1_000_000
+}
+
+fn chain_index_bytes(blocks: &Path) -> u64 {
+    dir_size(&blocks.join("index"))
+}
+
+/// True when root-level blocks/chainstate should be moved into the unified chain subdir.
+pub fn should_migrate_root_chain_data(coin: CoinId, cfg: &DaemonConfig) -> bool {
+    let root = legacy_root_chain_dir(cfg);
+    let target = chain_datadir(coin, cfg);
+    if root == target {
+        return false;
+    }
+
+    let root_blocks = root.join("blocks");
+    let root_chainstate = root.join("chainstate");
+    let target_blocks = target.join("blocks");
+    let target_chainstate = target.join("chainstate");
+
+    if root_blocks.join("blk00000.dat").is_file()
+        && chainstate_bytes(&target_chainstate) < 1_000_000
+        && blocks_data_bytes(&root_blocks) >= MIN_BOOTSTRAP_BLOCKS_BYTES
+        && blocks_data_bytes(&root_blocks)
+            > blocks_data_bytes(&target_blocks).saturating_add(10_000_000)
+    {
+        return true;
+    }
+
+    let root_index_bytes = chain_index_bytes(&root_blocks);
+    let target_index_bytes = chain_index_bytes(&target_blocks);
+    let root_cs_bytes = dir_size(&root_chainstate);
+    let target_cs_bytes = dir_size(&target_chainstate);
+
+    if target_blocks.join("blk00000.dat").is_file()
+        && root_index_bytes > 1_000_000
+        && target_index_bytes < 500_000
+    {
+        return true;
+    }
+
+    if target_blocks.join("blk00000.dat").is_file()
+        && root_cs_bytes > 1_000_000
+        && target_cs_bytes < 500_000
+        && root_chainstate.is_dir()
+    {
+        return true;
+    }
+
+    if !chain_dir_has_snapshot(&root_blocks, &root_chainstate) {
+        return false;
+    }
+
+    let root_bytes = chain_snapshot_bytes(&root_blocks, &root_chainstate);
+    let target_bytes = chain_snapshot_bytes(&target_blocks, &target_chainstate);
+    let target_has_chainstate = target_cs_bytes > 1_000_000;
+    !(target_bytes + 50_000_000 >= root_bytes && target_bytes > 100_000_000 && target_has_chainstate)
+}
+
+/// Move root-level `blocks/` + `chainstate/` into the chain subdir veriumd reads.
+pub fn migrate_legacy_root_chain_data(coin: CoinId, cfg: &DaemonConfig) -> AppResult<bool> {
+    let root = legacy_root_chain_dir(cfg);
+    let target = chain_datadir(coin, cfg);
+    if root == target {
+        return Ok(false);
+    }
+
+    let root_blocks = root.join("blocks");
+    let root_chainstate = root.join("chainstate");
+    let target_blocks = target.join("blocks");
+    let target_chainstate = target.join("chainstate");
+    let root_index_bytes = chain_index_bytes(&root_blocks);
+    let target_index_bytes = chain_index_bytes(&target_blocks);
+    let root_cs_bytes = dir_size(&root_chainstate);
+    let target_cs_bytes = dir_size(&target_chainstate);
+    let mut migrated = false;
+
+    // Block files already under verium/ but blocks/index was wiped by a failed reindex
+    // while a good index still exists at the datadir root.
+    if target_blocks.join("blk00000.dat").is_file()
+        && root_index_bytes > 1_000_000
+        && target_index_bytes < 500_000
+    {
+        fs::create_dir_all(&target_blocks)?;
+        let src_index = root_blocks.join("index");
+        let dst_index = target_blocks.join("index");
+        if dst_index.exists() {
+            fs::remove_dir_all(&dst_index)?;
+        }
+        copy_dir_recursive(&src_index, &dst_index)?;
+        tracing::info!(
+            "legacy chain migrate ({}): copied blocks/index {} -> {} ({} MB)",
+            coin.as_str(),
+            src_index.display(),
+            dst_index.display(),
+            root_index_bytes / 1_000_000
+        );
+        migrated = true;
+    }
+
+    // Chainstate missing under verium/ while bootstrap snapshot still sits at root.
+    if target_blocks.join("blk00000.dat").is_file()
+        && root_cs_bytes > 1_000_000
+        && target_cs_bytes < 500_000
+        && root_chainstate.is_dir()
+    {
+        fs::create_dir_all(&target)?;
+        if target_chainstate.exists() {
+            fs::remove_dir_all(&target_chainstate)?;
+        }
+        fs::rename(&root_chainstate, &target_chainstate)?;
+        tracing::info!(
+            "legacy chain migrate ({}): moved chainstate into {} ({} MB)",
+            coin.as_str(),
+            target_chainstate.display(),
+            root_cs_bytes / 1_000_000
+        );
+        migrated = true;
+    }
+
+    if migrated {
+        return Ok(true);
+    }
+
+    if !chain_dir_has_snapshot(&root_blocks, &root_chainstate) {
+        return Ok(false);
+    }
+
+    let root_bytes = chain_snapshot_bytes(&root_blocks, &root_chainstate);
+    let target_bytes = chain_snapshot_bytes(&target_blocks, &target_chainstate);
+    // Prefer the larger snapshot. Require meaningful chainstate, not blocks alone.
+    let target_has_chainstate = target_cs_bytes > 1_000_000;
+    if target_bytes + 50_000_000 >= root_bytes && target_bytes > 100_000_000 && target_has_chainstate {
+        tracing::info!(
+            "legacy chain migrate ({}): keeping existing data under {} ({} MB)",
+            coin.as_str(),
+            target.display(),
+            target_bytes / 1_000_000
+        );
+        return Ok(false);
+    }
+
+    fs::create_dir_all(&target)?;
+    for name in ["blocks", "chainstate"] {
+        let src = root.join(name);
+        let dst = target.join(name);
+        if dst.exists() {
+            fs::remove_dir_all(&dst)?;
+        }
+        fs::rename(&src, &dst)?;
+        tracing::info!(
+            "legacy chain migrate ({}): moved {} -> {}",
+            coin.as_str(),
+            src.display(),
+            dst.display()
+        );
+    }
+    Ok(true)
+}
+
+/// When legacy `blocks/` at the datadir root is larger than `verium/blocks/` and the
+/// unified chainstate is empty, replace the broken copy under `verium/`.
+pub fn recover_split_chain_layout(coin: CoinId, cfg: &DaemonConfig) -> AppResult<bool> {
+    let root = legacy_root_chain_dir(cfg);
+    let target = chain_datadir(coin, cfg);
+    if root == target {
+        return Ok(false);
+    }
+
+    let root_blocks = root.join("blocks");
+    let root_chainstate = root.join("chainstate");
+    let target_blocks = target.join("blocks");
+    let target_chainstate = target.join("chainstate");
+
+    if !root_blocks.join("blk00000.dat").is_file() {
+        return Ok(false);
+    }
+    if chainstate_bytes(&target_chainstate) > 1_000_000 {
+        return Ok(false);
+    }
+
+    let root_bytes = blocks_data_bytes(&root_blocks);
+    let root_cs_bytes = chainstate_bytes(&root_chainstate);
+    let target_bytes = blocks_data_bytes(&target_blocks);
+    if root_bytes < MIN_BOOTSTRAP_BLOCKS_BYTES {
+        return Ok(false);
+    }
+    if target_bytes > root_bytes.saturating_add(10_000_000) {
+        return Ok(false);
+    }
+
+    fs::create_dir_all(&target)?;
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    if target_blocks.exists() {
+        let backup = target.join(format!("blocks.recovery-{stamp}"));
+        if backup.exists() {
+            fs::remove_dir_all(&backup)?;
+        }
+        fs::rename(&target_blocks, &backup)?;
+        tracing::info!(
+            "chain recovery ({}): backed up {} -> {}",
+            coin.as_str(),
+            target_blocks.display(),
+            backup.display()
+        );
+    }
+    if target_chainstate.exists() {
+        fs::remove_dir_all(&target_chainstate)?;
+    }
+    let mut recovered = false;
+    if root_blocks.exists() {
+        fs::rename(&root_blocks, &target_blocks)?;
+        tracing::info!(
+            "chain recovery ({}): promoted legacy {} -> {} ({} MB blocks)",
+            coin.as_str(),
+            root_blocks.display(),
+            target_blocks.display(),
+            root_bytes / 1_000_000
+        );
+        recovered = true;
+    }
+    if root_chainstate.is_dir() && root_cs_bytes >= MIN_BOOTSTRAP_CHAINSTATE_BYTES {
+        fs::rename(&root_chainstate, &target_chainstate)?;
+        tracing::info!(
+            "chain recovery ({}): promoted legacy {} -> {} ({} MB chainstate)",
+            coin.as_str(),
+            root_chainstate.display(),
+            target_chainstate.display(),
+            root_cs_bytes / 1_000_000
+        );
+        recovered = true;
+    }
+    Ok(recovered)
+}
+
+/// Recommended `-dbcache` (MiB) for faster initial sync on typical desktop hardware.
+pub fn recommended_dbcache_mib() -> u64 {
+    2048
+}
+
+/// veriumd settings that improve block download and validation throughput during IBD.
+pub fn sync_performance_overrides() -> Vec<(&'static str, String)> {
+    vec![
+        ("dbcache", recommended_dbcache_mib().to_string()),
+        ("maxconnections", "32".to_string()),
+        ("maxuploadtarget", "0".to_string()),
+    ]
+}
+
+/// Ensure `vericonomy.conf` has a complete `[verium]` / `[vericoin]` section that
+/// matches what the wallet passes on the CLI (server, rpcbind, checklevel, creds).
+pub fn ensure_daemon_conf_complete(coin: CoinId, cfg: &mut DaemonConfig) -> AppResult<()> {
+    refresh_config_paths(coin, cfg)?;
+    let diag = rpc_auth_diagnostics(coin, cfg);
+    let need_creds = !diag.rpc_user_in_conf || !diag.rpc_password_in_conf;
+    let mut overrides = vec![
+        ("server", "1".to_string()),
+        ("rpcport", cfg.rpc_port.to_string()),
+        ("rpcbind", cfg.rpc_host.clone()),
+        ("rpcallowip", "127.0.0.1".to_string()),
+        ("checklevel", "0".to_string()),
+    ];
+    overrides.extend(sync_performance_overrides());
+    if need_creds {
+        let user = cfg
+            .rpc_user
+            .clone()
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(generate_rpc_user);
+        let pass = cfg
+            .rpc_password
+            .clone()
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(generate_rpc_password);
+        overrides.push(("rpcuser", user.clone()));
+        overrides.push(("rpcpassword", pass.clone()));
+        cfg.rpc_user = Some(user);
+        cfg.rpc_password = Some(pass);
+    }
+    write_node_conf_overrides(coin, &node_conf_dir(cfg), cfg, &overrides)?;
+    refresh_config_paths(coin, cfg)?;
+    Ok(())
+}
+
+/// When older wallet builds wrote `verium.conf` at the datadir root, merge RPC
+/// settings into `vericonomy.conf` under the correct `[verium]` / `[vericoin]` section.
+fn migrate_legacy_verium_conf(coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {
+    let root = node_conf_dir(cfg);
+    fs::create_dir_all(&root)?;
+    let legacy = root.join("verium.conf");
+    if !legacy.is_file() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&legacy)?;
+    let mut rpc_user: Option<String> = None;
+    let mut rpc_password: Option<String> = None;
+    let mut rpc_port: Option<u16> = None;
+    for raw in content.lines() {
+        let line = strip_comment(raw).trim();
+        if let Some((key, value)) = line.split_once('=') {
+            match key.trim() {
+                "rpcuser" => rpc_user = Some(value.trim().to_string()),
+                "rpcpassword" => rpc_password = Some(value.trim().to_string()),
+                "rpcport" => rpc_port = value.trim().parse().ok(),
+                _ => {}
+            }
+        }
+    }
+    let mut overrides = Vec::new();
+    if let Some(u) = rpc_user {
+        overrides.push(("rpcuser", u));
+    }
+    if let Some(p) = rpc_password {
+        overrides.push(("rpcpassword", p));
+    }
+    if let Some(port) = rpc_port {
+        overrides.push(("rpcport", port.to_string()));
+    }
+    if overrides.is_empty() {
+        return Ok(());
+    }
+    write_node_conf_overrides(coin, &root, cfg, &overrides)?;
+    let migrated = root.join("verium.conf.migrated");
+    if !migrated.exists() {
+        let _ = fs::rename(&legacy, &migrated);
+        tracing::info!(
+            "migrated legacy verium.conf into {}",
+            node_conf_path(coin, cfg).display()
+        );
+    } else if legacy.is_file() {
+        let _ = fs::remove_file(&legacy);
+        tracing::info!(
+            "removed stale legacy verium.conf after prior migration to {}",
+            node_conf_path(coin, cfg).display()
+        );
+    }
+    Ok(())
+}
+
 /// Matches veriumd's `GetWalletDir()` — uses `<datadir>/wallets` when that folder exists.
-fn wallet_dir(cfg: &DaemonConfig) -> PathBuf {
-    let base = chain_datadir(cfg);
+fn wallet_dir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
+    let base = chain_datadir(coin, cfg);
     let wallets = base.join("wallets");
     if wallets.is_dir() {
         wallets
@@ -246,8 +844,8 @@ fn wallet_dir(cfg: &DaemonConfig) -> PathBuf {
 }
 
 /// Locate the active wallet file on disk (legacy root or `wallets/` layout).
-pub fn resolve_wallet_dat_path(cfg: &DaemonConfig) -> Option<PathBuf> {
-    let base = chain_datadir(cfg);
+pub fn resolve_wallet_dat_path(coin: CoinId, cfg: &DaemonConfig) -> Option<PathBuf> {
+    let base = chain_datadir(coin, cfg);
     let candidates = [
         base.join("wallet.dat"),
         base.join("wallets").join("wallet.dat"),
@@ -271,17 +869,18 @@ pub fn resolve_wallet_dat_path(cfg: &DaemonConfig) -> Option<PathBuf> {
     None
 }
 
-pub fn wallet_dat_path(cfg: &DaemonConfig) -> PathBuf {
-    resolve_wallet_dat_path(cfg).unwrap_or_else(|| wallet_dir(cfg).join("wallet.dat"))
+pub fn wallet_dat_path(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
+    resolve_wallet_dat_path(coin, cfg)
+        .unwrap_or_else(|| wallet_dir(coin, cfg).join("wallet.dat"))
 }
 
-pub fn wallet_dat_exists(cfg: &DaemonConfig) -> bool {
-    resolve_wallet_dat_path(cfg).is_some()
+pub fn wallet_dat_exists(coin: CoinId, cfg: &DaemonConfig) -> bool {
+    resolve_wallet_dat_path(coin, cfg).is_some()
 }
 
 /// `<datadir>/backups` — default folder for wallet exports (never the live wallet path).
-pub fn wallet_backup_dir(cfg: &DaemonConfig) -> AppResult<PathBuf> {
-    let dir = chain_datadir(cfg).join("backups");
+pub fn wallet_backup_dir(coin: CoinId, cfg: &DaemonConfig) -> AppResult<PathBuf> {
+    let dir = chain_datadir(coin, cfg).join("backups");
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -292,7 +891,7 @@ pub fn default_wallet_backup_filename(coin: CoinId) -> String {
 }
 
 pub fn suggested_wallet_backup_path(coin: CoinId, cfg: &DaemonConfig) -> AppResult<PathBuf> {
-    Ok(wallet_backup_dir(cfg)?.join(default_wallet_backup_filename(coin)))
+    Ok(wallet_backup_dir(coin, cfg)?.join(default_wallet_backup_filename(coin)))
 }
 
 /// Absolute path string for `backupwallet` (forward slashes work on Windows too).
@@ -301,8 +900,8 @@ pub fn path_for_veriumd_rpc(path: &Path) -> String {
 }
 
 /// True when `dest` would overwrite the loaded wallet file.
-pub fn is_live_wallet_destination(cfg: &DaemonConfig, dest: &Path) -> bool {
-    let Some(live) = resolve_wallet_dat_path(cfg) else {
+pub fn is_live_wallet_destination(coin: CoinId, cfg: &DaemonConfig, dest: &Path) -> bool {
+    let Some(live) = resolve_wallet_dat_path(coin, cfg) else {
         return false;
     };
     let dest_key = dest.to_string_lossy().to_ascii_lowercase();
@@ -313,7 +912,7 @@ pub fn is_live_wallet_destination(cfg: &DaemonConfig, dest: &Path) -> bool {
 pub fn apply_partial_to_config(base: &DaemonConfig, partial: &PartialDaemonConfig) -> DaemonConfig {
     let mut cfg = base.clone();
     if let Some(d) = partial.datadir.as_ref() {
-        cfg.datadir = PathBuf::from(normalize_wsl_unc_path(d));
+        cfg.datadir = PathBuf::from(d);
     }
     if let Some(h) = partial.rpc_host.as_ref() {
         cfg.rpc_host = h.clone();
@@ -350,7 +949,7 @@ pub fn parse_node_conf_into(coin: CoinId, datadir: &Path, cfg: &mut DaemonConfig
     }
     let content = fs::read_to_string(&path)?;
     let mut current_section: Option<String> = None;
-    let active_section = coin.conf_section().map(str::to_string);
+    let active_section = Some(daemon_config_section(coin, cfg));
     let active_chain = cfg.chain.clone();
     for raw in content.lines() {
         let line = strip_comment(raw).trim().to_string();
@@ -366,10 +965,10 @@ pub fn parse_node_conf_into(coin: CoinId, datadir: &Path, cfg: &mut DaemonConfig
             continue;
         }
         let in_active_section = match (&active_section, &current_section) {
+            (Some(expected), Some(s)) => s == expected,
+            (Some(_), None) => false,
             (None, None) => true,
             (None, Some(s)) => s == &active_chain,
-            (Some(expected), Some(s)) => s == expected,
-            (Some(_), None) => true,
         };
         if !in_active_section {
             continue;
@@ -404,6 +1003,37 @@ pub fn parse_verium_conf_into(datadir: &Path, cfg: &mut DaemonConfig) -> AppResu
     parse_node_conf_into(CoinId::Verium, datadir, cfg)
 }
 
+/// Read rpcuser/rpcpassword from disk for the active config section.
+pub fn read_rpc_credentials_from_conf(
+    coin: CoinId,
+    cfg: &DaemonConfig,
+) -> AppResult<Option<(String, String)>> {
+    let path = node_conf_path(coin, cfg);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let mut scratch = cfg.clone();
+    parse_node_conf_into(coin, node_conf_dir(cfg).as_path(), &mut scratch)?;
+    match (
+        scratch.rpc_user.filter(|u| !u.is_empty()),
+        scratch.rpc_password.filter(|p| !p.is_empty()),
+    ) {
+        (Some(user), Some(pass)) => Ok(Some((user, pass))),
+        _ => Ok(None),
+    }
+}
+
+/// Overwrite in-memory RPC login from `vericonomy.conf` so spawn and RPC agree.
+pub fn sync_cfg_rpc_credentials_from_conf(coin: CoinId, cfg: &mut DaemonConfig) -> AppResult<()> {
+    refresh_config_paths(coin, cfg)?;
+    if let Some((user, pass)) = read_rpc_credentials_from_conf(coin, cfg)? {
+        cfg.rpc_user = Some(user);
+        cfg.rpc_password = Some(pass);
+        cfg.rpc_password_set = true;
+    }
+    Ok(())
+}
+
 fn strip_comment(line: &str) -> &str {
     if let Some(idx) = line.find('#') {
         &line[..idx]
@@ -412,21 +1042,88 @@ fn strip_comment(line: &str) -> &str {
     }
 }
 
-pub fn refresh_config_paths(coin: CoinId, cfg: &mut DaemonConfig) -> AppResult<()> {
-    let datadir = cfg.datadir.clone();
-    parse_node_conf_into(coin, &datadir, cfg)?;
-    let cookie = datadir.join(".cookie");
-    if cookie.exists() {
-        cfg.cookie_path = Some(cookie);
-    } else {
-        cfg.cookie_path = None;
+/// Older wallet builds wrote `[verium]` / `[vericoin]` sections; the unified
+/// daemon on binarytest expects `[binarytest-verium]` / `[binarytest-vericoin]`.
+fn migrate_conf_section(coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {
+    let expected = daemon_config_section(coin, cfg);
+    let legacy = match coin {
+        CoinId::Verium => "verium",
+        CoinId::Vericoin => "vericoin",
+    };
+    if expected == legacy {
+        return Ok(());
     }
+    let path = node_conf_path(coin, cfg);
+    if !path.is_file() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&path)?;
+    let has_expected = content.lines().any(|l| {
+        l.trim()
+            .eq_ignore_ascii_case(format!("[{expected}]").as_str())
+    });
+    if has_expected {
+        return Ok(());
+    }
+    let mut overrides: Vec<(&str, String)> = Vec::new();
+    let mut in_legacy = false;
+    for raw in content.lines() {
+        let line = strip_comment(raw).trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line.trim_start_matches('[').trim_end_matches(']').trim();
+            in_legacy = name.eq_ignore_ascii_case(legacy);
+            continue;
+        }
+        if !in_legacy {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            overrides.push((key.trim(), value.trim().to_string()));
+        }
+    }
+    if overrides.is_empty() {
+        return Ok(());
+    }
+    write_node_conf_overrides(coin, &node_conf_dir(cfg), cfg, &overrides)?;
+    tracing::info!(
+        "migrated [{legacy}] RPC settings into [{expected}] in {}",
+        path.display()
+    );
+    Ok(())
+}
+
+/// veriumd writes `.cookie` under the chain subfolder (unified builds) or the
+/// parent `-datadir` (legacy verium-only v1.x). Check both.
+pub fn resolve_cookie_path(coin: CoinId, cfg: &DaemonConfig) -> Option<PathBuf> {
+    let chain_cookie = chain_datadir(coin, cfg).join(".cookie");
+    if chain_cookie.is_file() {
+        return Some(chain_cookie);
+    }
+    let root_cookie = cfg.datadir.join(".cookie");
+    if root_cookie.is_file() {
+        return Some(root_cookie);
+    }
+    None
+}
+
+/// One-time migration reads legacy flat `verium.conf` into `vericonomy.conf` sections.
+/// Ongoing writes go to `vericonomy.conf` only — see `migrate_legacy_verium_conf`.
+pub fn refresh_config_paths(coin: CoinId, cfg: &mut DaemonConfig) -> AppResult<()> {
+    migrate_legacy_verium_conf(coin, cfg)?;
+    migrate_conf_section(coin, cfg)?;
+    let conf_dir = node_conf_dir(cfg);
+    parse_node_conf_into(coin, &conf_dir, cfg)?;
+    cfg.cookie_path = resolve_cookie_path(coin, cfg);
     cfg.rpc_password_set = cfg.rpc_password.is_some();
     Ok(())
 }
 
 pub fn generate_rpc_password() -> String {
     uuid::Uuid::new_v4().simple().to_string()
+}
+
+pub fn generate_rpc_user() -> String {
+    format!("wallet_{}", &generate_rpc_password()[..8])
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -441,12 +1138,25 @@ pub struct RpcAuthDiagnostics {
 
 pub fn rpc_auth_diagnostics(coin: CoinId, cfg: &DaemonConfig) -> RpcAuthDiagnostics {
     let conf_path = node_conf_path(coin, cfg);
+    let section = daemon_config_section(coin, cfg);
     let mut rpc_user_in_conf = false;
     let mut rpc_password_in_conf = false;
     if conf_path.exists() {
         if let Ok(content) = fs::read_to_string(&conf_path) {
+            let mut current_section: Option<String> = None;
             for line in content.lines() {
                 let line = strip_comment(line).trim();
+                if let Some(name) = line
+                    .strip_prefix('[')
+                    .and_then(|s| s.strip_suffix(']'))
+                    .map(str::trim)
+                {
+                    current_section = Some(name.to_string());
+                    continue;
+                }
+                if current_section.as_deref() != Some(section.as_str()) {
+                    continue;
+                }
                 if let Some((key, _)) = line.split_once('=') {
                     match key.trim() {
                         "rpcuser" => rpc_user_in_conf = true,
@@ -457,11 +1167,7 @@ pub fn rpc_auth_diagnostics(coin: CoinId, cfg: &DaemonConfig) -> RpcAuthDiagnost
             }
         }
     }
-    let cookie_present = cfg
-        .cookie_path
-        .as_ref()
-        .map(|p| p.exists())
-        .unwrap_or(false);
+    let cookie_present = resolve_cookie_path(coin, cfg).is_some();
     let app_auth_method = if rpc_password_in_conf && rpc_user_in_conf {
         "userpass".to_string()
     } else if cookie_present {
@@ -484,6 +1190,7 @@ pub fn rpc_auth_diagnostics(coin: CoinId, cfg: &DaemonConfig) -> RpcAuthDiagnost
 pub fn write_node_conf_overrides(
     coin: CoinId,
     datadir: &Path,
+    cfg: &DaemonConfig,
     overrides: &[(&str, String)],
 ) -> AppResult<()> {
     let path = datadir.join(coin.conf_filename());
@@ -494,17 +1201,26 @@ pub fn write_node_conf_overrides(
         let _ = fs::copy(&path, &backup);
     }
 
+    let section = daemon_config_section(coin, cfg);
     let mut lines: Vec<String> = existing.lines().map(|l| l.to_string()).collect();
-    if coin.conf_section().is_some() && !existing.contains('[') {
-        if let Some(section) = coin.conf_section() {
-            lines.insert(0, format!("[{section}]"));
-        }
+    if !existing.contains('[') {
+        lines.insert(0, format!("[{section}]"));
     }
     for (key, value) in overrides {
         let prefix = format!("{key}=");
         let comment_prefix = format!("#{key}=");
         let mut replaced = false;
+        let mut in_section = false;
         for line in lines.iter_mut() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                let name = trimmed.trim_start_matches('[').trim_end_matches(']').trim();
+                in_section = name == section;
+                continue;
+            }
+            if !in_section {
+                continue;
+            }
             let trimmed = line.trim_start();
             if trimmed.starts_with(&prefix) || trimmed.starts_with(&comment_prefix) {
                 *line = format!("{key}={value}");
@@ -513,27 +1229,47 @@ pub fn write_node_conf_overrides(
             }
         }
         if !replaced {
-            lines.push(format!("{key}={value}"));
+            if let Some(idx) = lines.iter().position(|l| {
+                l.trim()
+                    .eq_ignore_ascii_case(format!("[{section}]").as_str())
+            }) {
+                lines.insert(idx + 1, format!("{key}={value}"));
+            } else {
+                lines.push(format!("[{section}]"));
+                lines.push(format!("{key}={value}"));
+            }
         }
     }
     let joined = lines.join("\n");
     fs::write(&path, joined)?;
+    let _ = restrict_conf_permissions(&path);
+    if overrides.iter().any(|(k, _)| *k == "rpcpassword") {
+        let cookie = chain_datadir(coin, cfg).join(".cookie");
+        if cookie.is_file() {
+            let _ = fs::remove_file(&cookie);
+            tracing::info!(
+                "removed stale {} after writing rpcpassword to conf",
+                cookie.display()
+            );
+        }
+    }
     Ok(())
 }
 
 pub fn write_verium_conf_overrides(
     datadir: &Path,
+    cfg: &DaemonConfig,
     overrides: &[(&str, String)],
 ) -> AppResult<()> {
-    write_node_conf_overrides(CoinId::Verium, datadir, overrides)
+    write_node_conf_overrides(CoinId::Verium, datadir, cfg, overrides)
 }
 
 pub fn node_conf_path(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
-    cfg.datadir.join(coin.conf_filename())
+    node_conf_dir(cfg).join(coin.conf_filename())
 }
 
 pub fn node_conf_backup_path(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
-    cfg.datadir.join(format!("{}.bak", coin.conf_filename()))
+    node_conf_dir(cfg).join(format!("{}.bak", coin.conf_filename()))
 }
 
 pub fn read_node_conf_file(coin: CoinId, cfg: &DaemonConfig) -> AppResult<String> {
@@ -545,7 +1281,7 @@ pub fn read_node_conf_file(coin: CoinId, cfg: &DaemonConfig) -> AppResult<String
 }
 
 pub fn write_node_conf_file(coin: CoinId, cfg: &DaemonConfig, content: &str) -> AppResult<()> {
-    fs::create_dir_all(&cfg.datadir)?;
+    fs::create_dir_all(node_conf_dir(cfg))?;
     let path = node_conf_path(coin, cfg);
     if path.exists() {
         let _ = fs::copy(&path, node_conf_backup_path(coin, cfg));
@@ -594,4 +1330,36 @@ pub fn clear_wallet_bdb_environment(wallet_dat: &Path) -> AppResult<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    #[test]
+    fn generate_rpc_user_has_wallet_prefix() {
+        let user = generate_rpc_user();
+        assert!(user.starts_with("wallet_"));
+        assert!(user.len() > "wallet_".len());
+    }
+
+    #[test]
+    fn generate_rpc_password_is_non_empty_uuid() {
+        let pass = generate_rpc_password();
+        assert!(!pass.is_empty());
+        assert!(pass.len() >= 32);
+    }
+
+    #[test]
+    fn detects_incomplete_chain_snapshot() {
+        let tmp = std::env::temp_dir().join(format!("chain-test-{}", uuid::Uuid::new_v4()));
+        let blocks = tmp.join("blocks");
+        let chainstate = tmp.join("chainstate");
+        std::fs::create_dir_all(&blocks).unwrap();
+        std::fs::create_dir_all(&chainstate).unwrap();
+        std::fs::write(blocks.join("blk00000.dat"), vec![0u8; 20_000_000]).unwrap();
+        std::fs::write(chainstate.join("CURRENT"), b"CURRENT").unwrap();
+        assert!(chain_snapshot_needs_reindex(&tmp));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

@@ -18,7 +18,10 @@ interface RecoveryPhraseWizardProps {
 
 type Step = "generate" | "reveal" | "verify" | "done";
 
-export function RecoveryPhraseWizard({ onComplete, onSkip }: RecoveryPhraseWizardProps) {
+export function RecoveryPhraseWizard({
+  onComplete,
+  onSkip,
+}: RecoveryPhraseWizardProps) {
   const coin = useActiveCoin();
   const twoFa = useTwoFactorGate(coin);
   const [step, setStep] = useState<Step>("generate");
@@ -42,11 +45,9 @@ export function RecoveryPhraseWizard({ onComplete, onSkip }: RecoveryPhraseWizar
   const words = phrase.split(/\s+/).filter(Boolean);
 
   const startGenerate = () => {
-    void twoFa.gate(
-      "show_recovery_phrase",
-      () => generate.mutate(),
-      { title: "Confirm recovery phrase setup with 2FA" },
-    );
+    void twoFa.gate("show_recovery_phrase", () => generate.mutate(), {
+      title: "Confirm recovery phrase setup with 2FA",
+    });
   };
 
   const prompt = (
@@ -65,8 +66,8 @@ export function RecoveryPhraseWizard({ onComplete, onSkip }: RecoveryPhraseWizar
         <div className="flex flex-col gap-4">
           <p className="text-sm text-fg-muted">
             A 24-word recovery phrase is the master key to your wallet. Write it
-            down on paper and store it somewhere safe. Anyone with this phrase can
-            steal your coins.
+            down on paper and store it somewhere safe. Anyone with this phrase
+            can steal your coins.
           </p>
           <Button onClick={startGenerate} disabled={generate.isPending}>
             {generate.isPending ? "Generating…" : "Generate recovery phrase"}
@@ -93,7 +94,11 @@ export function RecoveryPhraseWizard({ onComplete, onSkip }: RecoveryPhraseWizar
               onClick={() => setRevealed((v) => !v)}
               className="flex items-center gap-1 text-xs text-fg-muted hover:text-fg"
             >
-              {revealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              {revealed ? (
+                <EyeOff className="h-3.5 w-3.5" />
+              ) : (
+                <Eye className="h-3.5 w-3.5" />
+              )}
               {revealed ? "Hide" : "Reveal"}
             </button>
           </div>
@@ -103,7 +108,7 @@ export function RecoveryPhraseWizard({ onComplete, onSkip }: RecoveryPhraseWizar
             }`}
           >
             {words.map((word, i) => (
-              <div key={i} className="font-mono text-xs">
+              <div key={i} className="text-xs">
                 <span className="text-fg-subtle">{i + 1}.</span> {word}
               </div>
             ))}
@@ -114,7 +119,10 @@ export function RecoveryPhraseWizard({ onComplete, onSkip }: RecoveryPhraseWizar
               variant="secondary"
               onClick={() => {
                 void navigator.clipboard.writeText(phrase);
-                window.setTimeout(() => void navigator.clipboard.writeText(""), 30_000);
+                window.setTimeout(
+                  () => void navigator.clipboard.writeText(""),
+                  30_000,
+                );
               }}
             >
               <Copy className="h-3.5 w-3.5" />
@@ -128,7 +136,8 @@ export function RecoveryPhraseWizard({ onComplete, onSkip }: RecoveryPhraseWizar
               onChange={(e) => setAcknowledged(e.target.checked)}
               className="mt-0.5 accent-accent"
             />
-            I have written down my recovery phrase and stored it securely offline.
+            I have written down my recovery phrase and stored it securely
+            offline.
           </label>
           <Button disabled={!acknowledged} onClick={() => setStep("verify")}>
             Continue to verification
@@ -144,7 +153,8 @@ export function RecoveryPhraseWizard({ onComplete, onSkip }: RecoveryPhraseWizar
         {prompt}
         <div className="flex flex-col gap-4">
           <p className="text-sm text-fg-muted">
-            Confirm you wrote the phrase correctly by entering the requested words.
+            Confirm you wrote the phrase correctly by entering the requested
+            words.
           </p>
           {indices.map((idx, i) => (
             <div key={idx} className="flex flex-col gap-1">
@@ -159,7 +169,7 @@ export function RecoveryPhraseWizard({ onComplete, onSkip }: RecoveryPhraseWizar
                   next[i] = e.target.value;
                   setAnswers(next);
                 }}
-                className="h-9 rounded-md border border-border bg-bg-subtle px-3 font-mono text-sm outline-none focus:border-accent"
+                className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-sm outline-none focus:border-accent"
               />
             </div>
           ))}

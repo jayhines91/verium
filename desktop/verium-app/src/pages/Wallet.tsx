@@ -18,18 +18,11 @@ import {
   isWalletEncrypted,
   isWalletLocked,
   isWalletUnlocked,
-  normalizeUnlockDuration,
-  patchUnlockDurationPrefs,
-  unlockDurationForCoin,
-  UNLOCK_DURATION_OPTIONS,
 } from "@/lib/wallet-unlock";
-import { useUserPreferences } from "@/lib/user-preferences";
-import { cn, formatNumber, formatVrm } from "@/lib/utils";
+import { formatNumber, formatVrm } from "@/lib/utils";
 
 export function Wallet() {
   const coin = useActiveCoin();
-  const prefs = useUserPreferences((s) => s.prefs);
-  const updatePrefs = useUserPreferences((s) => s.update);
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(coin),
@@ -40,7 +33,6 @@ export function Wallet() {
   const encrypted = isWalletEncrypted(wallet.data);
   const unlocked = isWalletUnlocked(wallet.data);
   const unlockedUntil = wallet.data?.unlocked_until ?? 0;
-  const durationSeconds = unlockDurationForCoin(prefs, coin);
 
   if (wallet.isLoading) {
     return (
@@ -86,7 +78,7 @@ export function Wallet() {
           <CardContent className="py-6">
             <WalletUnlockForm
               title="Unlock your wallet"
-              description="Enter your passphrase to view balances, receive addresses, and mine. Your passphrase is never stored — only the unlock duration preference is remembered."
+              description="Enter your passphrase to view balances, receive addresses, and mine. Your passphrase is never stored."
             />
           </CardContent>
         </Card>
@@ -156,53 +148,6 @@ export function Wallet() {
               <Badge tone="neutral">Locked</Badge>
             )}
           </div>
-          {encrypted && unlocked && (
-            <>
-              <p className="text-xs text-fg-subtle">
-                Your wallet stays unlocked for the duration below while you use
-                the app. Sending still requires an unlocked wallet.
-              </p>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm text-fg-muted">
-                  Keep wallet unlocked for
-                </label>
-                {UNLOCK_DURATION_OPTIONS.map((option) => {
-                  const active =
-                    normalizeUnlockDuration(durationSeconds) === option.seconds;
-                  return (
-                    <label
-                      key={option.id}
-                      className={cn(
-                        "flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm transition-colors",
-                        active
-                          ? "border-accent bg-accent/10"
-                          : "border-border bg-bg-subtle hover:border-border-strong",
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        name="wallet-unlock-duration-pref"
-                        checked={active}
-                        onChange={() =>
-                          void updatePrefs(
-                            patchUnlockDurationPrefs(prefs, coin, option.seconds),
-                          )
-                        }
-                        className="mt-0.5 accent-accent"
-                      />
-                      <span
-                        className={
-                          option.warning ? "text-warning" : undefined
-                        }
-                      >
-                        {option.label}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </>
-          )}
         </CardContent>
         <CardFooter className="text-xs text-fg-subtle">
           {`Keypool size: ${formatNumber(wallet.data.keypoolsize ?? 0)}`}

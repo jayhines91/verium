@@ -60,7 +60,9 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
         label: label.trim(),
         message: message.trim(),
         amount:
-          parsedAmount != null && Number.isFinite(parsedAmount) && parsedAmount > 0
+          parsedAmount != null &&
+          Number.isFinite(parsedAmount) &&
+          parsedAmount > 0
             ? parsedAmount
             : null,
         address,
@@ -220,7 +222,9 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
                       {row.message || "—"}
                     </td>
                     <td className="px-4 py-2 text-right tabular-nums">
-                      {row.amount != null ? formatCoinAmount(row.amount, coin, 8) : "—"}
+                      {row.amount != null
+                        ? formatCoinAmount(row.amount, coin, 8)
+                        : "—"}
                     </td>
                   </tr>
                 );
@@ -300,12 +304,14 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
             message={selected.message || undefined}
           />
 
-          <div className="mt-3 flex items-center gap-2 rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs">
+          <div className="mt-3 flex items-center gap-2 rounded-md border border-border bg-bg-panel px-3 py-2 text-xs">
             <span className="min-w-0 flex-1 break-all">{selected.address}</span>
             <button
               type="button"
               aria-label="Copy address"
-              onClick={() => void navigator.clipboard.writeText(selected.address)}
+              onClick={() =>
+                void navigator.clipboard.writeText(selected.address)
+              }
               className="shrink-0 text-fg-muted hover:text-fg"
             >
               <Copy className="h-4 w-4" />

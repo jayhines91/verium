@@ -68,8 +68,18 @@ export async function twoFactorStartEnrollment(): Promise<TwoFactorEnrollment> {
   return invoke("two_factor_start_enrollment");
 }
 
-export async function twoFactorConfirmEnrollment(code: string): Promise<boolean> {
-  return invoke("two_factor_confirm_enrollment", { code });
+export async function twoFactorConfirmEnrollment(
+  code: string,
+  enrollmentSecret?: string | null,
+): Promise<void> {
+  return invoke("two_factor_confirm_enrollment", {
+    code,
+    enrollmentSecret: enrollmentSecret ?? null,
+  });
+}
+
+export async function twoFactorPendingOtpauthUri(): Promise<string | null> {
+  return invoke("two_factor_pending_otpauth_uri");
 }
 
 export async function twoFactorVerify(code: string): Promise<boolean> {

@@ -109,7 +109,7 @@ export function SendConfirmDialog({
 
             {!multiple ? (
               recipients[0] && (
-                <p className="break-all font-mono text-xs leading-relaxed text-fg">
+                <p className="break-all text-xs leading-relaxed text-fg">
                   {formatRecipientLine(recipients[0])}
                 </p>
               )
@@ -123,7 +123,7 @@ export function SendConfirmDialog({
                   {recipients.map((row) => (
                     <li
                       key={`${row.address}-${row.amount}`}
-                      className="break-all font-mono text-[11px] leading-relaxed text-fg"
+                      className="break-all text-[11px] leading-relaxed text-fg"
                     >
                       {formatRecipientLine(row)}
                     </li>

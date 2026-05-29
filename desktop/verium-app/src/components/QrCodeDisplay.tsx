@@ -25,9 +25,13 @@ export function QrCodeDisplay({
   const [uri, setUri] = useState(address);
 
   useEffect(() => {
-    void buildPaymentUri(coin, address, amount ?? undefined, label, message).then(
-      setUri,
-    );
+    void buildPaymentUri(
+      coin,
+      address,
+      amount ?? undefined,
+      label,
+      message,
+    ).then(setUri);
   }, [coin, address, amount, label, message]);
 
   return (
@@ -35,7 +39,7 @@ export function QrCodeDisplay({
       <div className="rounded-lg border border-border bg-white p-3">
         <QRCodeSVG value={uri} size={size} level="M" includeMargin={false} />
       </div>
-      <p className="max-w-xs break-all text-center font-mono text-[10px] text-fg-muted">
+      <p className="max-w-xs break-all text-center text-[10px] text-fg-muted">
         {uri}
       </p>
       <div className="flex gap-2">

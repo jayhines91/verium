@@ -9,6 +9,7 @@
  *   node scripts/fetch-veriumd.cjs --triple=... # explicit target triple
  *   VERIUMD_DOWNLOAD_BASE=... node scripts/fetch-veriumd.cjs
  *   VERIUMD_LOCAL=/path/to/veriumd node scripts/fetch-veriumd.cjs
+ *   DACE_DEV=1 node scripts/fetch-veriumd.cjs   # prefer monorepo build (for binarytest/DACE)
  *
  * Environment:
  *   VERIUMD_DOWNLOAD_BASE  Override base URL (default: files.vericonomy.com/vrm/releases/)
@@ -17,6 +18,9 @@
  *   VERIUMD_SKIP_IF_PRESENT=1  Exit success if the sidecar already exists
  *   VERIUMD_FORCE=1        Overwrite existing sidecar
  *   VERIUMD_TARGET_TRIPLE  Explicit Rust target triple (overrides auto-detect)
+ *   DACE_DEV=1             Prefer a monorepo build (vericoin/src/veriumd) over CDN — required for
+ *                          the binarytest (DACE) network, which the production CDN binaries do not
+ *                          yet support.
  */
 
 const fs = require("node:fs");
@@ -218,6 +222,7 @@ function copyLocalBinary(localPath, destPath) {
   fs.copyFileSync(localPath, destPath);
   if (process.platform !== "win32") fs.chmodSync(destPath, 0o755);
   log(`copied ${localPath} -> ${destPath}`);
+  warnIfNotDace("veriumd", destPath);
 }
 
 /** Extract the `veriumd` binary out of a zip into destPath. */
@@ -289,6 +294,51 @@ function findBinary(dir, name) {
   return null;
 }
 
+function supportsBinarytest(binaryPath) {
+  if (!fs.existsSync(binaryPath)) return false;
+  try {
+    const r = spawnSync(binaryPath, ["-help"], { encoding: "utf8", timeout: 15000 });
+    const out = `${r.stdout || ""}${r.stderr || ""}`;
+    return out.includes("-binarytest");
+  } catch {
+    return false;
+  }
+}
+
+function warnIfNotDace(label, destPath) {
+  if (process.env.DACE_DEV === "1" && !supportsBinarytest(destPath)) {
+    log(
+      `WARNING: ${label} at ${destPath} does not advertise -binarytest. ` +
+        "Binarytest mode will not work until you build from vericoin/ (see build-dace.ps1).",
+    );
+  }
+}
+
+function isRealBinary(filePath) {
+  try {
+    return fs.existsSync(filePath) && fs.statSync(filePath).size >= MIN_REAL_BINARY_BYTES;
+  } catch {
+    return false;
+  }
+}
+
+/** Look for a locally-built veriumd inside the monorepo. The DACE-capable
+ *  binary lives under vericoin/src/ (the unified tree builds both veriumd
+ *  and vericoind via CLIENT_IS_VERIUM). */
+function discoverMonorepoBinary(isWindows) {
+  const name = isWindows ? "veriumd.exe" : "veriumd";
+  const candidates = [
+    path.join(ROOT, "..", "..", "..", "vericoin", "src", name),
+    path.join(ROOT, "..", "..", "..", "vericoin", "src", "qt", name),
+    path.join(ROOT, "..", "..", "..", "vericoin", "build_msvc", "x64", "Release", name),
+    path.join(ROOT, "..", "..", "verium", "src", name),
+  ];
+  for (const candidate of candidates) {
+    if (isRealBinary(candidate)) return candidate;
+  }
+  return null;
+}
+
 async function main() {
   const triple = detectTargetTriple();
   const dest = sidecarPath(triple);
@@ -319,12 +369,27 @@ async function main() {
     return;
   }
 
-  // Path 1: local copy
-  const local = process.env.VERIUMD_LOCAL || args.local;
-  if (local) {
-    copyLocalBinary(local, dest);
+  // Path 1: local copy (explicit override always wins)
+  const explicitLocal = process.env.VERIUMD_LOCAL || args.local;
+  if (explicitLocal) {
+    copyLocalBinary(explicitLocal, dest);
     log(`Installed local veriumd as ${path.basename(dest)}`);
     return;
+  }
+
+  // Path 1b: DACE_DEV — prefer the monorepo build before the CDN. The
+  // production CDN veriumd does not include DACE / binarytest support.
+  if (process.env.DACE_DEV === "1" || args["dace-dev"]) {
+    const monorepo = discoverMonorepoBinary(isWindowsTriple(triple));
+    if (monorepo) {
+      log(`DACE_DEV: using monorepo build at ${monorepo}`);
+      copyLocalBinary(monorepo, dest);
+      return;
+    }
+    log(
+      "DACE_DEV=1 set but no monorepo veriumd found. Build with: " +
+        "cd vericoin && ./autogen.sh && ./configure --enable-verium --without-gui && make",
+    );
   }
 
   // Path 2: download archive from CDN (try known filenames until one works)
@@ -344,6 +409,7 @@ async function main() {
         if (!isWindowsTriple(triple)) fs.chmodSync(dest, 0o755);
       }
       log(`Sidecar installed: ${dest}`);
+      warnIfNotDace("veriumd", dest);
       return;
     } catch (e) {
       lastErr = e;

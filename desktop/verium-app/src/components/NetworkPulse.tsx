@@ -8,7 +8,8 @@ import {
 import { Badge } from "@/components/ui/Badge";
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
-import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
+import { fetchExplorerStats } from "@/lib/explorer-api";
+import { useExplorerQueriesEnabled } from "@/lib/network-mode";
 import { networkHashToKhm } from "@/lib/mining-revenue";
 import { formatNumber } from "@/lib/utils";
 
@@ -24,22 +25,17 @@ export function NetworkPulse({
   localNetworkHash,
 }: NetworkPulseProps) {
   const profile = getCoinProfile(coin);
-
-  const enabled = useQuery({
-    queryKey: ["explorer-api-enabled"],
-    queryFn: isExplorerApiEnabled,
-    staleTime: Infinity,
-  });
+  const explorerEnabled = useExplorerQueriesEnabled();
 
   const stats = useQuery({
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
-    enabled: enabled.data === true,
+    enabled: explorerEnabled,
     refetchInterval: 60_000,
     retry: 0,
   });
 
-  if (enabled.data !== true) {
+  if (!explorerEnabled) {
     return null;
   }
 

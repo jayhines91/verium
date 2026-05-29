@@ -186,9 +186,9 @@ pub fn encrypt_for_cloud(plaintext: &[u8], password: &str) -> AppResult<Vec<u8>>
 }
 
 pub fn create_local_backup(cfg: &DaemonConfig, coin: CoinId) -> AppResult<String> {
-    let live = resolve_wallet_dat_path(cfg)
+    let live = resolve_wallet_dat_path(coin, cfg)
         .ok_or_else(|| AppError::other("no wallet.dat found"))?;
-    let backup_dir = wallet_backup_dir(cfg)?;
+    let backup_dir = wallet_backup_dir(coin, cfg)?;
     std::fs::create_dir_all(&backup_dir)?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let dest = backup_dir.join(format!(
@@ -201,8 +201,8 @@ pub fn create_local_backup(cfg: &DaemonConfig, coin: CoinId) -> AppResult<String
     Ok(dest.display().to_string())
 }
 
-pub fn prune_old_backups(cfg: &DaemonConfig, config: &BackupSchedulerConfig) -> AppResult<u32> {
-    let backup_dir = wallet_backup_dir(cfg)?;
+pub fn prune_old_backups(coin: CoinId, cfg: &DaemonConfig, config: &BackupSchedulerConfig) -> AppResult<u32> {
+    let backup_dir = wallet_backup_dir(coin, cfg)?;
     if !backup_dir.exists() {
         return Ok(0);
     }
@@ -247,7 +247,7 @@ pub fn export_encrypted_cloud(
         .cloud_folder
         .as_ref()
         .ok_or_else(|| AppError::other("cloud backup folder not configured"))?;
-    let live = resolve_wallet_dat_path(cfg)
+    let live = resolve_wallet_dat_path(coin, cfg)
         .ok_or_else(|| AppError::other("no wallet.dat found"))?;
     let bytes = std::fs::read(&live)?;
     let encrypted = encrypt_for_cloud(&bytes, password)?;

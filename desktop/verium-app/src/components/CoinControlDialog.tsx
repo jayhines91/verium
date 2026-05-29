@@ -141,7 +141,7 @@ export function CoinControlDialog({
                           className="h-3.5 w-3.5 accent-accent"
                         />
                       </td>
-                      <td className="break-all px-3 py-2 font-mono text-[11px]">
+                      <td className="break-all px-3 py-2 text-[11px]">
                         {u.address ?? "—"}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">

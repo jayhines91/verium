@@ -209,7 +209,7 @@ export function Network() {
                           <td className="px-4 py-2 tabular-nums">
                             {entry.rank ?? "—"}
                           </td>
-                          <td className="truncate px-4 py-2 font-mono text-xs">
+                          <td className="truncate px-4 py-2 text-xs">
                             <ExplorerLink
                               target={{
                                 kind: "address",
@@ -236,10 +236,10 @@ export function Network() {
               <CardDescription>
                 Side branches on <strong>mainnet</strong> that the network has
                 seen but are <strong>not</strong> the active canonical chain (
-                <span className="font-mono text-xs">valid-fork</span>,{" "}
-                <span className="font-mono text-xs">valid-headers</span>). These
-                are not testnet blocks. For the live main chain, see Dashboard →
-                Recent blocks.
+                <span className="text-xs">valid-fork</span>,{" "}
+                <span className="text-xs">valid-headers</span>). These are not
+                testnet blocks. For the live main chain, see Dashboard → Recent
+                blocks.
                 {explorerStats.data?.height !== undefined && (
                   <>
                     {" "}
@@ -365,9 +365,7 @@ export function Network() {
                     key={p.id}
                     className="border-t border-border odd:bg-bg-subtle/30"
                   >
-                    <td className="truncate px-4 py-2 font-mono text-xs">
-                      {p.addr}
-                    </td>
+                    <td className="truncate px-4 py-2 text-xs">{p.addr}</td>
                     <td className="px-4 py-2">
                       <Badge tone={p.inbound ? "neutral" : "accent"}>
                         {p.inbound ? "in" : "out"}

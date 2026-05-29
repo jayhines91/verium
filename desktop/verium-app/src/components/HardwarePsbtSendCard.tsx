@@ -56,8 +56,8 @@ export function HardwarePsbtSendCard() {
           Hardware wallet PSBT send
         </CardTitle>
         <CardDescription>
-          Build a PSBT on the node, sign on your device (USB, file, or animated QR),
-          then paste the signed PSBT to broadcast.
+          Build a PSBT on the node, sign on your device (USB, file, or animated
+          QR), then paste the signed PSBT to broadcast.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 text-sm">
@@ -66,7 +66,7 @@ export function HardwarePsbtSendCard() {
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             placeholder="Recipient address"
-            className="h-9 rounded-md border border-border bg-bg-subtle px-3 font-mono text-xs outline-none focus:border-accent"
+            className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-xs outline-none focus:border-accent"
           />
           <input
             value={amount}
@@ -92,24 +92,28 @@ export function HardwarePsbtSendCard() {
 
         {psbt && (
           <div className="space-y-2">
-            <label className="text-xs text-fg-muted">Unsigned PSBT (copy to device)</label>
+            <label className="text-xs text-fg-muted">
+              Unsigned PSBT (copy to device)
+            </label>
             <textarea
               readOnly
               value={psbt}
               rows={4}
-              className="w-full rounded-md border border-border bg-bg-subtle px-3 py-2 font-mono text-[10px] outline-none"
+              className="w-full rounded-md border border-border bg-bg-subtle px-3 py-2 text-[10px] outline-none"
             />
           </div>
         )}
 
         <div className="space-y-2">
-          <label className="text-xs text-fg-muted">Signed PSBT from device</label>
+          <label className="text-xs text-fg-muted">
+            Signed PSBT from device
+          </label>
           <textarea
             value={signedPsbt}
             onChange={(e) => setSignedPsbt(e.target.value)}
             rows={4}
             placeholder="Paste signed PSBT base64…"
-            className="w-full rounded-md border border-border bg-bg-subtle px-3 py-2 font-mono text-[10px] outline-none focus:border-accent"
+            className="w-full rounded-md border border-border bg-bg-subtle px-3 py-2 text-[10px] outline-none focus:border-accent"
           />
         </div>
 

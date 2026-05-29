@@ -87,8 +87,16 @@ pub fn two_factor_start_enrollment() -> AppResult<TwoFactorEnrollment> {
 }
 
 #[tauri::command]
-pub fn two_factor_confirm_enrollment(code: String) -> AppResult<bool> {
-    two_factor::confirm_enrollment(&code)
+pub fn two_factor_confirm_enrollment(
+    code: String,
+    enrollment_secret: Option<String>,
+) -> AppResult<()> {
+    two_factor::confirm_enrollment(&code, enrollment_secret.as_deref())
+}
+
+#[tauri::command]
+pub fn two_factor_pending_otpauth_uri() -> AppResult<Option<String>> {
+    two_factor::pending_otpauth_uri()
 }
 
 #[tauri::command]
@@ -368,7 +376,7 @@ pub async fn backup_run_now(
     let cfg = state.config(coin).await?;
     let path = backup_scheduler::create_local_backup(&cfg, coin)?;
     let config = backup_scheduler::load_config()?;
-    backup_scheduler::prune_old_backups(&cfg, &config)?;
+    backup_scheduler::prune_old_backups(coin, &cfg, &config)?;
     audit_log::append("backup", &format!("Auto backup to {path}"), Some(coin.as_str()))?;
     Ok(path)
 }

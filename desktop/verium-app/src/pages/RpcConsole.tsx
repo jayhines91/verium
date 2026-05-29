@@ -55,7 +55,9 @@ export function RpcConsole() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const run = useMutation({
-    mutationFn: async (line: string): Promise<{ command: string; result: unknown }> => {
+    mutationFn: async (
+      line: string,
+    ): Promise<{ command: string; result: unknown }> => {
       const [method, ...rest] = line.trim().split(/\s+/);
       if (!method) throw new Error("empty command");
       const params = rest.map(parseArg);
@@ -103,7 +105,8 @@ export function RpcConsole() {
     }
     if (e.key === "ArrowUp" && history.length > 0) {
       e.preventDefault();
-      const next = historyIdx === null ? history.length - 1 : Math.max(0, historyIdx - 1);
+      const next =
+        historyIdx === null ? history.length - 1 : Math.max(0, historyIdx - 1);
       setHistoryIdx(next);
       setDraft(history[next] ?? "");
     } else if (e.key === "ArrowDown") {
@@ -136,12 +139,11 @@ export function RpcConsole() {
         <CardContent className="flex flex-col gap-3">
           <div
             ref={scrollRef}
-            className="max-h-[55vh] min-h-[280px] overflow-y-auto rounded-md border border-border bg-bg-subtle/60 p-3 font-mono text-xs"
+            className="max-h-[55vh] min-h-[280px] overflow-y-auto rounded-md border border-border bg-bg-subtle/60 p-3 text-xs"
           >
             {entries.length === 0 ? (
               <div className="text-fg-subtle">
-                Try{" "}
-                <span className="font-semibold">getblockchaininfo</span>,{" "}
+                Try <span className="font-semibold">getblockchaininfo</span>,{" "}
                 <span className="font-semibold">getpeerinfo</span>, or{" "}
                 <span className="font-semibold">help</span>.
               </div>
@@ -172,10 +174,13 @@ export function RpcConsole() {
               spellCheck={false}
               autoFocus
               className={cn(
-                "h-10 flex-1 rounded-md border border-border bg-bg-panel px-3 font-mono text-sm outline-none focus:border-accent",
+                "h-10 flex-1 rounded-md border border-border bg-bg-panel px-3 text-sm outline-none focus:border-accent",
               )}
             />
-            <Button onClick={handleSubmit} disabled={!draft.trim() || run.isPending}>
+            <Button
+              onClick={handleSubmit}
+              disabled={!draft.trim() || run.isPending}
+            >
               {run.isPending ? "Running…" : "Run"}
             </Button>
             <Button variant="ghost" onClick={() => setEntries([])}>
@@ -197,7 +202,7 @@ function parseArg(raw: string): unknown {
   if (raw === "false") return false;
   if (raw === "null") return null;
   if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
-  if (raw.startsWith("[") || raw.startsWith("{") || raw.startsWith("\"")) {
+  if (raw.startsWith("[") || raw.startsWith("{") || raw.startsWith('"')) {
     try {
       return JSON.parse(raw);
     } catch {

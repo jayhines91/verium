@@ -29,7 +29,8 @@ import { WalletUnlockGate } from "@/components/WalletUnlockGate";
 import { EXPLORER_PROFITABILITY } from "@/lib/verium-links";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import { useUserPreferences } from "@/lib/user-preferences";
-import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
+import { fetchExplorerStats } from "@/lib/explorer-api";
+import { useExplorerQueriesEnabled } from "@/lib/network-mode";
 import {
   buildNetworkStats,
   estimateDailyMining,
@@ -65,6 +66,7 @@ import {
   clearMiningStoppedByUser,
   markMiningStoppedByUser,
 } from "@/lib/mining-session";
+import { isChainSynced } from "@/lib/bootstrap-policy";
 import { isMinerBooting, miningInfoRefetchMs } from "@/lib/mining-boot";
 import {
   MinerBootBadge,
@@ -129,15 +131,11 @@ export function Mining() {
     refetchInterval: 10_000,
   });
   const daemonStatus = useDaemonStatus(coin);
-  const explorerEnabled = useQuery({
-    queryKey: ["explorer-api-enabled"],
-    queryFn: isExplorerApiEnabled,
-    staleTime: Infinity,
-  });
+  const explorerEnabled = useExplorerQueriesEnabled();
   const explorerStats = useQuery({
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
-    enabled: explorerEnabled.data === true,
+    enabled: explorerEnabled,
     refetchInterval: 30_000,
     retry: 0,
   });
@@ -194,6 +192,23 @@ export function Mining() {
 
   const ibd = blockchain.data?.initialblockdownload;
   const syncStalled = daemonStatus.data?.sync_stalled === true;
+  const networkTip = explorerStats.data?.height;
+  const syncCtx = {
+    connected: daemonStatus.data?.connected === true,
+    syncStalled,
+    networkTip,
+  };
+  const chainSynced = isChainSynced(blockchain.data, syncCtx);
+  const syncTarget = blockchain.data
+    ? Math.max(
+        blockchain.data.headers ?? blockchain.data.blocks,
+        networkTip ?? 0,
+      )
+    : networkTip;
+  const blocksBehind =
+    blockchain.data?.blocks != null && syncTarget != null
+      ? Math.max(0, syncTarget - blockchain.data.blocks)
+      : undefined;
   const active = minerActive;
   const localHashrate = mining.data?.hashrate ?? 0;
   const minerBooting = isMinerBooting(
@@ -245,10 +260,20 @@ export function Mining() {
             Sync is stalled — rebuild WSL veriumd from the banner at the top.
           </div>
         )}
-        {ibd && !syncStalled && (
+        {!chainSynced && !syncStalled && (
           <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-            Mining is disabled while the node is syncing (
-            {blockchain.data?.blocks?.toLocaleString() ?? "…"} blocks).
+            {ibd
+              ? "Mining is disabled while the node is syncing"
+              : "Mining is disabled until the node reaches the network tip"}
+            {" "}
+            ({blockchain.data?.blocks?.toLocaleString() ?? "…"}
+            {syncTarget != null && syncTarget > (blockchain.data?.blocks ?? 0) && (
+              <> / ~{syncTarget.toLocaleString()} network tip</>
+            )}
+            {blocksBehind != null && blocksBehind > 0 && (
+              <> · ~{blocksBehind.toLocaleString()} blocks behind</>
+            )}
+            ).
           </div>
         )}
 
@@ -316,6 +341,8 @@ export function Mining() {
               suggestedThreads={suggestedThreads}
               maxThreads={maxThreads}
               logicalCpus={logicalCpus}
+              activeThreads={displayThreads}
+              isMining={active}
               disabled={active || start.isPending || stop.isPending}
               onAutoAdjustChange={handleAutoAdjustChange}
               onManualThreadsChange={(threads) =>
@@ -350,7 +377,7 @@ export function Mining() {
               <Button
                 size="lg"
                 onClick={() => start.mutate()}
-                disabled={start.isPending || ibd || syncStalled}
+                disabled={start.isPending || !chainSynced || syncStalled}
                 className="h-12 min-w-[11.5rem] px-8 text-base font-semibold shadow-md"
               >
                 {start.isPending ? (

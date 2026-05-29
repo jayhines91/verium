@@ -1,7 +1,14 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Monitor, Moon, Shield, Sun } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Monitor,
+  Moon,
+  Shield,
+  Sun,
+} from "lucide-react";
 import {
   Card,
   CardContent,
@@ -15,8 +22,14 @@ import { ExternalLinkButton } from "@/components/ExternalLinkButton";
 import { DaemonConnectionPanel } from "@/components/DaemonConnectionPanel";
 import { WalletBackupCard } from "@/components/WalletBackupCard";
 import { VeriumConfEditorCard } from "@/components/VeriumConfEditorCard";
+import { NetworkModeCard } from "@/components/NetworkModeCard";
 import { useTheme } from "@/hooks/useTheme";
-import { ALL_COINS, coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
+import {
+  ALL_COINS,
+  coinQueryKey,
+  getCoinProfile,
+  type CoinId,
+} from "@/lib/coin/profile";
 import { useEnabledCoins } from "@/lib/coin/context";
 import { clearStakingStoppedByUser } from "@/hooks/useAutoStake";
 import { clearMiningStoppedByUser } from "@/lib/mining-session";
@@ -61,7 +74,9 @@ export function Settings() {
   });
   const start = useMutation({ mutationFn: () => tauriStartDaemon(daemonCoin) });
   const stop = useMutation({ mutationFn: () => tauriStopDaemon(daemonCoin) });
-  const restart = useMutation({ mutationFn: () => tauriRestartDaemon(daemonCoin) });
+  const restart = useMutation({
+    mutationFn: () => tauriRestartDaemon(daemonCoin),
+  });
   const updates = useMutation({ mutationFn: tauriCheckForUpdates });
 
   const prefs = useUserPreferences((s) => s.prefs);
@@ -104,8 +119,8 @@ export function Settings() {
             Security center
           </CardTitle>
           <CardDescription>
-            Two-factor authentication, recovery phrase, hardware wallets, backups,
-            spending controls, and audit log.
+            Two-factor authentication, recovery phrase, hardware wallets,
+            backups, spending controls, and audit log.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -132,6 +147,8 @@ export function Settings() {
       </Card>
 
       <WalletBackupCard />
+
+      <NetworkModeCard />
 
       <Card>
         <CardHeader>
@@ -330,7 +347,8 @@ export function Settings() {
                   {updates.data.source}
                 </span>
               </div>
-              {(updates.data.download_url || updates.data.release_notes_url) && (
+              {(updates.data.download_url ||
+                updates.data.release_notes_url) && (
                 <div className="flex flex-wrap gap-2 pt-1">
                   {updates.data.download_url && (
                     <ExternalLinkButton
@@ -372,8 +390,8 @@ export function Settings() {
             Advanced
           </CardTitle>
           <CardDescription>
-            Daemon lifecycle, RPC endpoint, data directory, explorer URLs.
-            Most users should never need these.
+            Daemon lifecycle, RPC endpoint, data directory, explorer URLs. Most
+            users should never need these.
           </CardDescription>
         </CardHeader>
         {advancedOpen && (
@@ -425,7 +443,11 @@ export function Settings() {
                 Configure RPC and data directory for{" "}
                 {getCoinProfile(daemonCoin).displayName}.
               </p>
-              <DaemonConnectionPanel coin={daemonCoin} config={config.data} mode="settings" />
+              <DaemonConnectionPanel
+                coin={daemonCoin}
+                config={config.data}
+                mode="settings"
+              />
             </section>
 
             <section className="flex flex-col gap-3">
@@ -438,17 +460,15 @@ export function Settings() {
                   <Badge tone="success">
                     {binary.data.source === "sidecar"
                       ? "Bundled sidecar"
-                      : binary.data.runtime === "wsl"
-                        ? "Found in WSL"
-                        : `Found (${binary.data.source})`}
+                      : `Found (${binary.data.source})`}
                   </Badge>
                 ) : (
                   <Badge tone="warning">Not detected</Badge>
                 )}
               </div>
-              {(binary.data?.path || binary.data?.wsl_path) && (
-                <div className="truncate rounded-md border border-border bg-bg-subtle px-3 py-2 font-mono text-xs">
-                  {binary.data.wsl_path ?? binary.data.path}
+              {binary.data?.path && (
+                <div className="truncate rounded-md border border-border bg-bg-subtle px-3 py-2 text-xs">
+                  {binary.data.path}
                 </div>
               )}
               {!binary.data?.manageable && (
@@ -457,9 +477,10 @@ export function Settings() {
                 </ExternalLinkButton>
               )}
               <p className="text-xs text-fg-subtle">
-                Override with the <span className="font-mono">VERIUMD_PATH</span>{" "}
-                environment variable, place the binary next to this app, or
-                install via the official downloads page.
+                Override with the{" "}
+                <span className="font-mono">VERIUMD_PATH</span> environment
+                variable, place the binary next to this app, or install via the
+                official downloads page.
               </p>
             </section>
 
@@ -590,7 +611,7 @@ function Field({
         placeholder={placeholder}
         className={
           "h-9 rounded-md border border-border bg-bg-subtle px-3 outline-none focus:border-accent " +
-          (mono ? "font-mono text-xs " : "text-sm ") +
+          (mono ? "text-xs " : "text-sm ") +
           (readOnly ? "opacity-70" : "")
         }
       />

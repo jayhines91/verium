@@ -47,9 +47,7 @@ export function AddressBookPicker({
   }, [open, onClose]);
 
   const filtered = useMemo(() => {
-    const rows = (entries.data ?? []).filter(
-      (e) => e.category === category,
-    );
+    const rows = (entries.data ?? []).filter((e) => e.category === category);
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter(
@@ -126,7 +124,7 @@ export function AddressBookPicker({
                     <div className="text-sm font-medium text-fg">
                       {entry.label || "(no label)"}
                     </div>
-                    <div className="mt-0.5 break-all font-mono text-[11px] text-fg-muted">
+                    <div className="mt-0.5 break-all text-[11px] text-fg-muted">
                       {entry.address}
                     </div>
                     {entry.notes && (

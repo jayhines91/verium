@@ -8,6 +8,57 @@ const NEAR_TIP_BLOCKS = 1_000_000;
 const NEAR_TIP_HEADER_LAG = 500;
 /** Keep bootstrap available while verification is below this threshold. */
 export const BOOTSTRAP_SYNC_PROGRESS_THRESHOLD = 0.95;
+/** UI + mining gate: within this many blocks of headers/network tip counts as synced. */
+export const SYNCED_BLOCK_LAG_THRESHOLD = 2;
+
+export type ChainSyncPhase = "offline" | "syncing" | "catching-up" | "synced";
+
+export interface ChainSyncContext {
+  connected?: boolean;
+  syncStalled?: boolean;
+  networkTip?: number;
+}
+
+export function chainSyncPhase(
+  info: BlockchainInfo | undefined,
+  ctx: ChainSyncContext = {},
+): ChainSyncPhase {
+  if (!info) {
+    return chainSyncPhaseFromCounts(undefined, undefined, undefined, ctx);
+  }
+  return chainSyncPhaseFromCounts(
+    info.blocks,
+    info.headers,
+    info.initialblockdownload,
+    ctx,
+  );
+}
+
+export function chainSyncPhaseFromCounts(
+  blocks: number | undefined,
+  headers: number | undefined,
+  initialBlockDownload: boolean | undefined,
+  ctx: ChainSyncContext = {},
+): ChainSyncPhase {
+  if (ctx.connected === false) return "offline";
+  if (blocks == null || ctx.syncStalled) return "syncing";
+  if (initialBlockDownload) return "syncing";
+  const localTarget = headers ?? blocks;
+  const target =
+    ctx.networkTip != null ? Math.max(localTarget, ctx.networkTip) : localTarget;
+  const behind = blocksBehindNetwork(blocks, target);
+  if (behind != null && behind > SYNCED_BLOCK_LAG_THRESHOLD) {
+    return "catching-up";
+  }
+  return "synced";
+}
+
+export function isChainSynced(
+  info: BlockchainInfo | undefined,
+  ctx: ChainSyncContext = {},
+): boolean {
+  return chainSyncPhase(info, ctx) === "synced";
+}
 
 function headerLag(info: BlockchainInfo): number {
   return Math.max(0, (info.headers ?? info.blocks) - info.blocks);

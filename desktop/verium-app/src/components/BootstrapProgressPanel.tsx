@@ -57,10 +57,10 @@ export function BootstrapProgressPanel({
           </div>
           <p className="mt-1 text-xs text-fg-muted">{message}</p>
           {detail && (
-            <p className="mt-1 font-mono text-[11px] text-fg-subtle">{detail}</p>
+            <p className="mt-1 text-[11px] text-fg-subtle">{detail}</p>
           )}
           {progress?.sourceUrl && progress.phase === "downloading" && (
-            <p className="mt-1 truncate font-mono text-[10px] text-fg-subtle">
+            <p className="mt-1 truncate text-[10px] text-fg-subtle">
               {progress.sourceUrl}
             </p>
           )}

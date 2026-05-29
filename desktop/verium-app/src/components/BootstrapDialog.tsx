@@ -25,7 +25,8 @@ export function BootstrapDialog({ coin, open, onClose }: BootstrapDialogProps) {
   const profile = getCoinProfile(coin);
 
   const run = useMutation({
-    mutationFn: (localPath?: string | null) => tauriImportBootstrap(coin, localPath),
+    mutationFn: (localPath?: string | null) =>
+      tauriImportBootstrap(coin, localPath),
     onSuccess: async () => {
       resetDaemonEnsureAttempt(coin);
       await loadPrefs();
@@ -90,19 +91,18 @@ export function BootstrapDialog({ coin, open, onClose }: BootstrapDialogProps) {
       <div className="w-full max-w-lg rounded-xl border border-border bg-bg-panel p-6 shadow-2xl">
         <h2 className="text-lg font-semibold">Import chain bootstrap</h2>
         <p className="mt-2 text-sm text-fg-muted">
-          Imports the official {profile.displayName} snapshot into your data
-          directory, replacing existing{" "}
-          <span className="font-mono text-xs">blocks/</span> and{" "}
-          <span className="font-mono text-xs">chainstate/</span>. Downloads from{" "}
-          <span className="font-mono text-xs">{profile.bootstrapCdn}</span> or
-          uses a local{" "}
-          <span className="font-mono text-xs">vericoin-bootstrap.zip</span> or{" "}
-          <span className="font-mono text-xs">verium-bootstrap.zip</span> if found
-          (e.g. in Downloads).
+          Imports the official {profile.displayName} bootstrap archive into your
+          data directory, replacing existing{" "}
+          <span className="text-xs">blocks/</span> and{" "}
+          <span className="text-xs">chainstate/</span>. Downloads from{" "}
+          <span className="text-xs">{profile.bootstrapCdn}</span> or uses a
+          local <span className="text-xs">vericoin-bootstrap.zip</span> or{" "}
+          <span className="text-xs">verium-bootstrap.zip</span> if found (e.g.
+          in Downloads).
         </p>
 
         {selectedLocalPath && !run.isPending && !succeeded && (
-          <p className="mt-2 truncate font-mono text-[11px] text-fg-subtle">
+          <p className="mt-2 truncate text-[11px] text-fg-subtle">
             Selected: {selectedLocalPath}
           </p>
         )}
@@ -132,7 +132,7 @@ export function BootstrapDialog({ coin, open, onClose }: BootstrapDialogProps) {
                 <div className="text-xs text-fg-muted">
                   Automatic restart failed. Restart manually in Settings.
                 </div>
-                <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px] text-fg">
+                <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all text-[11px] text-fg">
                   {run.data.restart_hint}
                 </pre>
               </div>
@@ -159,18 +159,23 @@ export function BootstrapDialog({ coin, open, onClose }: BootstrapDialogProps) {
                 onClick={handleCancel}
                 disabled={run.isPending && !canCancel}
               >
-                {canCancel ? "Cancel download" : failed || cancelled ? "Close" : "Cancel"}
+                {canCancel
+                  ? "Cancel download"
+                  : failed || cancelled
+                    ? "Close"
+                    : "Cancel"}
               </Button>
               {!run.isPending && !cancelled && (
-                <Button variant="secondary" size="sm" onClick={() => void pickLocalZip()}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void pickLocalZip()}
+                >
                   Choose local zip…
                 </Button>
               )}
               {failed ? (
-                <Button
-                  size="sm"
-                  onClick={() => run.mutate(selectedLocalPath)}
-                >
+                <Button size="sm" onClick={() => run.mutate(selectedLocalPath)}>
                   Retry
                 </Button>
               ) : (

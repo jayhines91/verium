@@ -48,6 +48,7 @@ sharks = "0.5"
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
 urlencoding = "2"
 zeroize = { version = "1", features = ["derive"] }
+sysinfo = "0.33"
 
 [features]
 default = ["custom-protocol"]

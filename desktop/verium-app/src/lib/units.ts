@@ -7,9 +7,10 @@ export function formatCoinAmount(amount: number, coin: CoinId, digits = 8): stri
   const symbol = getCoinProfile(coin).symbol;
   if (!Number.isFinite(amount)) return `0 ${symbol}`;
   const abs = Math.abs(amount);
-  if (abs >= 1) return `${amount.toFixed(Math.min(4, digits))} ${symbol}`;
-  if (abs >= 0.0001) return `${amount.toFixed(8)} ${symbol}`;
-  return `${amount.toExponential(2)} ${symbol}`;
+  const frac = abs >= 1 ? Math.min(4, digits) : Math.min(8, digits);
+  if (abs === 0) return `${(0).toFixed(frac)} ${symbol}`;
+  if (abs >= 1) return `${amount.toFixed(frac)} ${symbol}`;
+  return `${amount.toFixed(frac)} ${symbol}`;
 }
 
 export function formatCoinAmountCompact(amount: number, coin: CoinId): string {

@@ -23,7 +23,9 @@ export class AppErrorBoundary extends Component<
     copied: false,
   };
 
-  static getDerivedStateFromError(error: Error): Partial<AppErrorBoundaryState> {
+  static getDerivedStateFromError(
+    error: Error,
+  ): Partial<AppErrorBoundaryState> {
     return { error };
   }
 
@@ -71,23 +73,21 @@ export class AppErrorBoundary extends Component<
             <div>
               <h1 className="text-lg font-semibold">Something went wrong</h1>
               <p className="mt-1 text-sm text-fg-muted">
-                The wallet UI hit an unexpected error. Your funds and daemon
-                are unaffected. You can try again, or send us a diagnostic
-                bundle so we can fix it.
+                The wallet UI hit an unexpected error. Your funds and daemon are
+                unaffected. You can try again, or send us a diagnostic bundle so
+                we can fix it.
               </p>
             </div>
           </div>
 
-          <div className="rounded-md border border-border bg-bg-subtle px-3 py-2 font-mono text-[11px] text-fg-muted">
+          <div className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-[11px] text-fg-muted">
             {error.message}
           </div>
 
           {componentStack && (
             <details className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-xs">
-              <summary className="cursor-pointer text-fg">
-                Stack trace
-              </summary>
-              <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-fg-muted">
+              <summary className="cursor-pointer text-fg">Stack trace</summary>
+              <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap text-[11px] text-fg-muted">
                 {componentStack}
               </pre>
             </details>

@@ -12,14 +12,17 @@ use uuid::Uuid;
 use zip::read::ZipArchive;
 
 use crate::coin_profile::CoinId;
-use crate::daemon::detect_binary;
-use crate::error::{AppError, AppResult};
-use crate::state::AppState;
-use crate::wsl::{
-    is_wsl_unc_path, unc_to_linux_path, windows_path_to_wsl_mnt, wsl_restart_hint,
-    restart_wsl_veriumd_datadir, wsl_stop_veriumd_force_datadir, wsl_python_for_datadir_path,
-    wsl_clear_debug_log_datadir, DEFAULT_WSL_REPO_ROOT,
+use crate::config::{
+    bootstrap_chain_datadir, chain_snapshot_needs_reindex, ensure_daemon_conf_complete,
+    migrate_legacy_root_chain_data, promote_subdir_chain_data_for_legacy,
+    recover_split_chain_layout, validate_bootstrap_staging,
 };
+use crate::daemon::{
+    binary_supports_unified_chain_selector, detect_binary, force_stop_native_daemon,
+    free_rpc_port, wait_for_native_daemon_exit, wait_for_rpc_port_free,
+};
+use crate::error::{AppError, AppResult};
+use crate::state::{AppState, BOOTSTRAP_LOADING_GRACE};
 
 const USER_AGENT: &str = "Vericonomy-Desktop/0.1";
 const ZIP_LOCAL_MAGIC: [u8; 4] = [0x50, 0x4B, 0x03, 0x04];
@@ -430,6 +433,17 @@ pub async fn import_bootstrap(
     app: AppHandle,
     local_path: Option<PathBuf>,
 ) -> AppResult<BootstrapResult> {
+    // Binarytest (DACE) has no canonical snapshot — refuse to import the mainnet
+    // bootstrap into a binarytest datadir, which would mix incompatible chain
+    // state (magic, ports, address prefixes, activation heights all differ).
+    let prefs = crate::prefs::load().await.unwrap_or_default();
+    if prefs.network_mode.is_test() {
+        return Err(AppError::other(
+            "Bootstrap import is not available on the Binary Chain (binarytest) network. \
+             Switch to Mainnet in Settings to import the official snapshot.",
+        ));
+    }
+
     let cancel = state.bootstrap_begin(coin);
     let mut reporter = BootstrapReporter::new(app, coin);
     let result = import_bootstrap_inner(state, coin, &cancel, local_path, &mut reporter).await;
@@ -452,12 +466,27 @@ async fn import_bootstrap_inner(
     reporter: &mut BootstrapReporter,
 ) -> AppResult<BootstrapResult> {
     let cfg = state.config_fresh(coin).await?;
-    let datadir = cfg.datadir.clone();
+    let unified_chain = detect_binary(coin)
+        .path
+        .map(|p| binary_supports_unified_chain_selector(Path::new(&p), coin))
+        .unwrap_or(false);
+    // Unified builds read …/verium/blocks; legacy v1.x reads …/Verium/blocks at the -datadir root.
+    let datadir = bootstrap_chain_datadir(coin, &cfg, unified_chain);
     let binary_name = coin.binary_base();
 
     reporter.stopping(binary_name);
-    stop_daemon_for_bootstrap(state, coin, &datadir, cancel).await;
+    stop_daemon_for_bootstrap(state, coin, &cfg.datadir, cancel).await;
     ensure_not_cancelled(cancel)?;
+
+    if unified_chain {
+        if recover_split_chain_layout(coin, &cfg)? {
+            reporter.applying(0);
+        } else if migrate_legacy_root_chain_data(coin, &cfg)? {
+            reporter.applying(0);
+        }
+    } else if promote_subdir_chain_data_for_legacy(coin, &cfg)? {
+        reporter.applying(0);
+    }
 
     let stale_zip = datadir.join(format!("bootstrap_{}.zip", coin.symbol()));
     if stale_zip.is_file() {
@@ -468,11 +497,10 @@ async fn import_bootstrap_inner(
     validate_zip_download(&archive_path)?;
     reporter.validating();
 
-    if is_wsl_unc_path(&datadir) {
-        extract_and_apply_bootstrap_wsl(&archive_path, &datadir, reporter)?;
-    } else {
-        extract_bootstrap_zip(&archive_path, &datadir, reporter)?;
-        apply_bootstrap(&datadir, reporter)?;
+    extract_bootstrap_zip(&archive_path, &datadir, reporter)?;
+    apply_bootstrap(&datadir, reporter)?;
+    if unified_chain {
+        strip_unified_incompatible_bootstrap_index(&datadir)?;
     }
 
     if temp_download {
@@ -612,12 +640,84 @@ async fn stop_daemon_for_bootstrap(
     datadir: &Path,
     cancel: &AtomicBool,
 ) {
-    if is_wsl_unc_path(datadir) {
-        wsl_stop_veriumd_force_datadir(datadir);
-        cancellable_sleep(Duration::from_secs(3), cancel).await;
-        return;
+    // Stop both daemons so nothing holds files open under AppData during apply.
+    for target in CoinId::all() {
+        stop_single_daemon_for_bootstrap(state, *target, cancel).await;
     }
-    let _ = stop_daemon_gracefully(state, coin, cancel).await;
+
+    for target in CoinId::all() {
+        if let Ok(cfg) = state.config_fresh(*target).await {
+            let unified = detect_binary(*target)
+                .path
+                .map(|p| binary_supports_unified_chain_selector(Path::new(&p), *target))
+                .unwrap_or(false);
+            clear_datadir_lock_file(&bootstrap_chain_datadir(*target, &cfg, unified));
+        }
+    }
+    cancellable_sleep(Duration::from_secs(1), cancel).await;
+}
+
+async fn stop_single_daemon_for_bootstrap(
+    state: &AppState,
+    coin: CoinId,
+    cancel: &AtomicBool,
+) {
+    let Ok(cfg) = state.config_fresh(coin).await else {
+        force_stop_native_daemon(coin);
+        return;
+    };
+
+    if let Ok(client) = state.rpc_client(coin).await {
+        let _ = client.call_no_result("stop", json!([])).await;
+    }
+    cancellable_sleep(Duration::from_millis(800), cancel).await;
+
+    if let Ok(daemon) = state.daemon(coin) {
+        daemon.wait_for_child_exit(Duration::from_secs(5)).await;
+        daemon.force_kill_child().await;
+        daemon.clear_tracking().await;
+    }
+
+    free_rpc_port(coin, &cfg);
+    force_stop_native_daemon(coin);
+}
+
+fn clear_datadir_lock_file(datadir: &Path) {
+    let lock = datadir.join(".lock");
+    if lock.is_file() {
+        let _ = std::fs::remove_file(&lock);
+        tracing::info!("bootstrap: removed stale lock {}", lock.display());
+    }
+}
+
+fn remove_dir_all_with_retry(path: &Path, label: &str) -> AppResult<()> {
+    for attempt in 0..5 {
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.raw_os_error() == Some(32) && attempt + 1 < 5 => {
+                tracing::warn!(
+                    "bootstrap: {label} locked (attempt {}); retrying…",
+                    attempt + 1
+                );
+                force_stop_native_daemon(CoinId::Verium);
+                force_stop_native_daemon(CoinId::Vericoin);
+                std::thread::sleep(Duration::from_secs(2));
+            }
+            Err(e) if !path.exists() => return Ok(()),
+            Err(e) => {
+                return Err(AppError::other(format!(
+                    "could not remove {label} at {}: {e}. \
+                     Quit the wallet, stop veriumd/vericoind in Task Manager, then retry bootstrap.",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Err(AppError::other(format!(
+        "could not remove {label} at {} after several attempts (file in use). \
+         Quit the wallet, stop veriumd/vericoind in Task Manager, then retry bootstrap.",
+        path.display()
+    )))
 }
 
 async fn stop_daemon_gracefully(
@@ -809,72 +909,6 @@ fn validate_zip_download(path: &Path) -> AppResult<()> {
     Ok(())
 }
 
-fn extract_and_apply_bootstrap_wsl(
-    temp_zip: &Path,
-    unc_datadir: &Path,
-    reporter: &mut BootstrapReporter,
-) -> AppResult<()> {
-    let linux_datadir = unc_to_linux_path(&unc_datadir.to_string_lossy());
-    let wsl_zip = windows_path_to_wsl_mnt(temp_zip)?;
-
-    reporter.extracting(0, None, true, None, true);
-
-    let script = r#"
-import os
-import shutil
-import sys
-import zipfile
-
-zip_path, datadir = sys.argv[1], sys.argv[2]
-staging = os.path.join(datadir, "bootstrap")
-
-for name in ("bootstrap", "blocks", "chainstate"):
-    path = os.path.join(datadir, name)
-    if os.path.isdir(path):
-        shutil.rmtree(path)
-
-os.makedirs(staging, exist_ok=True)
-
-with zipfile.ZipFile(zip_path) as zf:
-    names = [n for n in zf.namelist() if n]
-    first = names[0] if names else ""
-    if first.startswith("blocks/") or first == "blocks":
-        zf.extractall(staging)
-    elif any(n.startswith("bootstrap/") for n in names):
-        zf.extractall(datadir)
-        staging = os.path.join(datadir, "bootstrap")
-    else:
-        zf.extractall(staging)
-
-blocks = os.path.join(staging, "blocks")
-chainstate = os.path.join(staging, "chainstate")
-if not (os.path.isdir(blocks) and os.path.isdir(chainstate)):
-    raise SystemExit("bootstrap zip missing blocks/ and chainstate/")
-
-shutil.move(blocks, os.path.join(datadir, "blocks"))
-shutil.move(chainstate, os.path.join(datadir, "chainstate"))
-shutil.rmtree(staging, ignore_errors=True)
-"#;
-
-    tracing::info!(
-        "bootstrap: extracting via WSL python3 into {linux_datadir}"
-    );
-
-    let output = wsl_python_for_datadir_path(unc_datadir, script, &[&wsl_zip, &linux_datadir])?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(AppError::other(format!(
-            "WSL bootstrap extract failed: {stderr}{stdout}"
-        )));
-    }
-
-    reporter.extracting(1, Some(1), false, Some(0), true);
-    tracing::info!("bootstrap: applied new chain data under {linux_datadir}");
-    Ok(())
-}
-
 fn count_zip_files(archive: &mut ZipArchive<std::fs::File>) -> AppResult<u64> {
     let mut count = 0u64;
     for i in 0..archive.len() {
@@ -959,27 +993,43 @@ fn extract_bootstrap_zip(
     Ok(())
 }
 
-fn validate_bootstrap_content(staging: &Path) -> AppResult<()> {
-    if !staging.join("blocks").is_dir() || !staging.join("chainstate").is_dir() {
-        return Err(AppError::other(
-            "Downloaded bootstrap zip did not contain blocks/ and chainstate/ directories.",
-        ));
-    }
-    Ok(())
-}
-
 fn apply_bootstrap(datadir: &Path, reporter: &mut BootstrapReporter) -> AppResult<()> {
     let staging = datadir.join("bootstrap");
-    validate_bootstrap_content(&staging)?;
+    validate_bootstrap_staging(&staging)?;
 
     reporter.applying(0);
-    for (idx, name) in ["blocks", "chainstate"].iter().enumerate() {
+    clear_datadir_lock_file(datadir);
+
+    // Remove live chain dirs only after staging is validated.
+    for name in ["blocks", "chainstate"] {
         let target = datadir.join(name);
         if target.exists() {
-            std::fs::remove_dir_all(&target)?;
+            remove_dir_all_with_retry(&target, name)?;
         }
-        std::fs::rename(staging.join(name), &target)?;
+    }
+
+    for (idx, name) in ["blocks", "chainstate"].iter().enumerate() {
+        let from = staging.join(name);
+        let target = datadir.join(name);
+        std::fs::rename(&from, &target).map_err(|e| {
+            AppError::other(format!(
+                "could not install bootstrap {name}/ into {}: {e}",
+                datadir.display()
+            ))
+        })?;
         reporter.applying((idx + 1) as u8);
+    }
+
+    if chain_snapshot_needs_reindex(datadir) {
+        return Err(AppError::other(
+            "Bootstrap chainstate failed to install (blocks present but index is empty). \
+             Quit the wallet, delete any veriumd processes, and retry import.",
+        ));
+    }
+
+    let peers = staging.join("peers.dat");
+    if peers.is_file() {
+        let _ = std::fs::copy(&peers, datadir.join("peers.dat"));
     }
 
     let _ = std::fs::remove_dir_all(&staging);
@@ -989,12 +1039,28 @@ fn apply_bootstrap(datadir: &Path, reporter: &mut BootstrapReporter) -> AppResul
     Ok(())
 }
 
+/// Legacy bootstrap zips ship a `blocks/index` built for v1.x single-chain veriumd.
+/// Unified v2 `veriumd -verium` cannot read it (`LoadBlockIndexGuts: failed to read value`).
+fn strip_unified_incompatible_bootstrap_index(datadir: &Path) -> AppResult<()> {
+    let index = datadir.join("blocks/index");
+    if index.exists() {
+        remove_dir_all_with_retry(&index, "blocks/index")?;
+        tracing::info!(
+            "bootstrap: removed legacy blocks/index under {} (unified veriumd rebuilds from blk*.dat)",
+            datadir.display()
+        );
+    }
+    Ok(())
+}
+
 async fn poll_chain_height_after_restart(
     state: &AppState,
     coin: CoinId,
+    cfg: &crate::config::DaemonConfig,
     max_wait: Duration,
 ) -> Option<u64> {
     let deadline = Instant::now() + max_wait;
+    let mut best = 0u64;
     while Instant::now() < deadline {
         tokio::time::sleep(Duration::from_secs(2)).await;
         if let Ok(client) = state.rpc_client(coin).await {
@@ -1002,24 +1068,54 @@ async fn poll_chain_height_after_restart(
                 .call::<Value>("getblockchaininfo", json!([]))
                 .await
             {
+                state.clear_bootstrap_loading(coin);
                 if let Some(blocks) = info.get("blocks").and_then(Value::as_u64) {
-                    if blocks > 0 {
+                    best = best.max(blocks);
+                    if blocks > 10_000 {
                         return Some(blocks);
                     }
                 }
             }
         }
     }
-    None
+    if best > 0 {
+        Some(best)
+    } else if rpc_reachable_after_restart(state, coin, cfg).await {
+        state.clear_bootstrap_loading(coin);
+        None
+    } else {
+        None
+    }
+}
+
+async fn rpc_reachable_after_restart(
+    state: &AppState,
+    coin: CoinId,
+    cfg: &crate::config::DaemonConfig,
+) -> bool {
+    let Ok(client) = state.rpc_client(coin).await else {
+        return false;
+    };
+    matches!(
+        client.call::<Value>("getblockchaininfo", json!([])).await,
+        Ok(_) | Err(AppError::Rpc { .. })
+    )
 }
 
 fn bootstrap_success_message(binary_name: &str, blocks: Option<u64>) -> String {
     match blocks {
-        Some(height) => format!(
+        Some(height) if height > 10_000 => format!(
             "Bootstrap applied and {binary_name} was restarted at block #{height}. \
              Your node will continue syncing the remaining blocks from the network."
         ),
-        None => format!("Bootstrap applied and {binary_name} was restarted."),
+        Some(height) => format!(
+            "Bootstrap applied and {binary_name} was restarted (currently at block #{height}). \
+             The node will keep syncing from the network."
+        ),
+        None => format!(
+            "Bootstrap applied and {binary_name} was restarted. \
+             Chain data is loading — block height should appear within a few minutes."
+        ),
     }
 }
 
@@ -1031,51 +1127,91 @@ async fn finish_restart(
     reporter: &mut BootstrapReporter,
 ) -> AppResult<BootstrapResult> {
     reporter.restarting(binary_name);
+    state.clear_auto_reindex_attempt(coin);
+    state.mark_bootstrap_loading(coin, BOOTSTRAP_LOADING_GRACE);
     state.daemon(coin)?.record_pid(None).await;
-    tokio::time::sleep(Duration::from_millis(1500)).await;
 
-    let wsl_datadir = is_wsl_unc_path(&cfg.datadir);
-    let binary_found = detect_binary(coin).found;
-
-    if wsl_datadir {
-        let _ = wsl_clear_debug_log_datadir(&cfg.datadir);
-        let linux_datadir = unc_to_linux_path(&cfg.datadir.to_string_lossy());
-        match restart_wsl_veriumd_datadir(&cfg.datadir, DEFAULT_WSL_REPO_ROOT) {
-            Ok(()) => {
-                tokio::time::sleep(Duration::from_secs(8)).await;
-                return Ok(BootstrapResult {
-                    success: true,
-                    message: format!(
-                        "Bootstrap applied. {binary_name} was restarted and is loading the new chain."
-                    ),
-                    restart_hint: None,
-                });
-            }
-            Err(e) => {
-                let hint = wsl_restart_hint(&linux_datadir, DEFAULT_WSL_REPO_ROOT);
-                return Ok(BootstrapResult {
-                    success: true,
-                    message: format!(
-                        "Bootstrap applied, but automatic restart failed: {e}. Try Restart WSL {binary_name} in Settings."
-                    ),
-                    restart_hint: Some(hint),
-                });
-            }
-        }
+    let mut restart_cfg = cfg.clone();
+    if let Err(e) = ensure_daemon_conf_complete(coin, &mut restart_cfg) {
+        tracing::warn!(
+            "bootstrap ({}): could not refresh vericonomy.conf before restart: {e}",
+            coin.as_str()
+        );
+    } else {
+        state.replace_config(coin, restart_cfg.clone()).await?;
     }
 
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    let restart_cfg = state.config_fresh(coin).await?;
+    let unified_chain = detect_binary(coin)
+        .path
+        .as_ref()
+        .map(|p| binary_supports_unified_chain_selector(Path::new(p), coin))
+        .unwrap_or(false);
+    let datadir = bootstrap_chain_datadir(coin, &restart_cfg, unified_chain);
+
+    let binary_found = detect_binary(coin).found;
+
     if binary_found {
-        match state.daemon(coin)?.start(cfg, &[]).await {
+        // Mirror Settings → Restart daemon: stop anything still bound to the datadir/port,
+        // then start fresh so veriumd reads the updated vericonomy.conf and new chain data.
+        // Bootstrap staging was validated (blocks + chainstate); start normally — never -reindex.
+        if let Ok(client) = state.rpc_client(coin).await {
+            let _ = client.call_no_result("stop", json!([])).await;
+        }
+        if let Ok(daemon) = state.daemon(coin) {
+            daemon.wait_for_child_exit(Duration::from_secs(5)).await;
+            daemon.force_kill_child().await;
+            daemon.clear_tracking().await;
+        }
+        free_rpc_port(coin, &restart_cfg);
+        force_stop_native_daemon(coin);
+        wait_for_rpc_port_free(restart_cfg.rpc_port, Duration::from_secs(30)).await;
+        wait_for_native_daemon_exit(coin, Duration::from_secs(15)).await;
+
+        if chain_snapshot_needs_reindex(&datadir) {
+            tracing::error!(
+                "bootstrap ({}): chainstate still missing after apply under {} — import may have failed",
+                coin.as_str(),
+                datadir.display()
+            );
+            state.clear_bootstrap_loading(coin);
+            return Ok(BootstrapResult {
+                success: false,
+                message: "Bootstrap did not install a complete chainstate. \
+                          Quit the wallet, stop all veriumd processes, and try Download snapshot again."
+                    .into(),
+                restart_hint: None,
+            });
+        }
+
+        let start_args: &[&str] = if unified_chain { &["-reindex"] } else { &[] };
+        match state.daemon(coin)?.start(&restart_cfg, start_args).await {
             Ok(_) => {
-                let blocks =
-                    poll_chain_height_after_restart(state, coin, Duration::from_secs(30)).await;
+                let blocks = poll_chain_height_after_restart(
+                    state,
+                    coin,
+                    &restart_cfg,
+                    Duration::from_secs(90),
+                )
+                .await;
                 return Ok(BootstrapResult {
                     success: true,
-                    message: bootstrap_success_message(binary_name, blocks),
+                    message: if unified_chain {
+                        format!(
+                            "Bootstrap block files installed and {binary_name} is rebuilding the chain index \
+                             from local data. This can take several hours — leave the wallet open and do not \
+                             click Repair until sync progress advances."
+                        )
+                    } else {
+                        bootstrap_success_message(binary_name, blocks)
+                    },
                     restart_hint: None,
                 });
             }
             Err(e) => {
+                state.clear_bootstrap_loading(coin);
                 return Ok(BootstrapResult {
                     success: true,
                     message: format!(
@@ -1086,6 +1222,8 @@ async fn finish_restart(
             }
         }
     }
+
+    state.clear_bootstrap_loading(coin);
 
     Ok(BootstrapResult {
         success: true,

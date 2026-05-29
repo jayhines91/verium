@@ -26,10 +26,26 @@ fn blob_path(label: &str) -> PathBuf {
     store_dir().join(format!("{label}.enc"))
 }
 
+/// Whether an encrypted blob file exists for `label`.
+pub fn blob_exists(label: &str) -> bool {
+    blob_path(label).exists()
+}
+
+/// Whether the encrypted blob exists and decrypts with the current master key.
+pub fn blob_readable(label: &str) -> bool {
+    blob_decrypts(label)
+}
+
 fn keyring_entry() -> keyring::Entry {
     keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).expect("keyring entry")
 }
 
+#[cfg(test)]
+fn ensure_master_key() -> AppResult<[u8; 32]> {
+    Ok([0xA5; 32])
+}
+
+#[cfg(not(test))]
 fn ensure_master_key() -> AppResult<[u8; 32]> {
     match keyring_entry().get_password() {
         Ok(hex_key) => {
@@ -53,6 +69,17 @@ fn ensure_master_key() -> AppResult<[u8; 32]> {
             Ok(key)
         }
         Err(e) => Err(AppError::other(format!("keychain read failed: {e}"))),
+    }
+}
+
+fn blob_decrypts(label: &str) -> bool {
+    let path = blob_path(label);
+    if !path.exists() {
+        return false;
+    }
+    match std::fs::read(path) {
+        Ok(blob) => decrypt(&blob).is_ok(),
+        Err(_) => false,
     }
 }
 
@@ -118,13 +145,72 @@ pub fn seal(label: &str, plaintext: &[u8]) -> AppResult<()> {
 
 /// Open and decrypt a sealed blob. Returns None if the blob does not exist.
 pub fn open(label: &str) -> AppResult<Option<Zeroizing<Vec<u8>>>> {
+    open_with_recovery(label, None)
+}
+
+/// Like [`open`], but on decrypt failure quarantines the corrupt blob and
+/// optionally falls back to a plaintext file (then re-seals with the current
+/// master key). This handles Windows Credential Manager resets where the
+/// encrypted blob survives but the master key does not.
+fn open_with_recovery(
+    label: &str,
+    plaintext_fallback: Option<&std::path::Path>,
+) -> AppResult<Option<Zeroizing<Vec<u8>>>> {
     let path = blob_path(label);
+    if !path.exists() {
+        return read_plaintext_fallback(plaintext_fallback);
+    }
+    let blob = std::fs::read(&path)?;
+    match decrypt(&blob) {
+        Ok(plain) => Ok(Some(Zeroizing::new(plain))),
+        Err(e) => {
+            tracing::warn!(
+                "secret_store: decrypt failed for {label} ({e}); attempting recovery"
+            );
+            quarantine_corrupt_blob(label)?;
+            if let Some(fallback) = plaintext_fallback {
+                if migrate_plaintext_json(label, fallback)? {
+                    return open(label);
+                }
+                if let Some(plain) = read_plaintext_fallback(Some(fallback))? {
+                    seal(label, plain.as_ref())?;
+                    return Ok(Some(plain));
+                }
+            }
+            Ok(None)
+        }
+    }
+}
+
+fn read_plaintext_fallback(
+    path: Option<&std::path::Path>,
+) -> AppResult<Option<Zeroizing<Vec<u8>>>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
     if !path.exists() {
         return Ok(None);
     }
-    let blob = std::fs::read(&path)?;
-    let plain = decrypt(&blob)?;
-    Ok(Some(Zeroizing::new(plain)))
+    let raw = std::fs::read(path)?;
+    Ok(Some(Zeroizing::new(raw)))
+}
+
+fn quarantine_corrupt_blob(label: &str) -> AppResult<()> {
+    let path = blob_path(label);
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut bak = path.clone();
+    bak.set_extension("enc.bak");
+    if bak.exists() {
+        let _ = std::fs::remove_file(&bak);
+    }
+    std::fs::rename(&path, &bak)?;
+    tracing::warn!(
+        "secret_store: quarantined corrupt blob for {label} at {}",
+        bak.display()
+    );
+    Ok(())
 }
 
 /// Delete a sealed blob.
@@ -142,9 +228,12 @@ pub fn migrate_plaintext_json(label: &str, plaintext_path: &std::path::Path) -> 
         return Ok(false);
     }
     if blob_path(label).exists() {
-        // Already migrated; remove stale plaintext.
-        let _ = std::fs::remove_file(plaintext_path);
-        return Ok(true);
+        // Only discard plaintext once the encrypted blob is confirmed readable.
+        if blob_decrypts(label) {
+            let _ = std::fs::remove_file(plaintext_path);
+            return Ok(true);
+        }
+        return Ok(false);
     }
     let raw = std::fs::read_to_string(plaintext_path)?;
     seal(label, raw.as_bytes())?;
@@ -159,14 +248,19 @@ pub fn load_json<T: serde::de::DeserializeOwned>(
     plaintext_path: &std::path::Path,
     default: T,
 ) -> AppResult<T> {
-    migrate_plaintext_json(label, plaintext_path)?;
-    match open(label)? {
+    if !blob_path(label).exists() {
+        migrate_plaintext_json(label, plaintext_path)?;
+    }
+    match open_with_recovery(label, Some(plaintext_path))? {
         Some(bytes) => {
             let s = String::from_utf8(bytes.to_vec())
                 .map_err(|e| AppError::other(format!("invalid utf8 in {label}: {e}")))?;
             match serde_json::from_str::<T>(&s) {
                 Ok(v) => Ok(v),
-                Err(_) => Ok(default),
+                Err(e) => {
+                    tracing::warn!("secret_store: invalid json in {label}, using defaults: {e}");
+                    Ok(default)
+                }
             }
         }
         None => Ok(default),

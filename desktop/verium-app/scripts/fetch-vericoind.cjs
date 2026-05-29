@@ -4,6 +4,10 @@
  * `src-tauri/binaries/vericoind-<target-triple>{.exe}` for Tauri sidecar bundling.
  *
  * Usage mirrors scripts/fetch-veriumd.cjs with VERICOIND_* env vars.
+ *
+ * Set DACE_DEV=1 to prefer a monorepo build (vericoin/src/vericoind) — required
+ * for the binarytest (DACE) network, which production CDN binaries do not yet
+ * support.
  */
 
 const fs = require("node:fs");
@@ -141,6 +145,7 @@ function copyLocalBinary(localPath, destPath) {
   fs.copyFileSync(localPath, destPath);
   if (process.platform !== "win32") fs.chmodSync(destPath, 0o755);
   log(`copied ${localPath} -> ${destPath}`);
+  warnIfNotDace("vericoind", destPath);
 }
 
 function findBinary(dir, name) {
@@ -199,6 +204,26 @@ function writeStubSidecar(dest, triple) {
   fs.writeFileSync(dest, banner);
   if (!isWindowsTriple(triple)) fs.chmodSync(dest, 0o755);
   log(`Wrote build placeholder stub at ${dest}`);
+}
+
+function supportsBinarytest(binaryPath) {
+  if (!fs.existsSync(binaryPath)) return false;
+  try {
+    const r = spawnSync(binaryPath, ["-help"], { encoding: "utf8", timeout: 15000 });
+    const out = `${r.stdout || ""}${r.stderr || ""}`;
+    return out.includes("-binarytest");
+  } catch {
+    return false;
+  }
+}
+
+function warnIfNotDace(label, destPath) {
+  if (process.env.DACE_DEV === "1" && !supportsBinarytest(destPath)) {
+    log(
+      `WARNING: ${label} at ${destPath} does not advertise -binarytest. ` +
+        "Binarytest mode will not work until you build from vericoin/ (see build-dace.ps1).",
+    );
+  }
 }
 
 function isRealBinary(filePath) {
@@ -283,12 +308,31 @@ async function main() {
     return;
   }
 
-  const local =
-    process.env.VERICOIND_LOCAL || args.local || discoverLocalBinary(isWindowsTriple(triple));
-  if (local) {
-    if (!process.env.VERICOIND_LOCAL && !args.local) {
-      log(`Using local build at ${local}`);
+  const explicitLocal = process.env.VERICOIND_LOCAL || args.local;
+  if (explicitLocal) {
+    copyLocalBinary(explicitLocal, dest);
+    return;
+  }
+
+  // DACE_DEV — strongly prefer the monorepo build (DACE-capable) over CDN/legacy
+  // installs. Without DACE_DEV we still fall through to monorepo discovery as a
+  // last resort because the CDN does not always have vericoind.
+  if (process.env.DACE_DEV === "1" || args["dace-dev"]) {
+    const monorepo = discoverMonorepoBinary(isWindowsTriple(triple));
+    if (monorepo) {
+      log(`DACE_DEV: using monorepo build at ${monorepo}`);
+      copyLocalBinary(monorepo, dest);
+      return;
     }
+    log(
+      "DACE_DEV=1 set but no monorepo vericoind found. Build with: " +
+        "cd vericoin && ./autogen.sh && ./configure --enable-vericoin --without-gui && make",
+    );
+  }
+
+  const local = discoverLocalBinary(isWindowsTriple(triple));
+  if (local) {
+    log(`Using local build at ${local}`);
     copyLocalBinary(local, dest);
     return;
   }

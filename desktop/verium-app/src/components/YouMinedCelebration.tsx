@@ -71,7 +71,10 @@ export function BlockFoundBanner({
       role="status"
       aria-live="polite"
     >
-      <div className="you-mined-confetti pointer-events-none absolute inset-0" aria-hidden />
+      <div
+        className="you-mined-confetti pointer-events-none absolute inset-0"
+        aria-hidden
+      />
       <div className="relative flex items-start gap-3">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 ring-2 ring-accent/25">
           <Trophy className="h-5 w-5 text-accent you-mined-trophy-bounce" />
@@ -112,22 +115,8 @@ interface MinedBlocksSummaryProps {
   totalRewardVrm: number;
 }
 
-export function MinedBlocksSummary({
-  count,
-  totalRewardVrm,
-}: MinedBlocksSummaryProps) {
+export function MinedBlocksSummary({ count }: MinedBlocksSummaryProps) {
   if (count <= 0) return null;
 
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-xs font-medium text-accent">
-      <Trophy className="h-3 w-3" aria-hidden />
-      {count} block{count === 1 ? "" : "s"} you mined
-      {totalRewardVrm > 0 && (
-        <span className="text-fg-muted">
-          · {formatNumber(totalRewardVrm, 4)} VRM
-        </span>
-      )}
-    </span>
-  );
+  return null;
 }
-

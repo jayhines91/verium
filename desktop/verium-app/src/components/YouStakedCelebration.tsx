@@ -1,6 +1,5 @@
 import { PartyPopper, Trophy, X } from "lucide-react";
-import { getCoinProfile } from "@/lib/coin/profile";
-import { cn, formatNumber } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 /** Stake rewards within this window get extra shimmer in the feed. */
 export const FRESH_STAKED_SECONDS = 3_600;
@@ -50,10 +49,7 @@ interface StakeFoundBannerProps {
   onDismiss: () => void;
 }
 
-export function StakeFoundBanner({
-  amount,
-  onDismiss,
-}: StakeFoundBannerProps) {
+export function StakeFoundBanner({ amount, onDismiss }: StakeFoundBannerProps) {
   return (
     <div
       className="relative mx-4 mb-3 overflow-hidden rounded-xl border border-accent/35 bg-gradient-to-br from-accent/18 via-bg-panel/90 to-bg-subtle/80 px-4 py-3.5 shadow-lg shadow-accent/10"
@@ -93,23 +89,8 @@ interface StakedRewardsSummaryProps {
   coin: "verium" | "vericoin";
 }
 
-export function StakedRewardsSummary({
-  count,
-  totalReward,
-  coin,
-}: StakedRewardsSummaryProps) {
+export function StakedRewardsSummary({ count }: StakedRewardsSummaryProps) {
   if (count <= 0) return null;
-  const symbol = getCoinProfile(coin).symbol;
 
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-xs font-medium text-accent">
-      <Trophy className="h-3 w-3" aria-hidden />
-      {count} stake reward{count === 1 ? "" : "s"}
-      {totalReward > 0 && (
-        <span className="text-fg-muted">
-          · {formatNumber(totalReward, 4)} {symbol}
-        </span>
-      )}
-    </span>
-  );
+  return null;
 }

@@ -1,10 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime};
+
+static SHUTDOWN_ONCE: AtomicBool = AtomicBool::new(false);
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::addressbook::{self, AddressBookEntry};
 use crate::bootstrap::{cancel_bootstrap as request_bootstrap_cancel, import_bootstrap as run_import_bootstrap, BootstrapResult};
@@ -12,7 +15,11 @@ use crate::coin_profile::{
     all_profile_summaries, assert_vericoin, assert_verium, parse_coin_id, CoinId,
 };
 use crate::config::{
-    apply_partial_to_config, ensure_first_run_config, generate_rpc_password, refresh_config_paths,
+    apply_partial_to_config, chain_datadir, ensure_daemon_conf_complete, ensure_first_run_config, generate_rpc_password, generate_rpc_user,
+    migrate_legacy_root_chain_data, prepare_chain_for_reindex, legacy_subdir_chain_ahead,
+    promote_subdir_chain_data_for_legacy,
+    recover_split_chain_layout, should_migrate_root_chain_data,
+    node_conf_dir, refresh_config_paths,
     rpc_auth_diagnostics, save_app_daemon_config, is_live_wallet_destination,
     path_for_veriumd_rpc, resolve_wallet_dat_path, suggested_wallet_backup_path,
     wallet_backup_dir, wallet_dat_exists, wallet_dat_path,
@@ -20,7 +27,7 @@ use crate::config::{
     clear_wallet_bdb_environment, node_conf_path, write_node_conf_file, DaemonConfig,
     PartialDaemonConfig, RpcAuthDiagnostics,
 };
-use crate::daemon::{bundled_sidecar_available, binary_missing_hint, detect_binary, force_stop_native_daemon, DaemonBinaryStatus};
+use crate::daemon::{binary_supports_unified_chain_selector, bundled_sidecar_available, binary_missing_hint, detect_binary, force_stop_native_daemon, free_rpc_port, kill_port_listeners, native_daemon_image_running, pids_listening_on_port, sidecar_supports_binarytest, wait_for_native_daemon_exit, wait_for_rpc_port_free, DaemonBinaryStatus};
 use crate::error::{AppError, AppResult, is_rpc_warmup};
 use crate::explorer_api::{
     fetch_blocks, fetch_chain_tips, fetch_extraction, fetch_explorer_peers, fetch_network_stats,
@@ -28,9 +35,16 @@ use crate::explorer_api::{
     ExplorerStats, ExplorerTransaction, EXPLORER_API_ENABLED, explorer_logo_url,
 };
 use crate::logs::{
-    detect_chain_corruption, detect_datadir_lock_conflict, detect_sync_stall,
-    is_timestamp_rule_failure, tail_debug_log,
+    current_log_session, detect_chain_corruption_session,
+    detect_datadir_lock_conflict, detect_node_starting, detect_reindex_active_session,
+    detect_reindex_file_rebuild_session,
+    detect_reindex_progress, detect_sync_stall, is_timestamp_rule_failure, log_recently_modified,
+    tail_debug_log,
 };
+use crate::node::orchestrator::maybe_emit_state;
+use crate::node::snapshot::{detect_binary_for_coin, snapshot_from_status};
+use crate::node::status::{apply_snapshot, disconnected, warming_up, NodeStatus};
+use crate::node::constants::REPAIR_BACKOFF;
 use crate::prefs::{self, PartialUserPreferences, UserPreferences};
 use crate::rpc::RpcClient;
 use crate::state::{AppState, EarnLocalState, MinerLocalState};
@@ -38,17 +52,29 @@ use crate::updates::{check_for_updates as run_update_check, UpdateInfo};
 use crate::wallet_secrets::{
     self, is_forever_unlock_duration, WALLET_UNLOCK_FOREVER_SECONDS,
 };
-use crate::wsl::{
-    detect_wsl_datadirs, find_verium_repo_root, is_wsl_unc_path,
-    rebuild_wsl_veriumd_validation_fix as wsl_rebuild_veriumd_validation_fix,
-    restart_wsl_veriumd_datadir, start_wsl_veriumd_datadir, unc_to_linux_path, wsl_restart_hint, wsl_rpc_credentials_stale_datadir,
-    wsl_start_veriumd_if_stopped_datadir, wsl_stop_veriumd_force_datadir,
-    wsl_veriumd_running_datadir, VeriumdStartMode, WslDatadirCandidate, DEFAULT_WSL_REPO_ROOT,
-};
 
 async fn stop_inner(state: &AppState, coin: CoinId) -> AppResult<()> {
+    stop_inner_with_policy(state, coin, false).await
+}
+
+async fn stop_inner_with_policy(state: &AppState, coin: CoinId, fast: bool) -> AppResult<()> {
     let cfg = state.config(coin).await?;
     let binary = coin.binary_base();
+    let child_wait = if fast {
+        Duration::from_secs(3)
+    } else {
+        Duration::from_secs(30)
+    };
+    let rpc_wait = if fast {
+        Duration::from_secs(3)
+    } else {
+        Duration::from_secs(30)
+    };
+    let force_rpc_wait = if fast {
+        Duration::from_secs(2)
+    } else {
+        Duration::from_secs(10)
+    };
 
     if coin == CoinId::Verium {
         if let Ok(client) = state.rpc_client(coin).await {
@@ -60,33 +86,77 @@ async fn stop_inner(state: &AppState, coin: CoinId) -> AppResult<()> {
         }
     }
 
-    if is_wsl_unc_path(&cfg.datadir) {
-        wsl_stop_veriumd_force_datadir(&cfg.datadir);
-    } else if let Ok(client) = state.rpc_client(coin).await {
+    if let Ok(client) = state.rpc_client(coin).await {
         let _ = client.call_no_result("stop", json!([])).await;
         state
             .daemon(coin)?
-            .wait_for_child_exit(std::time::Duration::from_secs(30))
+            .wait_for_child_exit(child_wait)
             .await;
-        wait_for_rpc_down(&cfg, std::time::Duration::from_secs(30)).await;
+        wait_for_rpc_down(coin, &cfg, rpc_wait).await;
     }
     state.daemon(coin)?.force_kill_child().await;
-    if rpc_reachable(&cfg).await {
-        tracing::warn!("stop: {binary} still reachable after graceful stop; forcing exit");
-        force_stop_native_daemon(coin);
-        wait_for_rpc_down(&cfg, std::time::Duration::from_secs(10)).await;
+    if !pids_listening_on_port(cfg.rpc_port).is_empty() {
+        if rpc_reachable(coin, &cfg).await {
+            tracing::warn!("stop: {binary} still reachable after graceful stop; forcing exit");
+        } else if rpc_auth_failed(coin, &cfg).await {
+            tracing::warn!(
+                "stop: {binary} still listening on RPC port {} with rejected credentials; forcing exit",
+                cfg.rpc_port
+            );
+        }
+        free_rpc_port(coin, &cfg);
+        wait_for_rpc_down(coin, &cfg, force_rpc_wait).await;
     }
     state.daemon(coin)?.clear_tracking().await;
     Ok(())
 }
 
-/// Stop earn mode and daemons when the wallet UI closes.
-pub async fn shutdown_daemon_on_app_exit(state: &AppState) {
-    let prefs = prefs::load().await.unwrap_or_default();
+async fn lock_wallet_best_effort(state: &AppState, coin: CoinId) {
+    let Ok(cfg) = state.config_fresh(coin).await else {
+        return;
+    };
+    wallet_secrets::clear_passphrase(coin, &cfg.datadir);
+    if let Ok(client) = state.rpc_client(coin).await {
+        let _ = client.call_no_result("walletlock", json!([])).await;
+    }
+}
+
+/// Stop miners, stakers, daemons, and other wallet-managed processes.
+///
+/// When `stop_all_coins` is true (Quit wallet / window close), every coin is
+/// attempted even if disabled in preferences. Otherwise only enabled coins with
+/// a bundled, managed, or RPC-reachable daemon are stopped.
+pub async fn shutdown_all_vericonomy_processes(
+    state: &AppState,
+    gpu: Option<&crate::gpu_miner::GpuMinerHandle>,
+    stop_all_coins: bool,
+) {
+    if SHUTDOWN_ONCE.swap(true, Ordering::SeqCst) {
+        tracing::debug!("shutdown: already in progress or completed");
+        return;
+    }
+
     for coin in CoinId::all() {
-        if !prefs::coin_enabled(&prefs, *coin) {
+        request_bootstrap_cancel(state, *coin);
+    }
+
+    if let Some(gpu) = gpu {
+        if let Err(e) = gpu.stop().await {
+            tracing::warn!("shutdown: GPU miner stop failed: {e}");
+        }
+    }
+
+    for coin in CoinId::all() {
+        lock_wallet_best_effort(state, *coin).await;
+    }
+
+    let prefs = prefs::load().await.unwrap_or_default();
+
+    for coin in CoinId::all() {
+        if !stop_all_coins && !prefs::coin_enabled(&prefs, *coin) {
             continue;
         }
+
         let cfg = match state.config_fresh(*coin).await {
             Ok(c) => c,
             Err(e) => {
@@ -96,14 +166,15 @@ pub async fn shutdown_daemon_on_app_exit(state: &AppState) {
         };
 
         let bundled = bundled_sidecar_available(*coin);
-        let wsl = is_wsl_unc_path(&cfg.datadir);
         let managed = match state.daemon(*coin) {
             Ok(d) => d.is_managed().await,
             Err(_) => false,
         };
-        let rpc_up = rpc_reachable(&cfg).await;
+        let rpc_up = rpc_reachable(*coin, &cfg).await;
 
-        let should_stop = if bundled {
+        let should_stop = if stop_all_coins {
+            true
+        } else if bundled {
             true
         } else {
             managed || rpc_up
@@ -115,28 +186,61 @@ pub async fn shutdown_daemon_on_app_exit(state: &AppState) {
         }
 
         tracing::info!("shutdown ({}): stopping earn mode and daemon", coin.as_str());
-        if let Err(e) = stop_inner(state, *coin).await {
+        if let Err(e) = stop_inner_with_policy(state, *coin, true).await {
             tracing::warn!("shutdown ({}): stop failed: {e}", coin.as_str());
-        }
-
-        if wsl && wsl_veriumd_running_datadir(&cfg.datadir) {
-            wsl_stop_veriumd_force_datadir(&cfg.datadir);
         }
     }
 }
 
-async fn wait_for_rpc_down(cfg: &DaemonConfig, timeout: std::time::Duration) {
+/// Stop earn mode and daemons when the wallet UI closes.
+pub async fn shutdown_daemon_on_app_exit(state: &AppState) {
+    shutdown_all_vericonomy_processes(state, None, true).await;
+}
+
+/// Run shutdown off the WebView main thread so quit/exit does not freeze the UI.
+pub fn run_shutdown_on_exit(app: &AppHandle) {
+    let app = app.clone();
+    let handle = std::thread::Builder::new()
+        .name("verium-app-shutdown".into())
+        .spawn(move || {
+            if let Some(state) = app.try_state::<AppState>() {
+                let gpu = app.try_state::<crate::gpu_miner::GpuMinerHandle>();
+                let shutdown = shutdown_all_vericonomy_processes(
+                    state.inner(),
+                    gpu.as_ref().map(|s| s.inner()),
+                    true,
+                );
+                let _ = tauri::async_runtime::block_on(async {
+                    tokio::time::timeout(Duration::from_secs(20), shutdown).await
+                });
+            }
+        });
+
+    if let Ok(handle) = handle {
+        let _ = handle.join();
+    }
+}
+
+#[tauri::command]
+pub fn quit_wallet(app: AppHandle) -> AppResult<()> {
+    // Shutdown runs once from RunEvent::Exit. Request exit immediately so the
+    // WebView is not blocked on a long daemon stop RPC sequence here.
+    app.exit(0);
+    Ok(())
+}
+
+async fn wait_for_rpc_down(coin: CoinId, cfg: &DaemonConfig, timeout: std::time::Duration) {
     let deadline = tokio::time::Instant::now() + timeout;
     while tokio::time::Instant::now() < deadline {
-        if !rpc_reachable(cfg).await {
+        if !rpc_reachable(coin, cfg).await {
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 }
 
-async fn rpc_reachable(cfg: &DaemonConfig) -> bool {
-    let Ok(client) = crate::rpc::RpcClient::from_config(cfg) else {
+pub(crate) async fn rpc_reachable(coin: CoinId, cfg: &DaemonConfig) -> bool {
+    let Ok(client) = RpcClient::from_config_for_coin(coin, cfg) else {
         return false;
     };
     match client
@@ -145,23 +249,193 @@ async fn rpc_reachable(cfg: &DaemonConfig) -> bool {
     {
         Ok(_) => true,
         Err(AppError::Rpc { code, .. }) if is_rpc_warmup(code) => true,
+        Err(AppError::DaemonUnreachable(msg)) if msg.contains("unauthorized") => false,
+        Err(AppError::DaemonUnreachable(_)) => !pids_listening_on_port(cfg.rpc_port).is_empty(),
         _ => false,
     }
 }
 
-async fn start_inner(state: &AppState, coin: CoinId) -> AppResult<()> {
-    let cfg = state.config(coin).await?;
-    let binary = coin.binary_base();
-    if is_wsl_unc_path(&cfg.datadir) {
-        if wsl_start_veriumd_if_stopped_datadir(&cfg.datadir, default_wsl_repo_root())? {
-            state.daemon(coin)?.mark_managed().await;
+pub(crate) async fn rpc_auth_failed(coin: CoinId, cfg: &DaemonConfig) -> bool {
+    let Ok(client) = RpcClient::from_config_for_coin(coin, cfg) else {
+        return false;
+    };
+    matches!(
+        client.call::<Value>("getblockchaininfo", json!([])).await,
+        Err(AppError::DaemonUnreachable(msg)) if msg.contains("unauthorized")
+    )
+}
+
+/// RPC is down but a node is plausibly still booting (port open, managed child, or live reindex).
+pub(crate) async fn daemon_boot_in_progress(
+    state: &AppState,
+    coin: CoinId,
+    cfg: &DaemonConfig,
+) -> bool {
+    if !pids_listening_on_port(cfg.rpc_port).is_empty() {
+        if !rpc_auth_failed(coin, cfg).await {
+            return true;
         }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        // Auth rejected on an open port — fall through to log checks (reindex can
+        // outlive RPC bind failures or stale credentials on a competing process).
+    } else if let Ok(daemon) = state.daemon(coin) {
+        if daemon.child_running().await {
+            return true;
+        }
+    }
+    if native_daemon_image_running(coin) {
+        let datadir = chain_datadir(coin, cfg);
+        let log_path = datadir.join("debug.log");
+        if log_recently_modified(&log_path, Duration::from_secs(120)) {
+            let lines = tail_debug_log(&datadir, 40)
+                .await
+                .unwrap_or_default();
+            if detect_reindex_active_session(&lines) || detect_node_starting(&lines) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Log-only hint for warming UX; does not block managed auto-start.
+pub(crate) async fn daemon_log_suggests_loading(coin: CoinId, cfg: &DaemonConfig) -> bool {
+    let datadir = chain_datadir(coin, cfg);
+    let log_path = datadir.join("debug.log");
+    if !log_recently_modified(&log_path, Duration::from_secs(90)) {
+        return false;
+    }
+    let lines = tail_debug_log(&datadir, 40)
+        .await
+        .unwrap_or_default();
+    detect_reindex_active_session(&lines) || detect_node_starting(&lines)
+}
+
+async fn suppress_competing_auto_start(
+    state: &AppState,
+    coin: CoinId,
+    cfg: &DaemonConfig,
+) -> bool {
+    if state.bootstrap_loading_active(coin) {
+        if rpc_reachable(coin, cfg).await {
+            return true;
+        }
+        if let Ok(daemon) = state.daemon(coin) {
+            if daemon.child_running().await {
+                return true;
+            }
+        }
+    }
+    if state.spawn_recent(coin) && !pids_listening_on_port(cfg.rpc_port).is_empty() {
+        if !rpc_auth_failed(coin, cfg).await {
+            return true;
+        }
+    }
+    daemon_boot_in_progress(state, coin, cfg).await
+}
+
+pub(crate) async fn bootstrap_suppresses_auto_start(
+    state: &AppState,
+    coin: CoinId,
+    cfg: &DaemonConfig,
+) -> bool {
+    suppress_competing_auto_start(state, coin, cfg).await
+}
+
+pub(crate) async fn daemon_process_live(state: &AppState, coin: CoinId, cfg: &DaemonConfig) -> bool {
+    if let Ok(d) = state.daemon(coin) {
+        if d.child_running().await {
+            return true;
+        }
+    }
+    !pids_listening_on_port(cfg.rpc_port).is_empty()
+}
+
+pub(crate) async fn reindex_running_live(
+    state: &AppState,
+    coin: CoinId,
+    cfg: &DaemonConfig,
+) -> bool {
+    let datadir = chain_datadir(coin, cfg);
+    let log_path = datadir.join("debug.log");
+    if !log_recently_modified(&log_path, Duration::from_secs(120)) {
+        return false;
+    }
+    let lines = tail_debug_log(&datadir, 120).await.unwrap_or_default();
+    // Early `-reindex` markers scroll out of the log tail long before header
+    // validation finishes; keep treating header progress as live reindex work.
+    if !detect_reindex_file_rebuild_session(&lines) && !detect_reindex_active_session(&lines) {
+        return false;
+    }
+    // RPC may be unavailable during reindex (port conflict or slow bind) — still
+    // treat an active reindex log plus a live process as "do not restart".
+    daemon_process_live(state, coin, cfg).await || native_daemon_image_running(coin)
+}
+
+async fn stop_daemon_fully_for_repair(state: &AppState, coin: CoinId, cfg: &DaemonConfig) {
+    if let Ok(client) = state.rpc_client(coin).await {
+        let _ = client.call_no_result("stop", json!([])).await;
+    }
+    if let Ok(daemon) = state.daemon(coin) {
+        daemon.wait_for_child_exit(Duration::from_secs(5)).await;
+        daemon.force_kill_child().await;
+        daemon.clear_tracking().await;
+    }
+    free_rpc_port(coin, cfg);
+    wait_for_rpc_port_free(cfg.rpc_port, Duration::from_secs(30)).await;
+    wait_for_native_daemon_exit(coin, Duration::from_secs(15)).await;
+}
+
+async fn start_inner(state: &AppState, coin: CoinId) -> AppResult<()> {
+    let _guard = state.runtime(coin)?.ensure_lock.lock().await;
+    start_inner_impl(state, coin, false).await
+}
+
+pub(crate) async fn start_inner_impl(state: &AppState, coin: CoinId, force: bool) -> AppResult<()> {
+    let mut cfg = state.config_fresh(coin).await?;
+    crate::config::sync_cfg_rpc_credentials_from_conf(coin, &mut cfg)?;
+    ensure_daemon_conf_complete(coin, &mut cfg)?;
+    state.replace_config(coin, cfg.clone()).await?;
+    let binary = coin.binary_base();
+    if !force && suppress_competing_auto_start(state, coin, &cfg).await {
+        tracing::debug!(
+            "start: skipped {binary} — node is already starting or recently spawned"
+        );
         return Ok(());
     }
-    if rpc_reachable(&cfg).await {
+    if rpc_reachable(coin, &cfg).await {
         tracing::info!("start: {binary} already running for this datadir");
+        state.daemon(coin)?.mark_managed().await;
         return Ok(());
+    }
+    if !pids_listening_on_port(cfg.rpc_port).is_empty() {
+        if rpc_auth_failed(coin, &cfg).await {
+            let datadir = chain_datadir(coin, &cfg);
+            let lines = tail_debug_log(&datadir, 80).await.unwrap_or_default();
+            if detect_reindex_active_session(&lines) && native_daemon_image_running(coin) {
+                tracing::info!(
+                    "start: port {} in use during active reindex — waiting for RPC",
+                    cfg.rpc_port
+                );
+                state.daemon(coin)?.mark_managed().await;
+                state.mark_spawn(coin);
+                state.set_daemon_phase(coin, "reindexing");
+                return Ok(());
+            }
+            tracing::warn!(
+                "start: port {} in use with stale RPC credentials — stopping listeners",
+                cfg.rpc_port
+            );
+            kill_port_listeners(cfg.rpc_port);
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        } else {
+            tracing::info!(
+                "start: port {} in use — {binary} is starting, waiting for RPC",
+                cfg.rpc_port
+            );
+            state.daemon(coin)?.mark_managed().await;
+            state.mark_spawn(coin);
+            return Ok(());
+        }
     }
     let daemon = state.daemon(coin)?;
     if daemon.is_managed().await {
@@ -169,49 +443,112 @@ async fn start_inner(state: &AppState, coin: CoinId) -> AppResult<()> {
             tracing::debug!("start: {binary} already spawned this session (waiting for RPC)");
             return Ok(());
         }
-        tracing::warn!("start: {binary} exited after spawn; retrying");
+        tracing::warn!("start: {binary} exited after spawn; checking whether repair is needed");
         daemon.clear_tracking().await;
     }
-    let lines = tail_debug_log(&cfg.datadir, 40).await.unwrap_or_default();
+    let lines = tail_debug_log(&chain_datadir(coin, &cfg), 120).await.unwrap_or_default();
     if let Some(message) = detect_datadir_lock_conflict(&lines) {
         return Err(AppError::other(message));
     }
+    if reindex_running_live(state, coin, &cfg).await {
+        tracing::info!(
+            "start: {binary} reindex is in progress — not interrupting"
+        );
+        state.daemon(coin)?.mark_managed().await;
+        state.mark_spawn(coin);
+        state.set_daemon_phase(coin, "reindexing");
+        return Ok(());
+    }
+    if let Some(detail) = detect_chain_corruption_session(&lines) {
+        if !is_timestamp_rule_failure(&detail) {
+            if crate::config::chain_snapshot_needs_reindex(&chain_datadir(coin, &cfg)) {
+                tracing::info!(
+                    "start: {binary} has block files but no chainstate — use Download snapshot, not auto-reindex"
+                );
+            } else {
+                tracing::info!(
+                    "start: {binary} chain DB error in debug.log — repairing with -reindex"
+                );
+                return start_with_chain_repair(state, coin, &cfg).await;
+            }
+        }
+    }
     let _pid = state.daemon(coin)?.start(&cfg, &[]).await?;
+    state.mark_spawn(coin);
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct NodeStatus {
-    pub connected: bool,
-    /// RPC responds but veriumd is still loading chain index / verifying blocks.
-    pub warming_up: bool,
-    pub chain: Option<String>,
-    pub blocks: Option<u64>,
-    pub headers: Option<u64>,
-    pub verification_progress: Option<f64>,
-    pub initial_block_download: Option<bool>,
-    pub connections: Option<u64>,
-    pub warnings: Option<String>,
-    pub version: Option<i64>,
-    pub subversion: Option<String>,
-    /// Human-readable connection problem (e.g. unauthorized, connection refused).
-    pub error: Option<String>,
-    /// Recent debug.log shows chain corruption (bad block / VerifyDB failure).
-    pub chain_corrupt: bool,
-    pub chain_repair_detail: Option<String>,
-    /// Node is connected but cannot accept new blocks (timestamp validation bug in WSL build).
-    pub sync_stalled: bool,
-    pub sync_stall_detail: Option<String>,
+pub(crate) async fn start_with_chain_repair(state: &AppState, coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {
+    let binary = coin.binary_base();
+    if reindex_running_live(state, coin, cfg).await {
+        tracing::info!("repair: {binary} reindex already running — not interrupting");
+        if let Ok(d) = state.daemon(coin) {
+            d.mark_managed().await;
+        }
+        state.set_daemon_phase(coin, "reindexing");
+        return Ok(());
+    }
+    let datadir = chain_datadir(coin, cfg);
+    let lines = tail_debug_log(&datadir, 80).await.unwrap_or_default();
+    if detect_reindex_file_rebuild_session(&lines) && native_daemon_image_running(coin) {
+        tracing::info!(
+            "repair: {binary} reindex active in existing process — not interrupting"
+        );
+        if let Ok(d) = state.daemon(coin) {
+            d.mark_managed().await;
+        }
+        state.set_daemon_phase(coin, "reindexing");
+        return Ok(());
+    }
+    stop_daemon_fully_for_repair(state, coin, cfg).await;
+
+    if !detect_binary(coin).manageable {
+        return Err(AppError::other(format!(
+            "could not locate a runnable {binary} binary to rebuild the chain index"
+        )));
+    }
+
+    prepare_chain_for_reindex(coin, cfg)?;
+    state.daemon(coin)?.start(cfg, &["-reindex"]).await?;
+    state.mark_spawn(coin);
+    state.mark_repair_attempt(coin);
+    state.set_daemon_phase(coin, "reindexing");
+    tracing::info!("start: {binary} launched with -reindex after chain DB repair prep");
+    Ok(())
+}
+
+async fn start_with_reindex(state: &AppState, coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {
+    start_with_chain_repair(state, coin, cfg).await
 }
 
 #[tauri::command]
 pub async fn get_node_status(
+    app: AppHandle,
     state: State<'_, AppState>,
     coin: String,
 ) -> AppResult<NodeStatus> {
     let coin = parse_coin_id(&coin)?;
-    let cfg = state.config(coin).await?;
-    let status = match state.rpc_client(coin).await {
+    let mut cfg = state.config_fresh(coin).await?;
+
+    if !state.inner().bootstrap_loading_active(coin)
+        && !state.inner().bootstrap_session_active()
+        && detect_binary(coin).manageable
+    {
+        let rpc_up = rpc_reachable(coin, &cfg).await;
+        let booting = daemon_boot_in_progress(state.inner(), coin, &cfg).await;
+        let reindexing = reindex_running_live(state.inner(), coin, &cfg).await;
+        if !rpc_up && !booting && !reindexing {
+            ensure_daemon_running(state.inner(), coin, &cfg).await;
+            cfg = state.config_fresh(coin).await?;
+        }
+    }
+    if state.inner().bootstrap_loading_active(coin) {
+        return Ok(warming_up(format!(
+            "{} is loading imported chain data after bootstrap. This may take a few minutes.",
+            coin.binary_base()
+        )));
+    }
+    let status = match RpcClient::status_client_for_coin(coin, &cfg) {
         Ok(client) => match client.call::<Value>("getblockchaininfo", json!([])).await {
             Ok(chain_info) => {
                 let network_info: Value = client
@@ -243,46 +580,116 @@ pub async fn get_node_status(
                         .get("subversion")
                         .and_then(Value::as_str)
                         .map(str::to_string),
-                    error: None,
-                    chain_corrupt: false,
-                    chain_repair_detail: None,
-                    sync_stalled: false,
-                    sync_stall_detail: None,
+                    ..Default::default()
                 }
             }
             Err(AppError::DaemonUnreachable(msg)) => {
-                let error = binary_missing_hint(coin).or(Some(msg));
-                disconnected(error)
+                if daemon_boot_in_progress(state.inner(), coin, &cfg).await
+                    || daemon_log_suggests_loading(coin, &cfg).await
+                {
+                    warming_up(format!(
+                        "{} is loading the chain index. This may take several minutes.",
+                        coin.binary_base()
+                    ))
+                } else {
+                    let error = binary_missing_hint(coin)
+                        .or(Some(crate::node::status::friendly_connection_error(&msg)));
+                    disconnected(error)
+                }
             }
             Err(AppError::Rpc { code, message }) if is_rpc_warmup(code) => warming_up(message),
             Err(e) => return Err(e),
         },
         Err(AppError::DaemonUnreachable(msg)) => {
-            let error = binary_missing_hint(coin).or(Some(msg));
-            disconnected(error)
+            if daemon_boot_in_progress(state.inner(), coin, &cfg).await
+                || daemon_log_suggests_loading(coin, &cfg).await
+            {
+                warming_up(format!(
+                    "{} is loading the chain index. This may take several minutes.",
+                    coin.binary_base()
+                ))
+            } else {
+                let error = binary_missing_hint(coin)
+                    .or(Some(crate::node::status::friendly_connection_error(&msg)));
+                disconnected(error)
+            }
         }
         Err(e) => return Err(e),
     };
-    Ok(enrich_status_from_log(status, &cfg.datadir).await)
+    let mut status = enrich_status_from_log(
+        status,
+        state.inner(),
+        coin,
+        &cfg,
+        &chain_datadir(coin, &cfg),
+    )
+    .await;
+    if status.connected {
+        state.inner().clear_auto_reindex_attempt(coin);
+        state.inner().clear_bootstrap_loading(coin);
+    }
+    let binary = detect_binary_for_coin(coin);
+    let snap = snapshot_from_status(coin, &status, &binary);
+    apply_snapshot(&mut status, &snap);
+    maybe_emit_state(&app, coin, &snap);
+    Ok(status)
 }
 
-async fn enrich_status_from_log(mut status: NodeStatus, datadir: &std::path::Path) -> NodeStatus {
-    let lines = tail_debug_log(datadir, 80).await.unwrap_or_default();
+async fn enrich_status_from_log(
+    mut status: NodeStatus,
+    state: &AppState,
+    coin: CoinId,
+    cfg: &DaemonConfig,
+    datadir: &std::path::Path,
+) -> NodeStatus {
+    if crate::config::chain_snapshot_needs_reindex(datadir) {
+        status.chain_corrupt = true;
+        status.needs_bootstrap = true;
+        status.reindex_in_progress = reindex_running_live(state, coin, cfg).await;
+        status.error = Some(
+            "Blockchain snapshot is incomplete (chainstate missing). \
+             Download blockchain snapshot to sync quickly — do not use Repair unless bootstrap fails."
+                .into(),
+        );
+    }
+
+    let lines = tail_debug_log(datadir, 120).await.unwrap_or_default();
+    let session = current_log_session(&lines);
+    let log_path = datadir.join("debug.log");
+    let log_live = log_recently_modified(&log_path, Duration::from_secs(45));
+
+    if let Some(progress) = detect_reindex_progress(&session) {
+        let process_up = daemon_process_live(state, coin, cfg).await;
+        status.reindex_header = Some(progress.header);
+        if process_up && log_live {
+            status.reindex_in_progress = true;
+            status.warming_up = true;
+            status.connected = true;
+            status.chain_corrupt = false;
+            status.daemon_phase = Some("reindexing".into());
+            status.error = Some(progress.message);
+            return status;
+        }
+    }
 
     if !status.connected || status.warming_up {
-        if let Some(detail) = detect_chain_corruption(&lines) {
-            status.chain_corrupt = true;
-            status.chain_repair_detail = Some(detail.clone());
+        if let Some(detail) = detect_chain_corruption_session(&lines) {
             if is_timestamp_rule_failure(&detail) {
                 status.error = Some(
                     "veriumd rejected valid mainnet blocks during startup verification. \
                      Restart the node from Settings (the app passes -checklevel=0)."
                         .into(),
                 );
-            } else if status.error.is_none() {
-                status.error = Some(
-                    "Chain data failed verification. Re-import bootstrap in Settings.".into(),
-                );
+            } else {
+                status.chain_corrupt = true;
+                status.chain_repair_detail = Some(detail.clone());
+                status.daemon_phase = Some("error".into());
+                if status.error.is_none() {
+                    status.error = Some(
+                        "Chain database needs repair. The wallet will rebuild the index automatically."
+                            .into(),
+                    );
+                }
             }
         }
         return status;
@@ -301,46 +708,27 @@ async fn enrich_status_from_log(mut status: NodeStatus, datadir: &std::path::Pat
     status
 }
 
-fn warming_up(message: String) -> NodeStatus {
-    NodeStatus {
-        connected: true,
-        warming_up: true,
-        chain: None,
-        blocks: None,
-        headers: None,
-        verification_progress: None,
-        initial_block_download: None,
-        connections: None,
-        warnings: None,
-        version: None,
-        subversion: None,
-        error: Some(message),
-        chain_corrupt: false,
-        chain_repair_detail: None,
-        sync_stalled: false,
-        sync_stall_detail: None,
-    }
+#[tauri::command]
+pub async fn node_retry(
+    state: State<'_, AppState>,
+    coin: String,
+) -> AppResult<()> {
+    let coin = parse_coin_id(&coin)?;
+    restart_daemon_full_cycle(state.inner(), coin).await?;
+    Ok(())
 }
 
-fn disconnected(error: Option<String>) -> NodeStatus {
-    NodeStatus {
-        connected: false,
-        warming_up: false,
-        chain: None,
-        blocks: None,
-        headers: None,
-        verification_progress: None,
-        initial_block_download: None,
-        connections: None,
-        warnings: None,
-        version: None,
-        subversion: None,
-        error,
-        chain_corrupt: false,
-        chain_repair_detail: None,
-        sync_stalled: false,
-        sync_stall_detail: None,
-    }
+#[tauri::command]
+pub async fn node_reset_credentials(
+    state: State<'_, AppState>,
+    coin: String,
+) -> AppResult<()> {
+    let coin = parse_coin_id(&coin)?;
+    let mut cfg = state.config_fresh(coin).await?;
+    sync_rpc_daemon_config(coin, &mut cfg)?;
+    state.replace_config(coin, cfg.clone()).await?;
+    restart_managed_daemon(state.inner(), coin, &cfg).await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -349,6 +737,14 @@ pub async fn get_blockchain_info(
     coin: String,
 ) -> AppResult<Value> {
     let coin = parse_coin_id(&coin)?;
+    let cfg = state.config_fresh(coin).await?;
+    if detect_binary(coin).manageable
+        && !state.inner().bootstrap_session_active()
+        && !rpc_reachable(coin, &cfg).await
+        && !daemon_boot_in_progress(state.inner(), coin, &cfg).await
+    {
+        ensure_daemon_running(state.inner(), coin, &cfg).await;
+    }
     state
         .rpc_client(coin)
         .await?
@@ -885,7 +1281,7 @@ pub async fn wallet_backup(
     }
     let cfg = state.config(coin).await?;
     let dest = std::path::PathBuf::from(&destination_path);
-    if is_live_wallet_destination(&cfg, &dest) {
+    if is_live_wallet_destination(coin, &cfg, &dest) {
         return Err(AppError::other(
             "Cannot save over the live wallet.dat file. Pick a different name — for example verium-wallet-YYYYMMDD-HHMMSS.dat in the backups folder.",
         ));
@@ -896,7 +1292,7 @@ pub async fn wallet_backup(
         }
     }
 
-    let backup_dir = wallet_backup_dir(&cfg)?;
+    let backup_dir = wallet_backup_dir(coin, &cfg)?;
     let snapshot = backup_dir.join(format!(
         ".snapshot-{}.dat",
         uuid::Uuid::new_v4().simple()
@@ -924,7 +1320,7 @@ pub async fn wallet_backup(
                 snapshot.display()
             );
         }
-        let live = resolve_wallet_dat_path(&cfg).ok_or_else(|| {
+        let live = resolve_wallet_dat_path(coin, &cfg).ok_or_else(|| {
             AppError::other("No wallet.dat found on disk to copy.")
         })?;
         std::fs::copy(&live, &dest).map_err(|e| {
@@ -994,8 +1390,8 @@ pub async fn wallet_restore(
         ));
     }
 
-    let dest = wallet_dat_path(&cfg);
-    if is_live_wallet_destination(&cfg, &source) {
+    let dest = wallet_dat_path(coin, &cfg);
+    if is_live_wallet_destination(coin, &cfg, &source) {
         return Err(AppError::other(
             "That file is the live wallet.dat already in use. Pick a backup copy from your backups folder or another location.",
         ));
@@ -1004,11 +1400,11 @@ pub async fn wallet_restore(
     stop_inner(state.inner(), coin).await?;
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
-    let previous_wallet_backup = if wallet_dat_exists(&cfg) {
-        let live = resolve_wallet_dat_path(&cfg).ok_or_else(|| {
+    let previous_wallet_backup = if wallet_dat_exists(coin, &cfg) {
+        let live = resolve_wallet_dat_path(coin, &cfg).ok_or_else(|| {
             AppError::other("Could not locate the current wallet.dat to back up.")
         })?;
-        let backup_dir = wallet_backup_dir(&cfg)?;
+        let backup_dir = wallet_backup_dir(coin, &cfg)?;
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
         let pre = backup_dir.join(format!("pre-restore-{stamp}.dat"));
         std::fs::copy(&live, &pre).map_err(|e| {
@@ -1262,22 +1658,17 @@ pub async fn get_daemon_config(
 fn cookie_present(cfg: &DaemonConfig) -> bool {
     cfg.cookie_path
         .as_ref()
-        .map(|p| p.exists())
+        .map(|p| p.is_file())
         .unwrap_or(false)
 }
 
-fn auth_method_label(cfg: &DaemonConfig) -> &'static str {
-    if cfg
-        .rpc_password
-        .as_ref()
-        .is_some_and(|p| !p.is_empty())
-        && cfg.rpc_user.is_some()
-    {
-        "userpass"
-    } else if cookie_present(cfg) {
-        "cookie"
+fn auth_method_label(coin: CoinId, cfg: &DaemonConfig) -> String {
+    let diag = rpc_auth_diagnostics(coin, cfg);
+    let cookie = cookie_present(cfg);
+    if diag.app_auth_method == "userpass" && cookie {
+        "userpass+cookie".to_string()
     } else {
-        "none"
+        diag.app_auth_method
     }
 }
 
@@ -1301,11 +1692,11 @@ pub struct RpcTestResult {
 
 async fn probe_rpc(coin: CoinId, cfg: &DaemonConfig) -> RpcTestResult {
     let diag = rpc_auth_diagnostics(coin, cfg);
-    let auth_method = auth_method_label(cfg).to_string();
+    let auth_method = auth_method_label(coin, cfg);
     let cookie_present = cookie_present(cfg);
     let conf_path = diag.conf_path.clone();
     let creds_in_conf = diag.rpc_user_in_conf && diag.rpc_password_in_conf;
-    let rpc_credentials_stale = wsl_credentials_stale(cfg);
+    let rpc_credentials_stale = false;
     let base_hint = |msg: String| RpcTestResult {
         ok: false,
         reachable: false,
@@ -1335,7 +1726,7 @@ async fn probe_rpc(coin: CoinId, cfg: &DaemonConfig) -> RpcTestResult {
         };
     }
 
-    let client = match crate::rpc::RpcClient::from_config(cfg) {
+    let client = match crate::rpc::RpcClient::from_config_for_coin(coin, cfg) {
         Ok(c) => c,
         Err(e) => {
             return RpcTestResult {
@@ -1366,26 +1757,11 @@ async fn probe_rpc(coin: CoinId, cfg: &DaemonConfig) -> RpcTestResult {
         },
         Err(AppError::DaemonUnreachable(msg)) => {
             let unauthorized = msg.contains("unauthorized");
-            let likely_datadir_mismatch =
-                unauthorized && !rpc_credentials_stale && (creds_in_conf || cookie_present);
-            let hint = if rpc_credentials_stale {
+            let likely_datadir_mismatch = unauthorized;
+            let hint = if unauthorized {
                 Some(
-                    "verium.conf was updated after veriumd started. Click Restart veriumd in WSL \
-                     (or run the command below) so the daemon loads the new rpcuser/rpcpassword."
-                        .into(),
-                )
-            } else if likely_datadir_mismatch {
-                Some(
-                    "Something is answering on this RPC port, but it rejects these credentials. \
-                     Another veriumd may be running (often in WSL) with a different data directory. \
-                     Either point Data directory at that node's folder (e.g. \\\\wsl.localhost\\Ubuntu\\root\\verium-main-dev), \
-                     create RPC login there, and restart that veriumd — or stop the other node and start \
-                     veriumd using this data directory."
-                        .into(),
-                )
-            } else if unauthorized {
-                Some(
-                    "Restart veriumd after changing verium.conf so it picks up rpcuser/rpcpassword."
+                    "Something is answering on this RPC port but rejected authentication. \
+                     Restart the node from Settings, or check that the data directory matches the running node."
                         .into(),
                 )
             } else {
@@ -1465,7 +1841,6 @@ pub async fn test_rpc_connection(
 #[derive(Debug, Clone, Serialize)]
 pub struct RpcCredentialsSetup {
     pub rpc_user: String,
-    pub rpc_password: String,
     pub config: DaemonConfig,
 }
 
@@ -1483,23 +1858,15 @@ pub async fn get_rpc_auth_diagnostics(
     Ok(rpc_auth_diagnostics(coin, &cfg))
 }
 
-#[tauri::command]
-pub async fn setup_rpc_credentials(
-    state: State<'_, AppState>,
-    coin: String,
-    partial: Option<PartialDaemonConfig>,
-) -> AppResult<RpcCredentialsSetup> {
-    let coin = parse_coin_id(&coin)?;
-    let base = state.config(coin).await?;
-    let partial = partial.unwrap_or_default();
-    let mut cfg = apply_partial_to_config(&base, &partial);
-    refresh_config_paths(coin, &mut cfg)?;
+/// Write server/RPC settings to verium.conf and persist app config (Settings → Apply).
+fn sync_rpc_daemon_config(coin: CoinId, cfg: &mut DaemonConfig) -> AppResult<(String, String)> {
+    refresh_config_paths(coin, cfg)?;
     let user = cfg
         .rpc_user
         .clone()
         .filter(|u| !u.is_empty())
-        .unwrap_or_else(|| coin.default_rpc_user().to_string());
-    let diag = rpc_auth_diagnostics(coin, &cfg);
+        .unwrap_or_else(generate_rpc_user);
+    let diag = rpc_auth_diagnostics(coin, cfg);
     let pass = if diag.rpc_password_in_conf {
         cfg.rpc_password
             .clone()
@@ -1517,21 +1884,73 @@ pub async fn setup_rpc_credentials(
         ("rpcuser", user.clone()),
         ("rpcpassword", pass.clone()),
     ];
-    write_node_conf_overrides(coin, &cfg.datadir, &overrides)?;
+    write_node_conf_overrides(coin, &node_conf_dir(cfg), cfg, &overrides)?;
     cfg.rpc_user = Some(user.clone());
     cfg.rpc_password = Some(pass.clone());
-    refresh_config_paths(coin, &mut cfg)?;
-    save_app_daemon_config(coin, &cfg)?;
-    state.replace_config(coin, cfg.clone()).await?;
+    refresh_config_paths(coin, cfg)?;
+    save_app_daemon_config(coin, cfg)?;
+    Ok((user, pass))
+}
 
-    if is_wsl_unc_path(&cfg.datadir) {
-        restart_wsl_veriumd_datadir(&cfg.datadir, default_wsl_repo_root())?;
-        tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+async fn restart_managed_daemon(state: &AppState, coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {
+    if detect_binary(coin).manageable {
+        let _ = stop_inner(state, coin).await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        start_inner(state, coin).await?;
     }
+    Ok(())
+}
+
+/// Settings → Restart daemon (force stop then start).
+pub(crate) async fn restart_daemon_full_cycle(state: &AppState, coin: CoinId) -> AppResult<()> {
+    let _guard = state.runtime(coin)?.ensure_lock.lock().await;
+    state.clear_bootstrap_loading(coin);
+    state.clear_spawn(coin);
+    state.clear_auto_reindex_attempt(coin);
+    let mut cfg = state.config_fresh(coin).await?;
+    if reindex_running_live(state, coin, &cfg).await {
+        tracing::info!(
+            "restart ({}): reindex in progress — not interrupting",
+            coin.as_str()
+        );
+        state.set_daemon_phase(coin, "reindexing");
+        return Ok(());
+    }
+    crate::config::sync_cfg_rpc_credentials_from_conf(coin, &mut cfg)?;
+    ensure_daemon_conf_complete(coin, &mut cfg)?;
+    state.replace_config(coin, cfg.clone()).await?;
+    let lines = tail_debug_log(&chain_datadir(coin, &cfg), 80)
+        .await
+        .unwrap_or_default();
+    let needs_reindex = detect_chain_corruption_session(&lines).is_some();
+    stop_daemon_fully_for_repair(state, coin, &cfg).await;
+    if needs_reindex {
+        tracing::info!(
+            "restart ({}): chain DB error in debug.log — repairing with -reindex",
+            coin.as_str()
+        );
+        start_with_chain_repair(state, coin, &cfg).await
+    } else {
+        start_inner_impl(state, coin, true).await
+    }
+}
+
+#[tauri::command]
+pub async fn setup_rpc_credentials(
+    state: State<'_, AppState>,
+    coin: String,
+    partial: Option<PartialDaemonConfig>,
+) -> AppResult<RpcCredentialsSetup> {
+    let coin = parse_coin_id(&coin)?;
+    let base = state.config(coin).await?;
+    let partial = partial.unwrap_or_default();
+    let mut cfg = apply_partial_to_config(&base, &partial);
+    let (user, _) = sync_rpc_daemon_config(coin, &mut cfg)?;
+    state.replace_config(coin, cfg.clone()).await?;
+    restart_managed_daemon(state.inner(), coin, &cfg).await?;
 
     Ok(RpcCredentialsSetup {
         rpc_user: user,
-        rpc_password: pass,
         config: cfg,
     })
 }
@@ -1557,7 +1976,7 @@ pub async fn set_daemon_config(
     if let Some(p) = cfg.rpc_password.clone() {
         overrides.push(("rpcpassword", p));
     }
-    write_node_conf_overrides(coin, &cfg.datadir, &overrides)?;
+    write_node_conf_overrides(coin, &node_conf_dir(&cfg), &cfg, &overrides)?;
     refresh_config_paths(coin, &mut cfg)?;
     save_app_daemon_config(coin, &cfg)?;
     state.replace_config(coin, cfg.clone()).await?;
@@ -1588,10 +2007,7 @@ pub async fn restart_daemon(
     coin: String,
 ) -> AppResult<()> {
     let coin = parse_coin_id(&coin)?;
-    let inner = state.inner();
-    let _ = stop_inner(inner, coin).await;
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-    start_inner(inner, coin).await
+    restart_daemon_full_cycle(state.inner(), coin).await
 }
 
 #[tauri::command]
@@ -1603,7 +2019,7 @@ pub async fn tail_logs(
     let coin = parse_coin_id(&coin)?;
     let cfg = state.config(coin).await?;
     let max = lines.unwrap_or(200) as usize;
-    tail_debug_log(&cfg.datadir, max).await
+    tail_debug_log(&chain_datadir(coin, &cfg), max).await
 }
 
 #[tauri::command]
@@ -1728,14 +2144,14 @@ pub async fn wallet_file_status(
 ) -> AppResult<WalletFileStatus> {
     let coin = parse_coin_id(&coin)?;
     let cfg = state.config_fresh(coin).await?;
-    let resolved = resolve_wallet_dat_path(&cfg);
-    let default_path = wallet_dat_path(&cfg);
-    let exists = wallet_dat_exists(&cfg);
+    let resolved = resolve_wallet_dat_path(coin, &cfg);
+    let default_path = wallet_dat_path(coin, &cfg);
+    let exists = wallet_dat_exists(coin, &cfg);
     let path = resolved
         .unwrap_or(default_path)
         .display()
         .to_string();
-    let backup_folder = wallet_backup_dir(&cfg)?
+    let backup_folder = wallet_backup_dir(coin, &cfg)?
         .display()
         .to_string();
     let suggested_backup_path = suggested_wallet_backup_path(coin, &cfg)?
@@ -1917,101 +2333,120 @@ pub fn get_explorer_logo_url(coin: String) -> AppResult<String> {
     Ok(explorer_logo_url(coin))
 }
 
-#[tauri::command]
-pub fn detect_wsl_datadirs_cmd() -> AppResult<Vec<WslDatadirCandidate>> {
-    if bundled_sidecar_available(CoinId::Verium) {
-        return Ok(vec![]);
+/// Start the managed daemon when RPC is down.
+pub(crate) async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &DaemonConfig) {
+    if state.bootstrap_session_active() {
+        tracing::debug!(
+            "ensure ({}): skipped while bootstrap import is running",
+            coin.as_str()
+        );
+        return;
     }
-    detect_wsl_datadirs()
-}
-
-#[tauri::command]
-pub fn get_wsl_restart_hint(unc_datadir: String) -> String {
-    let linux = unc_to_linux_path(&unc_datadir);
-    wsl_restart_hint(&linux, default_wsl_repo_root())
-}
-
-#[tauri::command]
-pub async fn restart_wsl_veriumd_cmd(unc_datadir: String) -> AppResult<()> {
-    let path = std::path::PathBuf::from(unc_datadir);
-    restart_wsl_veriumd_datadir(&path, default_wsl_repo_root())?;
-    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
-    Ok(())
-}
-
-fn wsl_credentials_stale(cfg: &DaemonConfig) -> bool {
-    if !is_wsl_unc_path(&cfg.datadir) {
-        return false;
-    }
-    wsl_rpc_credentials_stale_datadir(&cfg.datadir).unwrap_or(false)
-}
-
-fn default_wsl_repo_root() -> &'static str {
-    DEFAULT_WSL_REPO_ROOT
-}
-
-/// Start the daemon when RPC is down: native bundled sidecar on Windows/macOS/Linux,
-/// or WSL-managed node for legacy dev datadir paths.
-async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &DaemonConfig) {
-    if rpc_reachable(cfg).await {
+    if bootstrap_suppresses_auto_start(state, coin, cfg).await {
+        tracing::debug!(
+            "ensure ({}): skipped while post-bootstrap node is already starting",
+            coin.as_str()
+        );
         return;
     }
 
-    if is_wsl_unc_path(&cfg.datadir) && !bundled_sidecar_available(coin) {
-        ensure_wsl_veriumd_running(state, coin, cfg).await;
+    if rpc_reachable(coin, cfg).await {
+        state.set_daemon_phase(coin, "connected");
+        return;
+    }
+
+    if reindex_running_live(state, coin, cfg).await {
+        state.set_daemon_phase(coin, "reindexing");
+        tracing::debug!(
+            "ensure ({}): reindex in progress — not interrupting",
+            coin.as_str()
+        );
+        return;
+    }
+
+    if native_daemon_image_running(coin) && pids_listening_on_port(cfg.rpc_port).is_empty() {
+        let ours = match state.daemon(coin) {
+            Ok(d) => d.child_running().await,
+            Err(_) => false,
+        };
+        if !ours {
+            tracing::warn!(
+                "ensure ({}): {} running without RPC on port {} — stopping orphan",
+                coin.as_str(),
+                coin.binary_base(),
+                cfg.rpc_port
+            );
+            force_stop_native_daemon(coin);
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+        }
+    }
+
+    if daemon_boot_in_progress(state, coin, cfg).await {
+        state.set_daemon_phase(coin, "starting");
+        tracing::debug!(
+            "ensure ({}): node likely starting — waiting",
+            coin.as_str()
+        );
+        return;
+    }
+
+    if cfg.chain.starts_with("binarytest") && !sidecar_supports_binarytest(coin) {
+        tracing::warn!(
+            "ensure ({}): skipping auto-start — sidecar lacks -binarytest (run vericoin/build-dace.ps1)",
+            coin.as_str()
+        );
+        return;
+    }
+
+    let datadir = chain_datadir(coin, cfg);
+    let lines = tail_debug_log(&datadir, 120).await.unwrap_or_default();
+    if let Some(detail) = detect_chain_corruption_session(&lines) {
+        if is_timestamp_rule_failure(&detail) {
+            state.set_daemon_phase(coin, "error");
+            tracing::warn!(
+                "ensure ({}): timestamp rule failure in debug.log — skip auto-start until node is restarted from Settings",
+                coin.as_str()
+            );
+            return;
+        }
+        if state.repair_backoff_active(coin) {
+            tracing::debug!(
+                "ensure ({}): chain repair backoff active ({REPAIR_BACKOFF:?})",
+                coin.as_str()
+            );
+            return;
+        }
+        if crate::config::chain_snapshot_needs_reindex(&datadir) {
+            tracing::info!(
+                "ensure ({}): incomplete snapshot — use Download snapshot, not auto-reindex",
+                coin.as_str()
+            );
+            return;
+        }
+        tracing::info!(
+            "ensure ({}): chain DB error in current session — repairing with -reindex",
+            coin.as_str()
+        );
+        state.mark_repair_attempt(coin);
+        if let Err(e) = start_with_chain_repair(state, coin, cfg).await {
+            tracing::warn!("ensure ({}): chain repair start failed: {e}", coin.as_str());
+        }
         return;
     }
 
     if detect_binary(coin).manageable {
-        if let Err(e) = start_inner(state, coin).await {
+        state.set_daemon_phase(coin, "starting");
+        if let Err(e) = start_inner_impl(state, coin, false).await {
             tracing::warn!("ensure ({}): failed to start daemon: {e}", coin.as_str());
         }
     }
 }
 
-async fn ensure_wsl_veriumd_running(state: &AppState, coin: CoinId, cfg: &DaemonConfig) {
-    if bundled_sidecar_available(coin) || !is_wsl_unc_path(&cfg.datadir) {
-        return;
-    }
-    let lines = tail_debug_log(&cfg.datadir, 80).await.unwrap_or_default();
-    if detect_chain_corruption(&lines).is_some()
-        && !lines.iter().rev().any(|l| is_timestamp_rule_failure(l))
-        && !wsl_veriumd_running_datadir(&cfg.datadir)
-    {
-        tracing::warn!("ensure: chain corruption in debug.log — skip auto-start until repaired");
-        return;
-    }
-    let repo = default_wsl_repo_root();
-    if wsl_rpc_credentials_stale_datadir(&cfg.datadir).unwrap_or(false) {
-        tracing::info!("ensure: restarting WSL veriumd (stale RPC credentials)");
-        if restart_wsl_veriumd_datadir(&cfg.datadir, repo).is_ok() {
-            if let Ok(d) = state.daemon(coin) {
-                d.mark_managed().await;
-            }
-        } else {
-            tracing::warn!("ensure: wsl restart failed");
-        }
-        return;
-    }
-    if !wsl_veriumd_running_datadir(&cfg.datadir) {
-        tracing::info!("ensure: starting WSL veriumd");
-        match wsl_start_veriumd_if_stopped_datadir(&cfg.datadir, repo) {
-            Ok(started) if started => {
-                if let Ok(d) = state.daemon(coin) {
-                    d.mark_managed().await;
-                }
-            }
-            Ok(_) => {}
-            Err(e) => tracing::warn!("ensure: wsl start failed: {e}"),
-        }
-    }
-}
-
-async fn wait_for_rpc(state: &AppState, coin: CoinId, max_attempts: u32) -> bool {
+pub(crate) async fn wait_for_rpc(state: &AppState, coin: CoinId, max_attempts: u32) -> bool {
     let binary = coin.binary_base();
     for attempt in 0..max_attempts {
         if let Ok(cfg) = state.config_fresh(coin).await {
-            if let Ok(client) = crate::rpc::RpcClient::from_config(&cfg) {
+            if let Ok(client) = crate::rpc::RpcClient::from_config_for_coin(coin, &cfg) {
                 match client.call::<Value>("getblockchaininfo", json!([])).await {
                     Ok(_) => {
                         let _ = save_app_daemon_config(coin, &cfg);
@@ -2066,7 +2501,7 @@ pub async fn detect_veriumd_runtime(
     let coin = parse_coin_id(&coin)?;
     let binary = coin.binary_base();
     let cfg = state.config_fresh(coin).await?;
-    if rpc_reachable(&cfg).await {
+    if rpc_reachable(coin, &cfg).await {
         return Ok(VeriumdRuntimeStatus {
             rpc_connected: true,
             datadir_locked: false,
@@ -2078,7 +2513,7 @@ pub async fn detect_veriumd_runtime(
         });
     }
 
-    let lines = tail_debug_log(&cfg.datadir, 40).await.unwrap_or_default();
+    let lines = tail_debug_log(&chain_datadir(coin, &cfg), 40).await.unwrap_or_default();
     if let Some(message) = detect_datadir_lock_conflict(&lines) {
         return Ok(VeriumdRuntimeStatus {
             rpc_connected: false,
@@ -2105,8 +2540,31 @@ pub async fn ensure_daemon_connected(
 ) -> AppResult<EnsureConnectResult> {
     let coin = parse_coin_id(&coin)?;
     let binary = coin.binary_base();
+    let _guard = state.inner().runtime(coin)?.ensure_lock.lock().await;
     let cfg = state.config_fresh(coin).await?;
-    if rpc_reachable(&cfg).await {
+    if state.inner().bootstrap_session_active() {
+        return Ok(EnsureConnectResult {
+            connected: false,
+            message: "Bootstrap import in progress — daemon start paused until it finishes.".to_string(),
+            datadir_locked: false,
+            already_running: false,
+        });
+    }
+    if state.inner().bootstrap_loading_active(coin) {
+        let cfg = state.config(coin).await?;
+        if bootstrap_suppresses_auto_start(state.inner(), coin, &cfg).await {
+            return Ok(EnsureConnectResult {
+                connected: false,
+                message: format!(
+                    "{} is loading imported chain data after bootstrap. Please wait a few minutes.",
+                    binary
+                ),
+                datadir_locked: false,
+                already_running: true,
+            });
+        }
+    }
+    if rpc_reachable(coin, &cfg).await {
         return Ok(EnsureConnectResult {
             connected: true,
             message: format!("Connected to the running {binary} node."),
@@ -2139,7 +2597,7 @@ pub async fn ensure_daemon_connected(
         });
     }
 
-    let lines = tail_debug_log(&cfg.datadir, 40).await.unwrap_or_default();
+    let lines = tail_debug_log(&chain_datadir(coin, &cfg), 40).await.unwrap_or_default();
     let datadir_locked = detect_datadir_lock_conflict(&lines).is_some();
     let message = if datadir_locked {
         detect_datadir_lock_conflict(&lines).unwrap_or_default()
@@ -2157,33 +2615,61 @@ pub async fn ensure_daemon_connected(
     })
 }
 
-/// On wallet launch: start enabled daemons if needed and wait for RPC.
-pub async fn startup_daemon_connect(state: &AppState) {
-    let prefs = prefs::load().await.unwrap_or_default();
-    for coin in CoinId::all() {
-        if !prefs::coin_enabled(&prefs, *coin) {
-            continue;
-        }
-        let cfg = match state.config_fresh(*coin).await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("startup ({}): config load failed: {e}", coin.as_str());
-                continue;
+pub(crate) async fn startup_prepare_chain_data(state: &AppState, coin: CoinId) -> AppResult<()> {
+    let mut cfg = state.config_fresh(coin).await?;
+    let unified = detect_binary(coin)
+        .path
+        .as_ref()
+        .map(|p| binary_supports_unified_chain_selector(std::path::Path::new(p), coin))
+        .unwrap_or(false);
+
+    let needs_layout_fix = if unified {
+        should_migrate_root_chain_data(coin, &cfg)
+    } else {
+        legacy_subdir_chain_ahead(coin, &cfg)
+    };
+
+    if needs_layout_fix {
+        tracing::info!(
+            "startup ({}): preparing chain layout for {} veriumd",
+            coin.as_str(),
+            if unified { "unified" } else { "legacy" }
+        );
+        if let Ok(daemon) = state.daemon(coin) {
+            if let Ok(client) = RpcClient::from_config_for_coin(coin, &cfg) {
+                let _ = client.call_no_result("stop", json!([])).await;
             }
-        };
+            daemon.wait_for_child_exit(Duration::from_secs(3)).await;
+            daemon.force_kill_child().await;
+            daemon.clear_tracking().await;
+        }
+        kill_port_listeners(cfg.rpc_port);
+        force_stop_native_daemon(coin);
+        tokio::time::sleep(Duration::from_millis(2000)).await;
 
-        ensure_daemon_running(state, *coin, &cfg).await;
+        if unified {
+            if recover_split_chain_layout(coin, &cfg)? {
+                tracing::info!(
+                    "startup ({}): recovered split chain data into unified datadir",
+                    coin.as_str()
+                );
+            } else if migrate_legacy_root_chain_data(coin, &cfg)? {
+                tracing::info!(
+                    "startup ({}): migrated legacy blocks/chainstate into chain datadir",
+                    coin.as_str()
+                );
+            }
+        } else if promote_subdir_chain_data_for_legacy(coin, &cfg)? {
+            tracing::info!(
+                "startup ({}): promoted bootstrap chain data from verium/ subdir to datadir root",
+                coin.as_str()
+            );
+        }
     }
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    for coin in CoinId::all() {
-        if !prefs::coin_enabled(&prefs, *coin) {
-            continue;
-        }
-        if !wait_for_rpc(state, *coin, 45).await {
-            tracing::warn!("startup ({}): daemon not reachable after waiting", coin.as_str());
-        }
-    }
+    ensure_daemon_conf_complete(coin, &mut cfg)?;
+    state.replace_config(coin, cfg).await?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2191,6 +2677,28 @@ pub struct ChainRepairResult {
     pub success: bool,
     pub message: String,
     pub mode: String,
+}
+
+#[derive(Copy, Clone)]
+enum ChainRepairStartMode {
+    Reindex,
+    ReindexChainstate,
+}
+
+impl ChainRepairStartMode {
+    fn flag(self) -> &'static str {
+        match self {
+            Self::Reindex => "-reindex",
+            Self::ReindexChainstate => "-reindex-chainstate",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Reindex => "reindex",
+            Self::ReindexChainstate => "reindex-chainstate",
+        }
+    }
 }
 
 #[tauri::command]
@@ -2213,8 +2721,8 @@ pub async fn repair_chain(
     }
 
     let start_mode = match mode_lower.as_str() {
-        "reindex-chainstate" => VeriumdStartMode::ReindexChainstate,
-        "reindex" => VeriumdStartMode::Reindex,
+        "reindex-chainstate" => ChainRepairStartMode::ReindexChainstate,
+        "reindex" => ChainRepairStartMode::Reindex,
         _ => {
             return Err(AppError::other(
                 "mode must be bootstrap, reindex-chainstate, or reindex",
@@ -2222,28 +2730,34 @@ pub async fn repair_chain(
         }
     };
 
-    let cfg = state.config_fresh(coin).await?;
-    state.daemon(coin)?.record_pid(None).await;
+    state.inner().try_mark_auto_reindex(coin);
 
-    if is_wsl_unc_path(&cfg.datadir) {
-        start_wsl_veriumd_datadir(&cfg.datadir, default_wsl_repo_root(), start_mode)?;
-    } else {
-        if let Ok(client) = state.rpc_client(coin).await {
-            let _ = client.call_no_result("stop", json!([])).await;
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-        state.daemon(coin)?.force_kill_child().await;
-        state.daemon(coin)?.clear_tracking().await;
-        let flag = start_mode.flag();
-        let extra = if flag.is_empty() { &[][..] } else { &[flag][..] };
-        state.daemon(coin)?.start(&cfg, extra).await?;
+    let _guard = state.runtime(coin)?.ensure_lock.lock().await;
+    let mut cfg = state.config_fresh(coin).await?;
+    crate::config::sync_cfg_rpc_credentials_from_conf(coin, &mut cfg)?;
+    ensure_daemon_conf_complete(coin, &mut cfg)?;
+    state.replace_config(coin, cfg.clone()).await?;
+
+    if matches!(start_mode, ChainRepairStartMode::Reindex)
+        && reindex_running_live(state.inner(), coin, &cfg).await
+    {
+        return Ok(ChainRepairResult {
+            success: true,
+            message: format!(
+                "{binary} is already rebuilding the blockchain index. This may take a while."
+            ),
+            mode: "reindex".into(),
+        });
     }
 
-    let label = match start_mode {
-        VeriumdStartMode::ReindexChainstate => "reindex-chainstate",
-        VeriumdStartMode::Reindex => "reindex",
-        VeriumdStartMode::Normal => "normal",
-    };
+    state.daemon(coin)?.record_pid(None).await;
+    stop_daemon_fully_for_repair(state.inner(), coin, &cfg).await;
+    prepare_chain_for_reindex(coin, &cfg)?;
+    let flag = start_mode.flag();
+    state.daemon(coin)?.start(&cfg, &[flag]).await?;
+    state.inner().mark_spawn(coin);
+
+    let label = start_mode.label();
 
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
@@ -2253,48 +2767,6 @@ pub async fn repair_chain(
             "{binary} started with -{label}. This can take a long time; watch debug.log for progress."
         ),
         mode: label.to_string(),
-    })
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct RebuildWslResult {
-    pub success: bool,
-    pub message: String,
-    pub log_tail: String,
-}
-
-#[tauri::command]
-pub async fn rebuild_wsl_veriumd_validation_fix(
-    state: State<'_, AppState>,
-    coin: String,
-) -> AppResult<RebuildWslResult> {
-    let coin = parse_coin_id(&coin)?;
-    assert_verium(coin)?;
-    let cfg = state.config_fresh(coin).await?;
-    if !is_wsl_unc_path(&cfg.datadir) {
-        return Err(AppError::other(
-            "Rebuild is only supported for WSL data directories",
-        ));
-    }
-    let repo = find_verium_repo_root().ok_or_else(|| {
-        AppError::other(
-            "Could not find Verium source on Windows. Set VERIUM_REPO to your repo path.",
-        )
-    })?;
-    let log_tail = tokio::task::spawn_blocking(move || {
-        wsl_rebuild_veriumd_validation_fix(
-            &cfg.datadir,
-            default_wsl_repo_root(),
-            &repo,
-        )
-    })
-    .await
-    .map_err(|e| AppError::other(format!("rebuild task failed: {e}")))??;
-    Ok(RebuildWslResult {
-        success: true,
-        message: "Rebuilt veriumd in WSL with updated validation rules and restarted the node."
-            .into(),
-        log_tail,
     })
 }
 
@@ -2340,7 +2812,7 @@ pub async fn diagnostic_bundle(
     let coin = parse_coin_id(&coin)?;
     let cfg = state.config_fresh(coin).await.unwrap_or_default();
     let bin = detect_binary(coin);
-    let log_tail = tail_debug_log(&cfg.datadir, 200).await.unwrap_or_default();
+    let log_tail = tail_debug_log(&chain_datadir(coin, &cfg), 200).await.unwrap_or_default();
     Ok(DiagnosticBundle {
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),

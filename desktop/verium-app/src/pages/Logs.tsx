@@ -87,7 +87,11 @@ export function Logs() {
           ) : (
             <Badge tone="neutral">Paused</Badge>
           )}
-          <Button size="sm" variant="secondary" onClick={() => void refreshOnce()}>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void refreshOnce()}
+          >
             <RefreshCcw className="h-3.5 w-3.5" /> Refresh
           </Button>
           {!liveMode ? (
@@ -99,7 +103,11 @@ export function Logs() {
               <Play className="h-3.5 w-3.5" /> Resume
             </Button>
           ) : (
-            <Button size="sm" variant="secondary" onClick={() => setPaused(true)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setPaused(true)}
+            >
               <Pause className="h-3.5 w-3.5" /> Pause
             </Button>
           )}
@@ -125,7 +133,7 @@ export function Logs() {
         )}
         <div
           ref={scrollRef}
-          className="max-h-[32rem] overflow-auto rounded-md border border-border bg-bg-subtle p-3 font-mono text-[11px] leading-relaxed text-fg-muted"
+          className="max-h-[32rem] overflow-auto rounded-md border border-border bg-bg-subtle p-3 text-[11px] leading-relaxed text-fg-muted"
         >
           {lines.length === 0 ? (
             <div className="text-fg-subtle">
@@ -133,7 +141,10 @@ export function Logs() {
             </div>
           ) : (
             lines.map((line, i) => (
-              <div key={`${i}-${line.slice(0, 24)}`} className="whitespace-pre-wrap">
+              <div
+                key={`${i}-${line.slice(0, 24)}`}
+                className="whitespace-pre-wrap"
+              >
                 {line}
               </div>
             ))

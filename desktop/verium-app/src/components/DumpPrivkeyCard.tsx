@@ -45,7 +45,8 @@ export function DumpPrivkeyCard() {
             Export private key
           </CardTitle>
           <CardDescription>
-            Dump the WIF private key for a single address. Requires 2FA when enabled.
+            Dump the WIF private key for a single address. Requires 2FA when
+            enabled.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -53,18 +54,16 @@ export function DumpPrivkeyCard() {
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             placeholder="Address"
-            className="h-9 rounded-md border border-border bg-bg-subtle px-3 font-mono text-xs outline-none focus:border-accent"
+            className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-xs outline-none focus:border-accent"
           />
           <Button
             size="sm"
             variant="danger"
             disabled={!address.trim() || dump.isPending}
             onClick={() =>
-              void twoFa.gate(
-                "dump_privkey",
-                () => dump.mutate(),
-                { title: "Confirm key export with 2FA" },
-              )
+              void twoFa.gate("dump_privkey", () => dump.mutate(), {
+                title: "Confirm key export with 2FA",
+              })
             }
           >
             {dump.isPending ? "Exporting…" : "Show private key"}
@@ -74,7 +73,7 @@ export function DumpPrivkeyCard() {
               readOnly
               value={privkey}
               rows={2}
-              className="rounded-md border border-danger/30 bg-danger/5 px-3 py-2 font-mono text-xs"
+              className="rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-xs"
             />
           )}
           {dump.error && (

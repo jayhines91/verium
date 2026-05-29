@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
-  AlertTriangle,
   CheckCircle2,
   Circle,
   Cog,
@@ -29,9 +28,7 @@ import {
   rpcSetConfig,
   tauriDetectDaemon,
   tauriDetectDaemonRuntime,
-  tauriEnsureDaemonConnected,
   tauriEnsureFirstRun,
-  tauriStartDaemon,
   tauriWalletFileStatus,
 } from "@/lib/rpc/client";
 import { useUserPreferences } from "@/lib/user-preferences";
@@ -48,6 +45,8 @@ import { RestoreFromPhraseForm } from "@/components/RestoreFromPhraseForm";
 import { RecoveryPhraseWizard } from "@/components/RecoveryPhraseWizard";
 import { recoveryApplyHdSeed } from "@/lib/security/client";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { isNodeReady, nodeStatusLabel } from "@/lib/node/status";
+import { useIsTestNetwork } from "@/lib/network-mode";
 
 type Step =
   | "welcome"
@@ -67,11 +66,17 @@ const STEPS: { id: Exclude<Step, "advanced">; label: string }[] = [
   { id: "done", label: "Finish" },
 ];
 
-type WalletAction = "choose" | "create" | "import" | "restore_phrase" | "unlock";
+type WalletAction =
+  | "choose"
+  | "create"
+  | "import"
+  | "restore_phrase"
+  | "unlock";
 
 export function Setup() {
   const coin = useActiveCoin();
   const navigate = useNavigate();
+  const isTestNetwork = useIsTestNetwork();
   const [step, setStep] = useState<Step>("welcome");
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
   const [datadirDraft, setDatadirDraft] = useState<string>("");
@@ -99,8 +104,8 @@ export function Setup() {
     enabled: step === "wallet" || step === "daemon",
   });
 
-  const { data: nodeStatus } = useDaemonStatus(coin);
-  const connected = Boolean(nodeStatus?.connected);
+  const { data: nodeStatus, isConnecting } = useDaemonStatus(coin);
+  const connected = isNodeReady(nodeStatus);
 
   const walletInfo = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
@@ -130,7 +135,10 @@ export function Setup() {
     }
     if (walletSetupMode === "needs_unlock") {
       setWalletAction("unlock");
-    } else if (walletSetupMode === "needs_encrypt" && walletAction === "unlock") {
+    } else if (
+      walletSetupMode === "needs_encrypt" &&
+      walletAction === "unlock"
+    ) {
       setWalletAction("choose");
     }
   }, [step, walletSetupMode, walletAction]);
@@ -144,27 +152,21 @@ export function Setup() {
     mutationFn: () => tauriEnsureFirstRun(coin),
   });
 
-  const startDaemon = useMutation({
-    mutationFn: async () => {
-      await ensureFirstRun.mutateAsync();
-      await tauriStartDaemon(coin);
-      const result = await tauriEnsureDaemonConnected(coin);
-      return result;
-    },
-    onSuccess: (result) => {
-      if (result.connected) setStep("wallet");
-    },
-  });
+  useEffect(() => {
+    if (step !== "daemon") return;
+    void ensureFirstRun.mutate();
+  }, [step, coin]);
+
+  useEffect(() => {
+    if (step === "daemon" && connected) {
+      setStep("wallet");
+    }
+  }, [step, connected]);
 
   const finish = async () => {
     await updatePrefs({ setup_completed: true });
     navigate("/dashboard");
   };
-
-  const showRunningWarning =
-    runtime.data?.rpc_connected ||
-    runtime.data?.datadir_locked ||
-    nodeStatus?.connected;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg p-8 text-fg">
@@ -249,107 +251,42 @@ export function Setup() {
 
           {step === "daemon" && (
             <div className="flex flex-col gap-4 text-sm">
-              <div className="rounded-md border border-border bg-bg-subtle p-3 text-xs text-fg-muted">
-                <div className="font-medium text-fg">Data directory</div>
-                <div className="mt-0.5 break-all font-mono text-[11px]">
-                  {config.data?.datadir ?? "—"}
+              <div className="rounded-md border border-border bg-bg-subtle p-3">
+                <div className="flex items-center gap-2 font-medium text-fg">
+                  {(isConnecting || !connected) && (
+                    <Loader2 className="h-4 w-4 animate-spin text-accent" />
+                  )}
+                  {connected && (
+                    <CheckCircle2 className="h-4 w-4 text-success" />
+                  )}
+                  {nodeStatusLabel(nodeStatus)}
+                </div>
+                <p className="mt-2 text-xs text-fg-muted">
+                  The wallet starts your node automatically. This may take a
+                  minute while the blockchain index loads.
+                </p>
+                <div className="mt-2 break-all text-[11px] text-fg-subtle">
+                  {config.data?.datadir}
                 </div>
               </div>
 
-              {showRunningWarning && (
-                <div
-                  className={
-                    runtime.data?.datadir_locked
-                      ? "rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
-                      : "rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-fg-muted"
-                  }
-                >
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <div className="flex flex-col gap-1">
-                      <div className="font-medium text-fg">
-                        {runtime.data?.datadir_locked
-                          ? "Another Verium instance is running"
-                          : "Verium node already running"}
-                      </div>
-                      <p>
-                        {runtime.data?.message ??
-                          "A veriumd node is already responding on this RPC port."}
-                      </p>
-                      {runtime.data?.hint && (
-                        <p className="text-fg-subtle">{runtime.data.hint}</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {binary.isLoading ? (
-                <div className="flex items-center gap-2 text-fg-muted">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Looking for
-                  veriumd…
-                </div>
-              ) : binary.data?.source === "sidecar" ? (
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2 text-success">
-                    <CheckCircle2 className="h-4 w-4" /> Bundled veriumd ready.
-                  </div>
-                  <div className="break-all rounded-md border border-border bg-bg-subtle px-3 py-2 font-mono text-[11px] text-fg-muted">
-                    {binary.data.path}
-                  </div>
-                </div>
-              ) : binary.data?.manageable ? (
-                <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-fg-muted">
-                  Using an existing local veriumd — this build was not packaged
-                  with the bundled sidecar. Found via{" "}
-                  <span className="font-mono">{binary.data.source}</span>.
-                </div>
-              ) : (
+              {runtime.data?.datadir_locked && (
                 <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
-                  No veriumd available. This installer is incomplete — please
-                  re-download from the releases page.
+                  Another Verium instance is using this data directory. Quit
+                  Verium-Qt or any other node using the same folder, then reopen
+                  the wallet.
                 </div>
               )}
 
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  onClick={() => startDaemon.mutate()}
-                  disabled={
-                    startDaemon.isPending ||
-                    !binary.data?.manageable ||
-                    runtime.data?.datadir_locked
-                  }
-                >
-                  {startDaemon.isPending
-                    ? "Starting…"
-                    : "Start node and continue"}
-                </Button>
-                {(nodeStatus?.connected || runtime.data?.rpc_connected) && (
-                  <Button
-                    variant="secondary"
-                    size="md"
-                    onClick={() => setStep("wallet")}
-                  >
-                    Node already running — continue
-                  </Button>
-                )}
-              </div>
+              {!binary.data?.manageable && !binary.isLoading && (
+                <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                  Node software is not available in this install. Re-download
+                  from the official release page.
+                </div>
+              )}
 
-              {startDaemon.isPending && (
-                <div className="flex items-center gap-2 text-xs text-fg-muted">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Starting daemon and waiting for RPC…
-                </div>
-              )}
-              {startDaemon.data && !startDaemon.data.connected && (
-                <div className="text-xs text-danger">
-                  {startDaemon.data.message}
-                </div>
-              )}
-              {startDaemon.error && (
-                <div className="text-xs text-danger">
-                  {String(startDaemon.error)}
-                </div>
+              {connected && (
+                <Button onClick={() => setStep("wallet")}>Continue</Button>
               )}
             </div>
           )}
@@ -358,7 +295,7 @@ export function Setup() {
             <div className="flex flex-col gap-4">
               <div className="rounded-md border border-border bg-bg-subtle p-3 text-xs text-fg-muted">
                 {walletFile.data?.path && (
-                  <div className="break-all font-mono text-[11px]">
+                  <div className="break-all text-[11px]">
                     {walletFile.data.path}
                   </div>
                 )}
@@ -382,94 +319,98 @@ export function Setup() {
 
               {walletSetupMode === "offline" && (
                 <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-fg-muted">
-                  Go back to <strong>Start node</strong> and connect to
-                  veriumd before setting up your wallet.
+                  Go back to <strong>Start node</strong> and connect to veriumd
+                  before setting up your wallet.
                 </div>
               )}
 
-              {walletSetupMode === "needs_unlock" && walletAction === "unlock" && (
-                <>
-                  <WalletUnlockForm
-                    title="Unlock your existing wallet"
-                    description="Enter the passphrase from your previous Verium wallet. Your coins, addresses, and transaction history stay exactly as they are."
-                    onUnlocked={() => setStep("bootstrap")}
-                  />
-                  <div className="border-t border-border pt-3">
+              {walletSetupMode === "needs_unlock" &&
+                walletAction === "unlock" && (
+                  <>
+                    <WalletUnlockForm
+                      title="Unlock your existing wallet"
+                      description="Enter the passphrase from your previous Verium wallet. Your coins, addresses, and transaction history stay exactly as they are."
+                      onUnlocked={() => setStep("bootstrap")}
+                    />
+                    <div className="border-t border-border pt-3">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setWalletAction("import")}
+                      >
+                        Import a different wallet.dat instead
+                      </Button>
+                    </div>
+                  </>
+                )}
+
+              {walletSetupMode === "needs_encrypt" &&
+                walletAction === "choose" && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setWalletAction("create")}
+                      className="flex flex-col gap-2 rounded-md border border-border bg-bg-subtle p-4 text-left transition-colors hover:border-accent"
+                    >
+                      <span className="flex items-center gap-2 text-sm font-medium text-fg">
+                        <WalletIcon className="h-4 w-4 text-accent" />
+                        Create new wallet
+                      </span>
+                      <span className="text-xs text-fg-muted">
+                        First time on this machine — choose a passphrase and
+                        encrypt a fresh wallet.dat.
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWalletAction("import")}
+                      className="flex flex-col gap-2 rounded-md border border-border bg-bg-subtle p-4 text-left transition-colors hover:border-accent"
+                    >
+                      <span className="flex items-center gap-2 text-sm font-medium text-fg">
+                        <HardDriveUpload className="h-4 w-4 text-accent" />
+                        Import wallet.dat
+                      </span>
+                      <span className="text-xs text-fg-muted">
+                        Restore a backup from Verium-Qt, this app, or another
+                        computer.
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWalletAction("restore_phrase")}
+                      className="flex flex-col gap-2 rounded-md border border-border bg-bg-subtle p-4 text-left transition-colors hover:border-accent sm:col-span-2"
+                    >
+                      <span className="flex items-center gap-2 text-sm font-medium text-fg">
+                        <ShieldCheck className="h-4 w-4 text-accent" />
+                        Restore from recovery phrase
+                      </span>
+                      <span className="text-xs text-fg-muted">
+                        Enter your 24-word BIP39 mnemonic to recover an HD
+                        wallet.
+                      </span>
+                    </button>
+                  </div>
+                )}
+
+              {walletAction === "create" &&
+                walletSetupMode === "needs_encrypt" && (
+                  <>
                     <Button
                       size="sm"
-                      variant="secondary"
-                      onClick={() => setWalletAction("import")}
+                      variant="ghost"
+                      className="self-start"
+                      onClick={() => setWalletAction("choose")}
                     >
-                      Import a different wallet.dat instead
+                      Back
                     </Button>
-                  </div>
-                </>
-              )}
-
-              {walletSetupMode === "needs_encrypt" && walletAction === "choose" && (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setWalletAction("create")}
-                    className="flex flex-col gap-2 rounded-md border border-border bg-bg-subtle p-4 text-left transition-colors hover:border-accent"
-                  >
-                    <span className="flex items-center gap-2 text-sm font-medium text-fg">
-                      <WalletIcon className="h-4 w-4 text-accent" />
-                      Create new wallet
-                    </span>
-                    <span className="text-xs text-fg-muted">
-                      First time on this machine — choose a passphrase and
-                      encrypt a fresh wallet.dat.
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setWalletAction("import")}
-                    className="flex flex-col gap-2 rounded-md border border-border bg-bg-subtle p-4 text-left transition-colors hover:border-accent"
-                  >
-                    <span className="flex items-center gap-2 text-sm font-medium text-fg">
-                      <HardDriveUpload className="h-4 w-4 text-accent" />
-                      Import wallet.dat
-                    </span>
-                    <span className="text-xs text-fg-muted">
-                      Restore a backup from Verium-Qt, this app, or another
-                      computer.
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setWalletAction("restore_phrase")}
-                    className="flex flex-col gap-2 rounded-md border border-border bg-bg-subtle p-4 text-left transition-colors hover:border-accent sm:col-span-2"
-                  >
-                    <span className="flex items-center gap-2 text-sm font-medium text-fg">
-                      <ShieldCheck className="h-4 w-4 text-accent" />
-                      Restore from recovery phrase
-                    </span>
-                    <span className="text-xs text-fg-muted">
-                      Enter your 24-word BIP39 mnemonic to recover an HD wallet.
-                    </span>
-                  </button>
-                </div>
-              )}
-
-              {walletAction === "create" && walletSetupMode === "needs_encrypt" && (
-                <>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="self-start"
-                    onClick={() => setWalletAction("choose")}
-                  >
-                    Back
-                  </Button>
-                  <WalletCreateForm
-                    onCreated={() => setStep("recovery")}
-                    onAlreadyEncrypted={() => {
-                      void walletInfo.refetch();
-                    }}
-                  />
-                </>
-              )}
+                    <WalletCreateForm
+                      onCreated={() => setStep("recovery")}
+                      onAlreadyEncrypted={() => {
+                        void walletInfo.refetch();
+                      }}
+                    />
+                  </>
+                )}
 
               {walletAction === "restore_phrase" && (
                 <RestoreFromPhraseForm
@@ -507,27 +448,49 @@ export function Setup() {
               </div>
               <p className="text-sm text-fg-muted">
                 Write down this 24-word phrase before continuing. It is the only
-                way to recover your wallet if you lose your passphrase or computer.
+                way to recover your wallet if you lose your passphrase or
+                computer.
               </p>
               <RecoveryPhraseWizard
                 onComplete={(phrase) => {
-                  void recoveryApplyHdSeed(coin, phrase).then(() => setStep("bootstrap"));
+                  void recoveryApplyHdSeed(coin, phrase).then(() =>
+                    setStep("bootstrap"),
+                  );
                 }}
                 onSkip={() => setStep("bootstrap")}
               />
             </div>
           )}
 
-          {step === "bootstrap" && (
+          {step === "bootstrap" && isTestNetwork && (
+            <div className="flex flex-col gap-3 text-sm text-fg-muted">
+              <div className="flex items-center gap-2 text-fg">
+                <HardDriveDownload className="h-4 w-4" />
+                Binarytest network
+              </div>
+              <p>
+                You are on the isolated Binary Chain (DACE) test network. There
+                is no canonical snapshot CDN — the chain starts at genesis and
+                grows as you mine VRM / stake VRC locally.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => setStep("done")}>
+                  Continue
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {step === "bootstrap" && !isTestNetwork && (
             <div className="flex flex-col gap-3 text-sm text-fg-muted">
               <div className="flex items-center gap-2 text-fg">
                 <HardDriveDownload className="h-4 w-4" />
                 Chain bootstrap (optional)
               </div>
               <p>
-                Fresh installs sync much faster from the official chain
-                snapshot than over P2P. The daemon downloads, extracts, and
-                restarts automatically.
+                Fresh installs sync much faster from the official chain snapshot
+                than over P2P. The daemon downloads, extracts, and restarts
+                automatically.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" onClick={() => setBootstrapOpen(true)}>
@@ -570,18 +533,16 @@ export function Setup() {
           {step === "advanced" && (
             <div className="flex flex-col gap-4 text-sm">
               <p className="text-fg-muted">
-                Point the app at an existing data directory or remote node.
-                Most users should use the simple flow.
+                Point the app at an existing data directory or remote node. Most
+                users should use the simple flow.
               </p>
               <div className="flex flex-col gap-1">
-                <label className="text-fg-muted text-xs">
-                  Data directory
-                </label>
+                <label className="text-fg-muted text-xs">Data directory</label>
                 <div className="flex gap-2">
                   <input
                     value={datadirDraft}
                     onChange={(e) => setDatadirDraft(e.target.value)}
-                    className="h-9 flex-1 rounded-md border border-border bg-bg-subtle px-3 font-mono text-xs outline-none focus:border-accent"
+                    className="h-9 flex-1 rounded-md border border-border bg-bg-subtle px-3 text-xs outline-none focus:border-accent"
                   />
                   <Button
                     size="sm"
@@ -601,12 +562,7 @@ export function Setup() {
                 </div>
               </div>
 
-              <DaemonConnectionPanel
-                coin={coin}
-                config={config.data}
-                mode="wizard"
-                onConnected={() => setStep("wallet")}
-              />
+              <DaemonConnectionPanel coin={coin} config={config.data} mode="settings" />
 
               <div className="flex flex-wrap gap-2">
                 <Button

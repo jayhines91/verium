@@ -5,8 +5,14 @@ const titles: Record<string, string> = {
   "/dashboard": "Dashboard",
   "/wallet": "Wallet",
   "/mining": "Mining",
+  "/staking": "Staking",
   "/network": "Network",
+  "/binary-chain": "Binary Chain",
   "/transactions": "Transactions",
+  "/addresses": "Address book",
+  "/security": "Security",
+  "/sign": "Sign & verify",
+  "/console": "RPC console",
   "/logs": "Logs",
   "/resources": "Resources",
   "/settings": "Settings",
@@ -14,7 +20,7 @@ const titles: Record<string, string> = {
 
 export function TopBar() {
   const { pathname } = useLocation();
-  const title = titles[pathname] ?? "Verium";
+  const title = titles[pathname] ?? "Vericonomy Wallet";
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-bg-subtle px-8">
       <h1 className="text-lg font-semibold">{title}</h1>

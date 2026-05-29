@@ -66,8 +66,7 @@ export const COMMUNITY_TWITTER = "https://twitter.com/vericonomy";
  * The fragment path is the best guess for the current explorer build; users
  * can override it in Settings.
  */
-export const DEFAULT_TX_EXPLORER_TEMPLATE =
-  defaultTxExplorerTemplate("verium");
+export const DEFAULT_TX_EXPLORER_TEMPLATE = defaultTxExplorerTemplate("verium");
 
 export const DEFAULT_BLOCK_EXPLORER_TEMPLATE =
   defaultBlockExplorerTemplate("verium");

@@ -1,3 +1,4 @@
+mod node;
 mod addressbook;
 mod audit_log;
 mod auto_lock;
@@ -6,6 +7,7 @@ mod bootstrap;
 mod coin_profile;
 mod commands;
 mod config;
+mod dace_commands;
 mod daemon;
 mod error;
 mod explorer_api;
@@ -15,6 +17,7 @@ mod installer_verify;
 mod logs;
 mod mining_opt;
 mod multisig;
+mod network_mode_commands;
 mod passkey;
 mod prefs;
 mod receive_requests;
@@ -28,7 +31,6 @@ mod state;
 mod two_factor;
 mod updates;
 mod wallet_secrets;
-mod wsl;
 
 use state::AppState;
 use tauri::Manager;
@@ -51,8 +53,9 @@ pub fn run() {
         .setup(|app| {
             let state = AppState::initialize(app.handle().clone())?;
             let startup_state = state.clone();
+            let startup_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                commands::startup_daemon_connect(&startup_state).await;
+                node::orchestrator::startup(startup_app, &startup_state).await;
             });
             app.manage(state);
             app.manage(gpu_miner::GpuMinerHandle::new());
@@ -118,6 +121,7 @@ pub fn run() {
             commands::set_user_preferences,
             commands::import_bootstrap,
             commands::cancel_bootstrap,
+            commands::quit_wallet,
             commands::fetch_explorer_stats,
             commands::fetch_explorer_blocks,
             commands::fetch_explorer_transactions,
@@ -126,19 +130,28 @@ pub fn run() {
             commands::fetch_explorer_peers_cmd,
             commands::get_explorer_logo_url,
             commands::is_explorer_api_enabled,
-            commands::get_wsl_restart_hint,
-            commands::restart_wsl_veriumd_cmd,
-            commands::detect_wsl_datadirs_cmd,
             commands::ensure_daemon_connected,
             commands::repair_chain,
-            commands::rebuild_wsl_veriumd_validation_fix,
+            commands::node_retry,
+            commands::node_reset_credentials,
             commands::address_book_list,
             commands::address_book_upsert,
             commands::address_book_delete,
             commands::diagnostic_bundle,
             mining_opt::cpu_topology,
+            mining_opt::cpu_utilization_snapshot,
             mining_opt::bench_scrypt,
             mining_opt::battery_on_ac_power,
+            dace_commands::binarychain_status,
+            dace_commands::binarychain_metrics,
+            dace_commands::binarychain_anchor,
+            dace_commands::binarychain_redeem_claim,
+            dace_commands::binarychain_register_ticket,
+            dace_commands::binarychain_unbond_ticket,
+            dace_commands::binarychain_fund_wallet,
+            network_mode_commands::network_mode_get,
+            network_mode_commands::network_mode_preview,
+            network_mode_commands::network_mode_set,
             gpu_miner::gpu_miner_status,
             gpu_miner::gpu_miner_start,
             gpu_miner::gpu_miner_stop,
@@ -151,6 +164,7 @@ pub fn run() {
             security_commands::two_factor_status,
             security_commands::two_factor_start_enrollment,
             security_commands::two_factor_confirm_enrollment,
+            security_commands::two_factor_pending_otpauth_uri,
             security_commands::two_factor_verify,
             security_commands::two_factor_disable,
             security_commands::two_factor_is_gated,
@@ -201,11 +215,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if matches!(event, tauri::RunEvent::Exit) {
-                if let Some(state) = app_handle.try_state::<AppState>() {
-                    tauri::async_runtime::block_on(commands::shutdown_daemon_on_app_exit(
-                        state.inner(),
-                    ));
-                }
+                commands::run_shutdown_on_exit(app_handle);
             }
         });
 }

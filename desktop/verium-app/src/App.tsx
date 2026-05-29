@@ -18,11 +18,12 @@ import { Security } from "@/pages/Security";
 import { Setup } from "@/pages/Setup";
 import { SignVerify } from "@/pages/SignVerify";
 import { Resources } from "@/pages/Resources";
+import { BinaryChain } from "@/pages/BinaryChain";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { useWebAudioGestureUnlock } from "@/lib/web-audio";
 import { PasskeyGate } from "@/components/PasskeyGate";
 import { useAutoLock } from "@/hooks/useAutoLock";
-import { useAutoWalletUnlock } from "@/hooks/useAutoWalletUnlock";
+import { useAdaptiveMiningThreads } from "@/hooks/useAdaptiveMiningThreads";
 import { useAutoMine } from "@/hooks/useAutoMine";
 import { useAutoStake } from "@/hooks/useAutoStake";
 import { useBlockMinedSound } from "@/hooks/useBlockMinedSound";
@@ -30,6 +31,7 @@ import { useBlockMinedWatcher } from "@/hooks/useBlockMinedWatcher";
 import { useIncomingVrmNotifications } from "@/hooks/useIncomingVrmNotifications";
 import { useIncomingVrmWatcher } from "@/hooks/useIncomingVrmWatcher";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { isNodeReady } from "@/lib/node/status";
 import { useTheme } from "@/hooks/useTheme";
 import { useDeepLinkHandler } from "@/hooks/useDeepLinkHandler";
 import { ToastHost } from "@/components/ToastHost";
@@ -44,7 +46,7 @@ function SetupRedirect() {
 
   useEffect(() => {
     if (!loaded || isLoading) return;
-    if (prefs.setup_completed || status?.connected) return;
+    if (prefs.setup_completed || isNodeReady(status)) return;
     if (location.pathname === "/setup") return;
     navigate("/setup", { replace: true });
   }, [loaded, isLoading, prefs.setup_completed, status?.connected, location.pathname, navigate]);
@@ -55,8 +57,8 @@ function SetupRedirect() {
 function AppHooks() {
   const prefs = useUserPreferences((s) => s.prefs);
   useAutoMine();
+  useAdaptiveMiningThreads();
   useAutoStake();
-  useAutoWalletUnlock();
   useAutoLock();
   useTheme();
   useBlockMinedWatcher();
@@ -102,6 +104,7 @@ function AppRoutes() {
           <Route path="/mining" element={<Mining />} />
           <Route path="/staking" element={<Staking />} />
           <Route path="/network" element={<Network />} />
+          <Route path="/binary-chain" element={<BinaryChain />} />
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/addresses" element={<AddressBook />} />
           <Route path="/sign" element={<SignVerify />} />

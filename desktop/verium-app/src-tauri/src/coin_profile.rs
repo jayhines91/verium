@@ -47,10 +47,8 @@ impl CoinId {
     }
 
     pub fn conf_filename(self) -> &'static str {
-        match self {
-            CoinId::Verium => "verium.conf",
-            CoinId::Vericoin => "vericonomy.conf",
-        }
+        // Unified vericoin/veriumd builds read vericonomy.conf (see BITCOIN_CONF_FILENAME).
+        "vericonomy.conf"
     }
 
     pub fn default_rpc_port(self) -> u16 {
@@ -69,14 +67,14 @@ impl CoinId {
 
     pub fn conf_section(self) -> Option<&'static str> {
         match self {
-            CoinId::Verium => None,
+            CoinId::Verium => Some("verium"),
             CoinId::Vericoin => Some("vericoin"),
         }
     }
 
     pub fn chain_cli_arg(self) -> Option<&'static str> {
         match self {
-            CoinId::Verium => None,
+            CoinId::Verium => Some("-verium"),
             CoinId::Vericoin => Some("-chain=vericoin"),
         }
     }
@@ -153,6 +151,139 @@ impl CoinId {
         match self {
             CoinId::Verium => "verium-wallet",
             CoinId::Vericoin => "vericoin-wallet",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NetworkMode: orthogonal to CoinId. Switches the daemon between mainnet and
+// the isolated Binary Chain v3 (DACE) binarytest network.
+// ---------------------------------------------------------------------------
+
+/// Which physical network a coin is operating against. Mainnet is the
+/// default; BinaryTest is the isolated Binary Chain v3 (DACE) test network
+/// defined in vericoin/src/chainparams.cpp (CBinaryTestVericoinParams and
+/// CBinaryTestVeriumParams) and documented in
+/// vericoin/doc/dace/binarytest-network.md.
+///
+/// The two modes use distinct ports, message-start magic, datadirs, and
+/// address prefixes — a binarytest daemon physically cannot peer with a
+/// mainnet daemon. See vericoin/test/binarychain/README.md.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkMode {
+    #[default]
+    Mainnet,
+    BinaryTest,
+}
+
+impl NetworkMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NetworkMode::Mainnet => "mainnet",
+            NetworkMode::BinaryTest => "binarytest",
+        }
+    }
+
+    pub fn is_test(self) -> bool {
+        matches!(self, NetworkMode::BinaryTest)
+    }
+}
+
+/// Combined identity for a (coin, network) pair. Most daemon-side state is
+/// keyed by this so a wallet can hold mainnet AND binarytest configurations
+/// without collision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CoinTarget {
+    pub coin: CoinId,
+    pub network: NetworkMode,
+}
+
+impl CoinTarget {
+    pub fn new(coin: CoinId, network: NetworkMode) -> Self {
+        Self { coin, network }
+    }
+
+    pub fn mainnet(coin: CoinId) -> Self {
+        Self::new(coin, NetworkMode::Mainnet)
+    }
+
+    pub fn binarytest(coin: CoinId) -> Self {
+        Self::new(coin, NetworkMode::BinaryTest)
+    }
+
+    /// Daemon RPC port. Binarytest uses 41683 (VRC) / 41987 (VRM).
+    pub fn rpc_port(&self) -> u16 {
+        match (self.coin, self.network) {
+            (CoinId::Verium,   NetworkMode::Mainnet)    => 33987,
+            (CoinId::Vericoin, NetworkMode::Mainnet)    => 58683,
+            (CoinId::Verium,   NetworkMode::BinaryTest) => 41987,
+            (CoinId::Vericoin, NetworkMode::BinaryTest) => 41683,
+        }
+    }
+
+    /// Datadir subdirectory under the platform-default base. Binarytest gets
+    /// the `binarytest-` prefix so it cannot collide with mainnet state.
+    pub fn datadir(&self) -> PathBuf {
+        let base_default = self.coin.default_datadir();
+        match self.network {
+            NetworkMode::Mainnet => base_default,
+            NetworkMode::BinaryTest => {
+                // Place binarytest under a parallel subdirectory of the
+                // platform-default base. On Windows that is
+                //   %APPDATA%\Vericonomy\binarytest-vericoin\
+                //   %APPDATA%\Verium\binarytest-verium\
+                let dir_name = match self.coin {
+                    CoinId::Verium => "binarytest-verium",
+                    CoinId::Vericoin => "binarytest-vericoin",
+                };
+                if let Some(parent) = base_default.parent() {
+                    parent.join(dir_name)
+                } else {
+                    PathBuf::from(dir_name)
+                }
+            }
+        }
+    }
+
+    /// Extra CLI args the daemon needs. Binarytest requires `-binarytest`
+    /// in addition to `-vericoin` / `-verium`.
+    pub fn extra_cli_args(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.network.is_test() {
+            out.push("-binarytest");
+        }
+        match self.coin {
+            CoinId::Verium => out.push("-verium"),
+            CoinId::Vericoin => out.push("-vericoin"),
+        }
+        out
+    }
+
+    /// Suppress explorer URL when running on the binarytest network — there
+    /// is no public explorer for binarytest. Callers should hide explorer
+    /// links in this mode.
+    pub fn explorer_api_base(&self) -> Option<&'static str> {
+        match self.network {
+            NetworkMode::Mainnet => Some(self.coin.explorer_api_base()),
+            NetworkMode::BinaryTest => None,
+        }
+    }
+
+    /// Suppress bootstrap CDN on binarytest — no canonical snapshot.
+    pub fn bootstrap_cdn_base(&self) -> Option<&'static str> {
+        match self.network {
+            NetworkMode::Mainnet => Some(self.coin.bootstrap_cdn_base()),
+            NetworkMode::BinaryTest => None,
+        }
+    }
+
+    pub fn keychain_service(&self) -> String {
+        match self.network {
+            NetworkMode::Mainnet => self.coin.keychain_service(),
+            NetworkMode::BinaryTest => {
+                format!("com.vericonomy.wallet.desktop.binarytest.{}", self.coin.as_str())
+            }
         }
     }
 }

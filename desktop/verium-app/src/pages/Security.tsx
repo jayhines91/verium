@@ -54,6 +54,7 @@ import {
   spendingControlsSave,
   twoFactorConfirmEnrollment,
   twoFactorDisable,
+  twoFactorPendingOtpauthUri,
   twoFactorStartEnrollment,
   twoFactorStatus,
   verifyInstallation,
@@ -63,10 +64,14 @@ import {
   type SpendingControlsConfig,
 } from "@/lib/security/client";
 
+const totpInputClass =
+  "h-8 w-32 rounded-md border border-border bg-bg-subtle px-2 text-sm text-fg placeholder:text-fg-subtle outline-none focus:border-accent focus:ring-1 focus:ring-accent/30";
+
 export function Security() {
   const coin = useActiveCoin();
   const queryClient = useQueryClient();
   const [totpCode, setTotpCode] = useState("");
+  const [confirm2faError, setConfirm2faError] = useState<string | null>(null);
   const [pin, setPin] = useState("");
   const [cloudPassword, setCloudPassword] = useState("");
   const [showRecovery, setShowRecovery] = useState(false);
@@ -75,6 +80,11 @@ export function Security() {
   const [combineInput, setCombineInput] = useState("");
 
   const twoFa = useQuery({ queryKey: ["two-factor"], queryFn: twoFactorStatus });
+  const pendingOtpauth = useQuery({
+    queryKey: ["two-factor-pending-uri", twoFa.data?.secret_base32],
+    queryFn: twoFactorPendingOtpauthUri,
+    enabled: Boolean(!twoFa.data?.enabled && twoFa.data?.secret_base32),
+  });
   const passkey = useQuery({ queryKey: ["passkey"], queryFn: passkeyStatus });
   const autoLock = useQuery({ queryKey: ["auto-lock"], queryFn: autoLockGetConfig });
   const audit = useQuery({ queryKey: ["audit-log"], queryFn: () => auditLogList(50) });
@@ -86,14 +96,47 @@ export function Security() {
   const isHd = useQuery({ queryKey: ["wallet-is-hd", coin], queryFn: () => recoveryWalletIsHd(coin) });
   const installVerify = useQuery({ queryKey: ["install-verify"], queryFn: verifyInstallation });
 
-  const enroll2fa = useMutation({ mutationFn: twoFactorStartEnrollment });
-  const confirm2fa = useMutation({
-    mutationFn: () => twoFactorConfirmEnrollment(totpCode),
+  const enroll2fa = useMutation({
+    mutationFn: twoFactorStartEnrollment,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["two-factor"] }),
   });
+  const enrollmentSecret =
+    enroll2fa.data?.secret_base32 ?? twoFa.data?.secret_base32 ?? null;
+  const enrollmentOtpauth =
+    enroll2fa.data?.otpauth_uri ?? pendingOtpauth.data ?? null;
+  const showEnrollmentPanel =
+    !twoFa.data?.enabled && Boolean(enrollmentSecret && enrollmentOtpauth);
+  const confirm2fa = useMutation({
+    mutationFn: ({ code, secret }: { code: string; secret: string }) =>
+      twoFactorConfirmEnrollment(code, secret),
+    onMutate: () => setConfirm2faError(null),
+    onSuccess: async () => {
+      setTotpCode("");
+      setConfirm2faError(null);
+      enroll2fa.reset();
+      queryClient.setQueryData(
+        ["two-factor"],
+        (prev: Awaited<ReturnType<typeof twoFactorStatus>> | undefined) => ({
+          ...(prev ?? {
+            enabled: false,
+            gated_actions: [],
+            secret_base32: null,
+          }),
+          enabled: true,
+          secret_base32: null,
+        }),
+      );
+      await queryClient.invalidateQueries({ queryKey: ["two-factor"] });
+      await queryClient.invalidateQueries({ queryKey: ["two-factor-pending-uri"] });
+    },
+    onError: (err) => setConfirm2faError(String(err)),
+  });
   const disable2fa = useMutation({
-    mutationFn: () => twoFactorDisable(totpCode),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["two-factor"] }),
+    mutationFn: (code: string) => twoFactorDisable(code),
+    onSuccess: () => {
+      setTotpCode("");
+      queryClient.invalidateQueries({ queryKey: ["two-factor"] });
+    },
   });
   const enrollPin = useMutation({
     mutationFn: () => passkeyEnrollPin(pin),
@@ -253,41 +296,78 @@ export function Security() {
             <Smartphone className="h-4 w-4 text-accent" /> Two-factor authentication
           </CardTitle>
           <CardDescription>
-            TOTP required for sends, passphrase changes, and key exports.
+            When enabled, every send requires a TOTP code, along with passphrase changes and
+            key exports.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <Badge tone={twoFa.data?.enabled ? "success" : "neutral"}>
             {twoFa.data?.enabled ? "Enabled" : "Disabled"}
           </Badge>
+          {confirm2fa.isSuccess && twoFa.data?.enabled && (
+            <p className="text-xs text-success">
+              Two-factor authentication is enabled for sends, passphrase changes, and key exports.
+            </p>
+          )}
           {!twoFa.data?.enabled && (
             <>
-              <Button size="sm" onClick={() => enroll2fa.mutate()} disabled={enroll2fa.isPending}>
-                Start enrollment
-              </Button>
-              {enroll2fa.data && (
+              {!showEnrollmentPanel && (
+                <Button size="sm" onClick={() => enroll2fa.mutate()} disabled={enroll2fa.isPending}>
+                  Start enrollment
+                </Button>
+              )}
+              {enroll2fa.error && (
+                <p className="text-xs text-danger">{String(enroll2fa.error)}</p>
+              )}
+              {showEnrollmentPanel && enrollmentSecret && enrollmentOtpauth && (
                 <div className="space-y-3 rounded-md border border-border bg-bg-subtle p-4 text-xs">
                   <TotpQrCode
-                    otpauthUri={enroll2fa.data.otpauth_uri}
-                    secretBase32={enroll2fa.data.secret_base32}
+                    otpauthUri={enrollmentOtpauth}
+                    secretBase32={enrollmentSecret}
                   />
-                  <p className="text-fg-muted">Enter the 6-digit code from your app to confirm:</p>
+                  <p className="text-fg-muted">
+                    Enter the 6-digit code from your app to confirm. Use the QR or manual key
+                    shown here—do not start enrollment again or the code will change.
+                  </p>
                   <input
                     type="text"
                     inputMode="numeric"
                     autoComplete="one-time-code"
+                    maxLength={6}
                     value={totpCode}
-                    onChange={(e) => setTotpCode(e.target.value.replace(/\s/g, ""))}
+                    onChange={(e) => {
+                      setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6));
+                      setConfirm2faError(null);
+                    }}
                     placeholder="6-digit code"
-                    className="h-8 w-32 rounded border border-border px-2 font-mono"
+                    className={totpInputClass}
                   />
-                  <Button size="sm" onClick={() => confirm2fa.mutate()} disabled={confirm2fa.isPending}>
-                    Confirm 2FA
+                  {confirm2faError && (
+                    <p className="text-danger">{confirm2faError}</p>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (totpCode.length < 6) {
+                        setConfirm2faError("Enter the full 6-digit code from your authenticator.");
+                        return;
+                      }
+                      confirm2fa.mutate({ code: totpCode, secret: enrollmentSecret });
+                    }}
+                    disabled={confirm2fa.isPending || totpCode.length < 6}
+                  >
+                    {confirm2fa.isPending ? "Confirming…" : "Confirm 2FA"}
                   </Button>
-                  <details>
-                    <summary className="cursor-pointer text-fg-muted">Recovery codes (save these offline)</summary>
-                    <pre className="mt-1 font-mono">{enroll2fa.data.recovery_codes.join("\n")}</pre>
-                  </details>
+                  {enroll2fa.data?.recovery_codes && (
+                    <details>
+                      <summary className="cursor-pointer text-fg-muted">
+                        Recovery codes (save these offline)
+                      </summary>
+                      <pre className="mt-1 text-fg">
+                        {enroll2fa.data.recovery_codes.join("\n")}
+                      </pre>
+                    </details>
+                  )}
                 </div>
               )}
             </>
@@ -296,12 +376,22 @@ export function Security() {
             <div className="flex gap-2">
               <input
                 type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
                 value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value)}
+                onChange={(e) =>
+                  setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+                }
                 placeholder="Code to disable"
-                className="h-8 w-32 rounded border border-border px-2 font-mono text-sm"
+                className={totpInputClass}
               />
-              <Button size="sm" variant="danger" onClick={() => disable2fa.mutate()}>
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => disable2fa.mutate(totpCode)}
+                disabled={disable2fa.isPending || totpCode.length < 6}
+              >
                 Disable 2FA
               </Button>
             </div>
@@ -498,7 +588,7 @@ export function Security() {
           {ms.data?.map((w) => (
             <div key={w.id} className="rounded border border-border px-3 py-2 text-xs">
               <div className="font-medium">{w.label}</div>
-              <div className="font-mono text-fg-muted">{w.multisig_address ?? "—"}</div>
+              <div className="text-fg-muted">{w.multisig_address ?? "—"}</div>
               <div className="text-fg-subtle">
                 {w.required_sigs}-of-{w.total_cosigners}
               </div>
@@ -585,7 +675,7 @@ export function Security() {
               Split recovery phrase
             </Button>
             {shamirShares.length > 0 && (
-              <pre className="mt-2 max-h-32 overflow-auto rounded border border-border bg-bg-subtle p-2 font-mono text-[10px]">
+              <pre className="mt-2 max-h-32 overflow-auto rounded border border-border bg-bg-subtle p-2 text-[10px]">
                 {shamirShares.join("\n")}
               </pre>
             )}
@@ -594,7 +684,7 @@ export function Security() {
               value={combineInput}
               onChange={(e) => setCombineInput(e.target.value)}
               placeholder="Paste 2+ shares to combine…"
-              className="mt-2 w-full rounded border border-border bg-bg-subtle p-2 font-mono text-[10px]"
+              className="mt-2 w-full rounded border border-border bg-bg-subtle p-2 text-[10px]"
             />
             <Button
               size="sm"

@@ -83,7 +83,11 @@ export function effectiveAddressExplorerTemplate(
   return stored;
 }
 
-export function buildTxExplorerUrl(coin: CoinId, template: string, txid: string): string {
+export function buildTxExplorerUrl(
+  coin: CoinId,
+  template: string,
+  txid: string,
+): string {
   const safe =
     template && template.includes("%s")
       ? template

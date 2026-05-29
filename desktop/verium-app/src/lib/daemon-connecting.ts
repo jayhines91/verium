@@ -35,6 +35,8 @@ export function isDaemonConnectingState(
   },
 ): boolean {
   if (opts.isLoading) return true;
+  if (status?.chain_corrupt) return false;
+  if (status?.reindex_in_progress) return true;
   if (isBinaryUnavailableError(status?.error)) return false;
   if (status?.warming_up) return true;
   if (status?.connected) return false;
@@ -43,6 +45,18 @@ export function isDaemonConnectingState(
     status?.error?.includes("unauthorized") ||
     status?.error?.includes("invalid RPC credentials");
   if (unauthorized) return false;
+
+  // Backend-reported startup / index load messages should stay in connecting state.
+  if (status?.error?.toLowerCase().includes("reindexing block headers")) {
+    return true;
+  }
+
+  if (
+    status?.error?.toLowerCase().includes("loading the chain index") ||
+    status?.error?.toLowerCase().includes("loading imported chain data")
+  ) {
+    return true;
+  }
 
   if (opts.isFetching && !status) return true;
   if (opts.startupGraceActive && isTransientDaemonError(status?.error)) {

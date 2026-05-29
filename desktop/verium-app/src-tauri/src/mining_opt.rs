@@ -30,6 +30,16 @@ pub struct CpuTopology {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CpuUtilizationSnapshot {
+    pub system_utilization_percent: f32,
+    pub system_idle_percent: f32,
+    pub daemon_utilization_percent: Option<f32>,
+    /// Estimated CPU used by non-veriumd workloads (0–100).
+    pub other_utilization_percent: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScryptBenchResult {
     pub tier: String,
     pub throughput: i32,
@@ -94,6 +104,52 @@ fn macos_perf_cores() -> Option<u32> {
     } else {
         None
     }
+}
+
+fn is_veriumd_process(name: &str) -> bool {
+    name.eq_ignore_ascii_case("veriumd") || name.eq_ignore_ascii_case("veriumd.exe")
+}
+
+fn cpu_utilization_snapshot_sync() -> AppResult<CpuUtilizationSnapshot> {
+    use sysinfo::{CpuRefreshKind, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+
+    let mut sys = System::new_with_specifics(
+        RefreshKind::nothing()
+            .with_cpu(CpuRefreshKind::everything())
+            .with_processes(ProcessRefreshKind::nothing().with_cpu()),
+    );
+    sys.refresh_cpu_all();
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    sys.refresh_cpu_all();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+
+    let system_util = sys.global_cpu_usage();
+    let system_idle = (100.0_f32 - system_util).max(0.0);
+
+    let daemon_util = sys
+        .processes()
+        .values()
+        .filter(|p| is_veriumd_process(&p.name().to_string_lossy()))
+        .map(|p| p.cpu_usage())
+        .reduce(f32::max);
+
+    let other_util = daemon_util
+        .map(|d| (system_util - d).max(0.0))
+        .unwrap_or(system_util);
+
+    Ok(CpuUtilizationSnapshot {
+        system_utilization_percent: system_util,
+        system_idle_percent: system_idle,
+        daemon_utilization_percent: daemon_util,
+        other_utilization_percent: other_util,
+    })
+}
+
+#[tauri::command]
+pub async fn cpu_utilization_snapshot() -> AppResult<CpuUtilizationSnapshot> {
+    tokio::task::spawn_blocking(cpu_utilization_snapshot_sync)
+        .await
+        .map_err(|e| AppError::other(format!("cpu utilization snapshot failed: {e}")))?
 }
 
 #[tauri::command]
@@ -200,12 +256,17 @@ pub async fn bench_scrypt(_state: State<'_, AppState>) -> AppResult<ScryptBenchR
 pub async fn battery_on_ac_power() -> AppResult<bool> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         if let Ok(out) = std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
                 "-Command",
                 "(Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue) -eq $null -or (Get-CimInstance -ClassName BatteryStatus -Namespace root/WMI -ErrorAction SilentlyContinue | Select-Object -First 1).PowerOnline -ne $false",
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
         {
             let s = String::from_utf8_lossy(&out.stdout);

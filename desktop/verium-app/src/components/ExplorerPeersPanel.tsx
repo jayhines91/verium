@@ -13,10 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/Card";
 import { ExplorerLink } from "@/components/ExplorerLink";
-import {
-  fetchExplorerPeers,
-  isExplorerApiEnabled,
-} from "@/lib/explorer-api";
+import { fetchExplorerPeers, isExplorerApiEnabled } from "@/lib/explorer-api";
 import { explorerPeersHash } from "@/lib/explorer-links";
 import {
   rpcAddNode,
@@ -69,12 +66,23 @@ export function ExplorerPeersPanel() {
   }, [addedNodes.data]);
 
   const addNode = useMutation({
-    mutationFn: ({ node, command }: { node: string; command: "add" | "onetry" }) =>
-      rpcAddNode(coin, node, command),
+    mutationFn: ({
+      node,
+      command,
+    }: {
+      node: string;
+      command: "add" | "onetry";
+    }) => rpcAddNode(coin, node, command),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getpeerinfo") });
-      void queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getaddednodeinfo") });
-      void queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getnetworkinfo") });
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "getpeerinfo"),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "getaddednodeinfo"),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "getnetworkinfo"),
+      });
     },
   });
 
@@ -100,7 +108,12 @@ export function ExplorerPeersPanel() {
             Peers seen by the official explorer in the last 24 hours. Add nodes
             to your local <span className="font-mono">veriumd</span> with one
             click — same list as{" "}
-            <ExplorerLink coin={coin} target={{ kind: "raw", url: explorerPeersHash(coin) }} label="Peers on explorer" />.
+            <ExplorerLink
+              coin={coin}
+              target={{ kind: "raw", url: explorerPeersHash(coin) }}
+              label="Peers on explorer"
+            />
+            .
           </CardDescription>
         </div>
         <Button
@@ -162,7 +175,7 @@ export function ExplorerPeersPanel() {
                       key={p.address}
                       className="border-t border-border odd:bg-bg-subtle/30"
                     >
-                      <td className="px-4 py-2 font-mono text-xs">
+                      <td className="px-4 py-2 text-xs">
                         <div className="flex items-center gap-2">
                           <span>{p.address}</span>
                           <button
@@ -185,9 +198,7 @@ export function ExplorerPeersPanel() {
                       </td>
                       <td className="px-4 py-2">
                         <div className="flex flex-wrap gap-1">
-                          {connected && (
-                            <Badge tone="success">Connected</Badge>
-                          )}
+                          {connected && <Badge tone="success">Connected</Badge>}
                           {added && !connected && (
                             <Badge tone="accent">Added</Badge>
                           )}
@@ -203,7 +214,10 @@ export function ExplorerPeersPanel() {
                             variant="ghost"
                             disabled={pending || connected}
                             onClick={() =>
-                              addNode.mutate({ node: p.address, command: "onetry" })
+                              addNode.mutate({
+                                node: p.address,
+                                command: "onetry",
+                              })
                             }
                           >
                             Try once
@@ -213,7 +227,10 @@ export function ExplorerPeersPanel() {
                             variant="secondary"
                             disabled={pending || added}
                             onClick={() =>
-                              addNode.mutate({ node: p.address, command: "add" })
+                              addNode.mutate({
+                                node: p.address,
+                                command: "add",
+                              })
                             }
                           >
                             Add

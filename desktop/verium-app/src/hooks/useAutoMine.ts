@@ -3,6 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { coinQueryKey } from "@/lib/coin/profile";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import { useUserPreferences } from "@/lib/user-preferences";
+import { isChainSynced } from "@/lib/bootstrap-policy";
+import { fetchExplorerStats } from "@/lib/explorer-api";
+import { useExplorerQueriesEnabled } from "@/lib/network-mode";
 import {
   fetchCpuTopology,
   isOnAcPower,
@@ -39,6 +42,19 @@ export function useAutoMine() {
     enabled: loaded && prefs.auto_mine_on_open === true && prefs.verium_enabled !== false,
   });
 
+  const explorerEnabled = useExplorerQueriesEnabled();
+  const explorer = useQuery({
+    queryKey: coinQueryKey(VERIUM, "explorer-stats"),
+    queryFn: () => fetchExplorerStats(VERIUM),
+    refetchInterval: 30_000,
+    enabled:
+      loaded &&
+      prefs.auto_mine_on_open === true &&
+      prefs.verium_enabled !== false &&
+      explorerEnabled,
+    retry: 0,
+  });
+
   const blockchain = useQuery({
     queryKey: coinQueryKey(VERIUM, "getblockchaininfo"),
     queryFn: () => rpcGetBlockchainInfo(VERIUM),
@@ -66,15 +82,23 @@ export function useAutoMine() {
     const tryStart = async () => {
       if (wasMiningStoppedByUser()) return;
       if (minerState.data?.active) return;
+      if (!status?.connected || status.warming_up || status.sync_stalled) return;
+      if (
+        !isChainSynced(blockchain.data, {
+          connected: true,
+          syncStalled: false,
+          networkTip: explorer.data?.height,
+        })
+      ) {
+        return;
+      }
+      if (!isWalletUnlocked(wallet.data)) return;
       try {
         const onAc = await isOnAcPower();
         if (!onAc) return;
       } catch {
         /* ignore battery probe errors */
       }
-      if (!status?.connected || status.warming_up || status.sync_stalled) return;
-      if (blockchain.data?.initialblockdownload) return;
-      if (!isWalletUnlocked(wallet.data)) return;
 
       const threads = resolveMiningThreads(
         topology.data,
@@ -108,7 +132,8 @@ export function useAutoMine() {
     status?.connected,
     status?.warming_up,
     status?.sync_stalled,
-    blockchain.data?.initialblockdownload,
+    blockchain.data,
+    explorer.data?.height,
     wallet.data,
     minerState.data?.active,
     queryClient,

@@ -4,17 +4,26 @@ import { Badge } from "./ui/Badge";
 import { useActiveCoin } from "@/lib/coin/context";
 import { coinQueryKey } from "@/lib/coin/profile";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { nodeStatusLabel, nodeStateFromStatus } from "@/lib/node/status";
+import {
+  blocksBehindNetwork,
+  chainSyncPhaseFromCounts,
+  syncTargetHeight,
+} from "@/lib/bootstrap-policy";
 import { fetchExplorerStats } from "@/lib/explorer-api";
+import { useIsTestNetwork } from "@/lib/network-mode";
 import { formatNumber } from "@/lib/utils";
 
 export function DaemonStatusBadge() {
   const coin = useActiveCoin();
+  const isTestNetwork = useIsTestNetwork();
   const { data, isConnecting } = useDaemonStatus(coin);
+  const nodeState = nodeStateFromStatus(data);
   const explorer = useQuery({
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
-    enabled: data?.initial_block_download === true,
-    refetchInterval: 30_000,
+    enabled: data?.connected === true && !isTestNetwork,
+    refetchInterval: 5_000,
     retry: 0,
   });
 
@@ -23,15 +32,14 @@ export function DaemonStatusBadge() {
       <Badge tone="neutral">
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-          Connecting…
+          {nodeStatusLabel(data) || "Starting node…"}
         </span>
       </Badge>
     );
   }
 
   if (data?.warming_up) {
-    const label =
-      data.error?.replace(/^rpc error -?\d+:\s*/i, "") ?? "Starting up…";
+    const label = nodeStatusLabel(data);
     return (
       <Badge tone="warning" title={data.error ?? undefined}>
         {label.length > 40 ? `${label.slice(0, 37)}…` : label}
@@ -40,13 +48,12 @@ export function DaemonStatusBadge() {
   }
 
   if (!data?.connected) {
-    const unauthorized =
-      data?.error?.includes("unauthorized") ||
-      data?.error?.includes("invalid RPC credentials");
+    const authMismatch = nodeState === "auth_mismatch";
     return (
       <Link to="/settings#daemon-connection" className="hover:opacity-90">
-        <Badge tone={unauthorized ? "warning" : "danger"}>
-          {unauthorized ? "RPC login required" : "Daemon disconnected"}
+        <Badge tone={authMismatch ? "warning" : "danger"}>
+          {data?.user_message ??
+            (authMismatch ? "Node login mismatch" : "Node disconnected")}
         </Badge>
       </Link>
     );
@@ -54,26 +61,62 @@ export function DaemonStatusBadge() {
 
   const chain = data.chain ? `${data.chain}` : "main";
   const blocks = data.blocks;
-  const syncing = data.initial_block_download === true;
   const headers = data.headers ?? blocks;
   const networkTip = explorer.data?.height;
+  const syncCtx = {
+    connected: true as const,
+    syncStalled: data.sync_stalled === true,
+    networkTip,
+  };
+  const phase = chainSyncPhaseFromCounts(
+    blocks,
+    headers,
+    data.initial_block_download,
+    syncCtx,
+  );
   const target =
-    headers != null && networkTip != null
-      ? Math.max(headers, networkTip)
-      : headers ?? networkTip;
+    blocks != null
+      ? syncTargetHeight(
+          {
+            chain,
+            blocks,
+            headers: headers ?? blocks,
+            bestblockhash: "",
+            difficulty: 0,
+            mediantime: 0,
+            verificationprogress: data.verification_progress ?? 0,
+            initialblockdownload: data.initial_block_download === true,
+            size_on_disk: 0,
+            pruned: false,
+            warnings: "",
+          },
+          networkTip,
+        )
+      : networkTip;
+  const behind = blocksBehindNetwork(blocks, target);
 
-  if (syncing && blocks != null && target != null && target > blocks) {
+  if (phase === "syncing" || phase === "catching-up") {
     return (
       <Badge tone="warning">
-        Syncing ({chain}) · #{formatNumber(blocks, 0)} / ~#
-        {formatNumber(target, 0)}
+        {phase === "syncing" ? "Syncing" : "Catching up"} ({chain}) · #
+        {formatNumber(blocks ?? 0, 0)}
+        {target != null && target > (blocks ?? 0) && (
+          <> / ~#{formatNumber(target, 0)}</>
+        )}
+        {behind != null && behind > 0 && (
+          <span className="hidden sm:inline">
+            {" "}
+            ({formatNumber(behind, 0)} behind)
+          </span>
+        )}
       </Badge>
     );
   }
 
   return (
     <Badge tone="success">
-      Connected ({chain}) - Latest Block: #{blocks ?? "?"}
+      Connected ({chain}) - Latest Block: #
+      {blocks != null ? formatNumber(blocks, 0) : "?"}
     </Badge>
   );
 }

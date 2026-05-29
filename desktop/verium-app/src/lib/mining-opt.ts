@@ -19,8 +19,47 @@ export interface ScryptBenchResult {
   elapsedMs: number;
 }
 
+export interface CpuUtilizationSnapshot {
+  systemUtilizationPercent: number;
+  systemIdlePercent: number;
+  daemonUtilizationPercent: number | null;
+  otherUtilizationPercent: number;
+}
+
+/** Poll interval for adaptive mining thread changes while mining. */
+export const ADAPTIVE_MINING_POLL_MS = 30_000;
+
+/** Consecutive samples required before changing thread count (reduces thrashing). */
+export const ADAPTIVE_CONSECUTIVE_SAMPLES = 2;
+
+/** Non-miner CPU above this → reduce mining threads. */
+export const ADAPTIVE_OTHER_UTIL_HIGH = 55;
+
+/** Non-miner CPU below this → increase mining threads toward device ceiling. */
+export const ADAPTIVE_OTHER_UTIL_LOW = 20;
+
+/** System idle below this when daemon CPU is unknown → reduce threads. */
+export const ADAPTIVE_IDLE_LOW_PERCENT = 22;
+
+/** System idle above this when daemon CPU is unknown → increase threads. */
+export const ADAPTIVE_IDLE_HIGH_PERCENT = 45;
+
+export interface AdaptiveThreadState {
+  consecutiveHighLoad: number;
+  consecutiveLowLoad: number;
+}
+
+export const INITIAL_ADAPTIVE_THREAD_STATE: AdaptiveThreadState = {
+  consecutiveHighLoad: 0,
+  consecutiveLowLoad: 0,
+};
+
 export async function fetchCpuTopology(): Promise<CpuTopology> {
   return invoke<CpuTopology>("cpu_topology");
+}
+
+export async function fetchCpuUtilizationSnapshot(): Promise<CpuUtilizationSnapshot> {
+  return invoke<CpuUtilizationSnapshot>("cpu_utilization_snapshot");
 }
 
 export async function runScryptBench(): Promise<ScryptBenchResult> {
@@ -66,6 +105,84 @@ export function optimizedMiningThreads(topology: CpuTopology | undefined): numbe
   return clampMiningThreads(n, max);
 }
 
+/** Max threads for auto-adjust (device-tuned ceiling from topology). */
+export function adaptiveMiningCeiling(topology: CpuTopology | undefined): number {
+  return optimizedMiningThreads(topology);
+}
+
+export type AdaptiveLoadSignal = "high" | "low" | "neutral";
+
+/** Classify CPU load for adaptive thread scaling. */
+export function adaptiveLoadSignal(
+  snapshot: CpuUtilizationSnapshot,
+): AdaptiveLoadSignal {
+  if (snapshot.daemonUtilizationPercent != null) {
+    if (snapshot.otherUtilizationPercent >= ADAPTIVE_OTHER_UTIL_HIGH) {
+      return "high";
+    }
+    if (snapshot.otherUtilizationPercent <= ADAPTIVE_OTHER_UTIL_LOW) {
+      return "low";
+    }
+    return "neutral";
+  }
+  if (snapshot.systemIdlePercent <= ADAPTIVE_IDLE_LOW_PERCENT) {
+    return "high";
+  }
+  if (snapshot.systemIdlePercent >= ADAPTIVE_IDLE_HIGH_PERCENT) {
+    return "low";
+  }
+  return "neutral";
+}
+
+/**
+ * Next mining thread count from CPU load with hysteresis.
+ * `ceiling` is the device-tuned max (topology); `floor` is always 1.
+ */
+export function nextAdaptiveMiningThreads(
+  currentThreads: number,
+  ceiling: number,
+  floor: number,
+  snapshot: CpuUtilizationSnapshot,
+  state: AdaptiveThreadState,
+): { threads: number; state: AdaptiveThreadState } {
+  const cappedCeiling = Math.max(floor, ceiling);
+  let threads = clampMiningThreads(currentThreads, cappedCeiling);
+  let { consecutiveHighLoad, consecutiveLowLoad } = state;
+  const signal = adaptiveLoadSignal(snapshot);
+
+  if (signal === "high") {
+    consecutiveHighLoad += 1;
+    consecutiveLowLoad = 0;
+  } else if (signal === "low") {
+    consecutiveLowLoad += 1;
+    consecutiveHighLoad = 0;
+  } else {
+    consecutiveHighLoad = 0;
+    consecutiveLowLoad = 0;
+  }
+
+  if (
+    consecutiveHighLoad >= ADAPTIVE_CONSECUTIVE_SAMPLES &&
+    threads > floor
+  ) {
+    threads = Math.max(floor, threads - 1);
+    consecutiveHighLoad = 0;
+    consecutiveLowLoad = 0;
+  } else if (
+    consecutiveLowLoad >= ADAPTIVE_CONSECUTIVE_SAMPLES &&
+    threads < cappedCeiling
+  ) {
+    threads = Math.min(cappedCeiling, threads + 1);
+    consecutiveHighLoad = 0;
+    consecutiveLowLoad = 0;
+  }
+
+  return {
+    threads,
+    state: { consecutiveHighLoad, consecutiveLowLoad },
+  };
+}
+
 /** Resolve thread count from user prefs: auto-adjust or manual override. */
 export function resolveMiningThreads(
   topology: CpuTopology | undefined,
@@ -73,6 +190,6 @@ export function resolveMiningThreads(
   manualThreads: number,
 ): number {
   const max = maxMiningThreads(topology);
-  if (autoAdjust) return optimizedMiningThreads(topology);
+  if (autoAdjust) return adaptiveMiningCeiling(topology);
   return clampMiningThreads(manualThreads, max);
 }

@@ -20,8 +20,9 @@ before promoting the GitHub Release out of draft.
 ## 2. First-run wizard
 
 - [ ] Welcome screen renders, Continue button works.
-- [ ] **Start node and continue** spawns the sidecar `veriumd`.
-- [ ] The Connect step shows **Connected** after ≤ 60s.
+- [ ] **Start node** step shows automatic progress (no RPC username/password fields).
+- [ ] The node connects without manual "Test RPC" or "Create RPC login" steps.
+- [ ] **Start node** shows **Ready** or **Syncing** after ≤ 90s on a typical machine.
 - [ ] When no wallet exists, the **Create wallet** form is shown.
 - [ ] Strength meter changes from Weak to Strong as you type.
 - [ ] **Create encrypted wallet** completes successfully even when the
@@ -102,10 +103,15 @@ before promoting the GitHub Release out of draft.
 - [ ] App reload (Ctrl+R / Cmd+R) keeps the wallet unlocked.
 - [ ] Close the wallet window — veriumd stops and releases the data directory lock.
 - [ ] Re-open the wallet and start the node — only one veriumd instance runs.
-- [ ] Lock wallet, restart machine, re-open — wallet is locked again and
-      unlocks with the passphrase.
+- [ ] Kill `veriumd` externally while the app is open — the app recovers within ~30s (supervisor).
+- [ ] Lock wallet, restart machine, re-open — wallet is locked again and unlocks with the passphrase.
 
-## 13. Uninstall
+## 13. Automated tests (dev)
+
+- [ ] `npm run test` — Vitest status mapping (`src/lib/node/status.test.ts`).
+- [ ] `cargo test node::` — Rust node module unit tests (auth, diagnostics, state).
+
+## 14. Uninstall
 
 - [ ] Windows: NSIS uninstaller removes the app but leaves the data
       directory intact.

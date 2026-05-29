@@ -41,7 +41,7 @@ export function TwoFactorPrompt({
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/\s/g, ""))}
           placeholder="000000"
-          className="mb-3 h-10 w-full rounded-md border border-border bg-bg-subtle px-3 font-mono text-sm tracking-widest outline-none focus:border-accent"
+          className="mb-3 h-10 w-full rounded-md border border-border bg-bg-subtle px-3 text-sm tracking-widest outline-none focus:border-accent"
         />
         {error && <p className="mb-3 text-xs text-danger">{error}</p>}
         <div className="flex justify-end gap-2">

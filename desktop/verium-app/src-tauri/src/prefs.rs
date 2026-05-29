@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-use crate::coin_profile::CoinId;
+use crate::coin_profile::{CoinId, NetworkMode};
 use crate::config::app_config_base;
 use crate::error::AppResult;
 
@@ -69,6 +69,12 @@ pub struct UserPreferences {
     /// Unix timestamp when bootstrap was last imported, keyed by coin id.
     #[serde(default)]
     pub bootstrap_imported_at_by_coin: Option<HashMap<String, i64>>,
+    /// Which physical network the wallet is operating against. Defaults to
+    /// Mainnet. BinaryTest is the isolated Binary Chain v3 (DACE) test
+    /// network — see vericoin/doc/dace/binarytest-network.md. Switching
+    /// modes restarts the daemons and clears RPC URL overrides.
+    #[serde(default)]
+    pub network_mode: NetworkMode,
 }
 
 fn default_active_coin() -> String {
@@ -138,6 +144,7 @@ impl Default for UserPreferences {
             wallet_unlock_duration_by_coin: None,
             tx_fee_rate_vrm_per_kb: None,
             bootstrap_imported_at_by_coin: None,
+            network_mode: NetworkMode::Mainnet,
         }
     }
 }
@@ -168,6 +175,7 @@ pub struct PartialUserPreferences {
     pub wallet_unlock_duration_by_coin: Option<HashMap<String, u32>>,
     pub tx_fee_rate_vrm_per_kb: Option<f64>,
     pub bootstrap_imported_at_by_coin: Option<HashMap<String, i64>>,
+    pub network_mode: Option<NetworkMode>,
 }
 
 pub fn prefs_path() -> PathBuf {
@@ -207,7 +215,8 @@ const PREFS_STORE_LABEL: &str = "user-preferences";
 pub async fn load() -> AppResult<UserPreferences> {
     // Migrate legacy plaintext if present.
     let legacy = legacy_prefs_path();
-    if legacy.exists() && !crate::secret_store::open(PREFS_STORE_LABEL)?.is_some() {
+    let path = prefs_path();
+    if legacy.exists() && !crate::secret_store::blob_exists(PREFS_STORE_LABEL) {
         let raw = fs::read_to_string(&legacy).await?;
         if let Ok(prefs) = serde_json::from_str::<UserPreferences>(&raw) {
             save(&prefs).await?;
@@ -215,13 +224,36 @@ pub async fn load() -> AppResult<UserPreferences> {
             return Ok(prefs);
         }
     }
-    let path = prefs_path();
+
+    // Plaintext mirror (written on every save) survives keychain resets.
+    if path.exists() && !crate::secret_store::blob_readable(PREFS_STORE_LABEL) {
+        let raw = fs::read_to_string(&path).await?;
+        if let Ok(prefs) = serde_json::from_str::<UserPreferences>(&raw) {
+            save(&prefs).await?;
+            return Ok(prefs);
+        }
+    }
+
     crate::secret_store::migrate_plaintext_json(PREFS_STORE_LABEL, &path)?;
-    Ok(crate::secret_store::load_json(
+    let mut prefs = crate::secret_store::load_json(
         PREFS_STORE_LABEL,
         &path,
         UserPreferences::default(),
-    )?)
+    )?;
+
+    // When both stores exist, reconcile network_mode from the plaintext mirror
+    // (always rewritten on save) in case encrypted load returned stale defaults.
+    if path.exists() {
+        if let Ok(raw) = fs::read_to_string(&path).await {
+            if let Ok(plain) = serde_json::from_str::<UserPreferences>(&raw) {
+                if plain.network_mode != prefs.network_mode {
+                    prefs.network_mode = plain.network_mode;
+                }
+            }
+        }
+    }
+
+    Ok(prefs)
 }
 
 pub async fn save(prefs: &UserPreferences) -> AppResult<()> {
@@ -230,6 +262,10 @@ pub async fn save(prefs: &UserPreferences) -> AppResult<()> {
         fs::create_dir_all(parent).await?;
     }
     crate::secret_store::save_json(PREFS_STORE_LABEL, prefs)?;
+    // Plaintext mirror survives Windows Credential Manager resets that orphan
+    // the encrypted blob's master key (aead decrypt failures on next launch).
+    let json = serde_json::to_string_pretty(prefs)?;
+    fs::write(&path, json).await?;
     Ok(())
 }
 
@@ -309,5 +345,6 @@ pub fn merge(current: UserPreferences, partial: PartialUserPreferences) -> UserP
                 Some(merged)
             }
         },
+        network_mode: partial.network_mode.unwrap_or(current.network_mode),
     }
 }

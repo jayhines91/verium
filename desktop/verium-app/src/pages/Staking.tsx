@@ -14,7 +14,8 @@ import { ExplorerLink } from "@/components/ExplorerLink";
 import { ExplorerMarketCard } from "@/components/ExplorerMarketCard";
 import { WalletUnlockGate } from "@/components/WalletUnlockGate";
 import { coinQueryKey, getCoinProfile } from "@/lib/coin/profile";
-import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
+import { fetchExplorerStats } from "@/lib/explorer-api";
+import { useExplorerQueriesEnabled } from "@/lib/network-mode";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import { useUserPreferences } from "@/lib/user-preferences";
 import {
@@ -92,15 +93,11 @@ export function Staking() {
     refetchInterval: 10_000,
   });
   const daemonStatus = useDaemonStatus(VERICOIN);
-  const explorerEnabled = useQuery({
-    queryKey: ["explorer-api-enabled"],
-    queryFn: isExplorerApiEnabled,
-    staleTime: Infinity,
-  });
+  const explorerEnabled = useExplorerQueriesEnabled();
   const explorerStats = useQuery({
     queryKey: coinQueryKey(VERICOIN, "explorer-stats"),
     queryFn: () => fetchExplorerStats(VERICOIN),
-    enabled: explorerEnabled.data === true,
+    enabled: explorerEnabled,
     refetchInterval: 30_000,
     retry: 0,
   });

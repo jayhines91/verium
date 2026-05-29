@@ -22,8 +22,15 @@ export interface NodeStatus {
   error?: string;
   chain_corrupt?: boolean;
   chain_repair_detail?: string;
+  reindex_in_progress?: boolean;
+  reindex_header?: number;
+  daemon_phase?: string;
   sync_stalled?: boolean;
   sync_stall_detail?: string;
+  state?: string;
+  recovery_hint?: string;
+  needs_bootstrap?: boolean;
+  user_message?: string;
 }
 
 export interface BlockchainInfo {
@@ -146,7 +153,6 @@ export interface RpcTestResult {
 
 export interface RpcCredentialsSetup {
   rpc_user: string;
-  rpc_password: string;
   config: DaemonConfig;
 }
 
@@ -514,6 +520,11 @@ export async function tauriStopDaemon(coin: CoinId): Promise<void> {
   return invoke<void>("stop_daemon", { coin });
 }
 
+/** Gracefully stop miners, stakers, daemons, and exit the wallet. */
+export async function tauriQuitWallet(): Promise<void> {
+  return invoke<void>("quit_wallet");
+}
+
 export async function tauriRestartDaemon(coin: CoinId): Promise<void> {
   return invoke<void>("restart_daemon", { coin });
 }
@@ -615,14 +626,12 @@ export async function tauriRepairChain(
   return invoke<ChainRepairResult>("repair_chain", { coin, mode });
 }
 
-export interface RebuildWslResult {
-  success: boolean;
-  message: string;
-  log_tail: string;
+export async function tauriNodeRetry(coin: CoinId): Promise<void> {
+  return invoke<void>("node_retry", { coin });
 }
 
-export async function tauriRebuildWslVeriumdFix(): Promise<RebuildWslResult> {
-  return invoke<RebuildWslResult>("rebuild_wsl_veriumd_validation_fix");
+export async function tauriNodeResetCredentials(coin: CoinId): Promise<void> {
+  return invoke<void>("node_reset_credentials", { coin });
 }
 
 export interface DaemonBinaryStatus {
@@ -634,12 +643,9 @@ export interface DaemonBinaryStatus {
     | "adjacenttoapp"
     | "path"
     | "systemdefault"
-    | "wsl"
     | "none";
-  wsl_found: boolean;
-  wsl_path?: string;
   manageable: boolean;
-  runtime: "bundled" | "windows" | "wsl" | "native" | "none";
+  runtime: "bundled" | "windows" | "native" | "none";
   coin?: string;
   stub_sidecar?: boolean;
   missing_hint?: string;
@@ -652,27 +658,6 @@ export async function tauriDetectDaemon(coin: CoinId): Promise<DaemonBinaryStatu
 /** @deprecated use tauriDetectDaemon(coin) */
 export async function tauriDetectVeriumd(coin: CoinId = "verium"): Promise<DaemonBinaryStatus> {
   return tauriDetectDaemon(coin);
-}
-
-export async function tauriDetectWslDatadirs(): Promise<WslDatadirCandidate[]> {
-  return invoke<WslDatadirCandidate[]>("detect_wsl_datadirs_cmd");
-}
-
-export interface WslDatadirCandidate {
-  distro: string;
-  unc_path: string;
-  has_verium_conf: boolean;
-  has_blocks_dir: boolean;
-  has_cookie: boolean;
-  score: number;
-}
-
-export async function tauriGetWslRestartHint(uncDatadir: string): Promise<string> {
-  return invoke<string>("get_wsl_restart_hint", { uncDatadir });
-}
-
-export async function tauriRestartWslVeriumd(uncDatadir: string): Promise<void> {
-  return invoke<void>("restart_wsl_veriumd_cmd", { uncDatadir });
 }
 
 export async function tauriImportBootstrap(

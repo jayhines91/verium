@@ -10,10 +10,7 @@ import {
 } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { WalletUnlockGate } from "@/components/WalletUnlockGate";
-import {
-  rpcWalletSignMessage,
-  rpcWalletVerifyMessage,
-} from "@/lib/rpc/client";
+import { rpcWalletSignMessage, rpcWalletVerifyMessage } from "@/lib/rpc/client";
 import { useActiveCoin } from "@/lib/coin/context";
 
 export function SignVerify() {
@@ -57,7 +54,7 @@ function SignCard() {
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             spellCheck={false}
-            className="h-9 rounded-md border border-border bg-bg-subtle px-3 font-mono text-xs outline-none focus:border-accent"
+            className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-xs outline-none focus:border-accent"
             placeholder="VTDns…"
           />
         </div>
@@ -88,7 +85,7 @@ function SignCard() {
               readOnly
               value={sign.data}
               rows={3}
-              className="rounded-md border border-success/40 bg-success/5 px-3 py-2 font-mono text-[11px] outline-none"
+              className="rounded-md border border-success/40 bg-success/5 px-3 py-2 text-[11px] outline-none"
             />
             <Button
               size="sm"
@@ -134,7 +131,7 @@ function VerifyCard() {
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             spellCheck={false}
-            className="h-9 rounded-md border border-border bg-bg-subtle px-3 font-mono text-xs outline-none focus:border-accent"
+            className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-xs outline-none focus:border-accent"
             placeholder="VTDns…"
           />
         </div>
@@ -145,7 +142,7 @@ function VerifyCard() {
             onChange={(e) => setSignature(e.target.value)}
             rows={2}
             spellCheck={false}
-            className="rounded-md border border-border bg-bg-subtle px-3 py-2 font-mono text-[11px] outline-none focus:border-accent"
+            className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-[11px] outline-none focus:border-accent"
             placeholder="Base64 signature"
           />
         </div>
@@ -162,10 +159,7 @@ function VerifyCard() {
           size="sm"
           onClick={() => verify.mutate()}
           disabled={
-            !address.trim() ||
-            !signature.trim() ||
-            !message ||
-            verify.isPending
+            !address.trim() || !signature.trim() || !message || verify.isPending
           }
         >
           {verify.isPending ? "Verifying…" : "Verify signature"}

@@ -10,7 +10,7 @@ covered separately by the core repository.
 | --- | --- | --- |
 | Private keys (`wallet.dat`) | `<data-dir>/wallet.dat` | Yes — AES-256 with your passphrase, performed by `veriumd` |
 | Chain state, blocks | `<data-dir>/blocks/`, `<data-dir>/chainstate/` | No (public chain data) |
-| RPC credentials | `<data-dir>/verium.conf` | No — auto-generated, randomized per install |
+| RPC credentials | `<data-dir>/vericonomy.conf` (`[verium]` / `[vericoin]` section) | No — auto-generated random username (`wallet_*`) and UUID password; never shown in UI after first run |
 | App preferences | Encrypted blob in `<config-dir>/Verium/desktop-app/secure/` | Yes — AES-256-GCM, key in OS keychain |
 | Address book | Encrypted blob in `secure/` | Yes |
 | Receive request history | Encrypted blob in `secure/` | Yes |
@@ -88,8 +88,10 @@ Default `<data-dir>`:
 
 ## RPC exposure
 
-- RPC binds to `127.0.0.1` only by default.
-- Credentials are 128-bit random UUIDs.
+- RPC binds to `127.0.0.1` only by default (`rpcbind` + `rpcallowip` enforced on managed restarts).
+- Managed nodes authenticate with static `rpcuser` / `rpcpassword` in `vericonomy.conf` only (no cookie auth).
+- Passwords are random UUIDs; the desktop app does not return RPC passwords to the UI after setup.
+- Legacy flat `verium.conf` is migrated once into `vericonomy.conf` and no longer written on each start.
 
 ## Reporting vulnerabilities
 
