@@ -4,6 +4,7 @@
 #include <crypto/scrypt_selftest.h>
 
 #include <crypto/scrypt.h>
+#include <tinyformat.h>
 #include <uint256.h>
 #include <util/strencodings.h>
 

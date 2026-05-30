@@ -412,8 +412,7 @@ function VericoinSummaryCard() {
       ? formatBlockAge(blockchain.data.mediantime, ageTick)
       : "—";
   const mempool = vrcMining.data?.pooledtx ?? explorer.data?.pooled_tx;
-  const posDifficulty =
-    vrcNetwork.posDifficulty ?? blockchain.data?.difficulty;
+  const posDifficulty = vrcNetwork.posDifficulty ?? blockchain.data?.difficulty;
   const blockReward = vrcNetwork.blockReward ?? explorer.data?.block_reward;
 
   return (
@@ -548,10 +547,7 @@ function VericoinSummaryCard() {
           label="Mempool"
           value={mempool != null ? formatNumber(mempool, 0) : "—"}
         />
-        <NetworkMetric
-          label="Stake share"
-          value={stakeShare != null ? `${formatNumber(stakeShare, 2)}%` : "—"}
-        />
+
         <NetworkMetric
           label="Block reward"
           value={

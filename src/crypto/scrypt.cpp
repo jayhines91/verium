@@ -50,6 +50,11 @@ void scrypt_selftest_clear_forced_throughput()
 
 #if defined(ENABLE_SHANI)
 #include <immintrin.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#if !defined(_MSC_VER)
+#include <cpuid.h>
+#endif
+#endif
 static bool scrypt_sha256_use_shani()
 {
 #if defined(__x86_64__) || defined(_M_X64)
