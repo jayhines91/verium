@@ -13,6 +13,8 @@
 #include <script/keyorigin.h>
 #include <streams.h>
 
+#include <cstdint>
+
 class CKey;
 class CKeyID;
 class CScript;

@@ -16,6 +16,7 @@
 #include <script/standard.h>
 #include <univalue.h>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 

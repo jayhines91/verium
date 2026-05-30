@@ -14,6 +14,7 @@
 #include <uint256.h>
 #include <version.h>
 
+#include <cstdint>
 #include <vector>
 
 typedef uint256 ChainCode;

@@ -29,6 +29,10 @@ $(package)_config_libraries=filesystem,system,chrono,thread
 $(package)_cxxflags=-std=c++17 -fvisibility=hidden -D_GNU_SOURCE 
 $(package)_cxxflags_linux=-fPIC
 $(package)_cxxflags_android=-fPIC
+# Boost 1.71's MPL casts -1 into a 0-based enum, which modern clang (Xcode 15+)
+# treats as a hard error under -Wenum-constexpr-conversion. Downgrade it so the
+# native macOS depends build of Boost can complete.
+$(package)_cxxflags_darwin=-Wno-enum-constexpr-conversion
 endef
 
 define $(package)_preprocess_cmds

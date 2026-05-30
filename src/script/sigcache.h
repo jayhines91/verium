@@ -8,6 +8,7 @@
 
 #include <script/interpreter.h>
 
+#include <cstdint>
 #include <vector>
 
 // DoS prevention: limit cache size to 32MB (over 1000000 entries on 64-bit

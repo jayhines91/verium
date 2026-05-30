@@ -8,6 +8,8 @@
 
 #include <policy/policy.h>
 
+#include <cstdint>
+
 class CFeeRate;
 class CTransaction;
 

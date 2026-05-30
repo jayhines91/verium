@@ -11,6 +11,8 @@
 #include <serialize.h>
 #include <span.h>
 
+#include <cstdint>
+
 class CKeyID;
 class CPubKey;
 class CScriptID;

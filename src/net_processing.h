@@ -12,6 +12,8 @@
 #include <consensus/params.h>
 #include <sync.h>
 
+#include <cstdint>
+
 extern CCriticalSection cs_main;
 
 /** Default for -maxorphantx, maximum number of orphan transactions kept in memory */

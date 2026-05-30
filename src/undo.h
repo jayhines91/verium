@@ -13,6 +13,8 @@
 #include <serialize.h>
 #include <version.h>
 
+#include <cstdint>
+
 /** Undo information for a CTxIn
  *
  *  Contains the prevout's CTxOut being spent, and its metadata as well

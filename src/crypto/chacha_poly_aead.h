@@ -8,6 +8,7 @@
 #include <crypto/chacha20.h>
 
 #include <cmath>
+#include <cstdint>
 
 static constexpr int CHACHA20_POLY1305_AEAD_KEY_LEN = 32;
 static constexpr int CHACHA20_POLY1305_AEAD_AAD_LEN = 3; /* 3 bytes length */

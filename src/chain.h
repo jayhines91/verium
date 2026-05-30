@@ -14,6 +14,7 @@
 #include <uint256.h>
 #include <util/moneystr.h>
 
+#include <cstdint>
 #include <vector>
 
 /**

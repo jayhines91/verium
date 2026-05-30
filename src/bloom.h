@@ -7,6 +7,7 @@
 
 #include <serialize.h>
 
+#include <cstdint>
 #include <vector>
 
 class COutPoint;

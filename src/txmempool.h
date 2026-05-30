@@ -7,6 +7,7 @@
 #define BITCOIN_TXMEMPOOL_H
 
 #include <atomic>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <set>

@@ -9,6 +9,7 @@
 #include <fs.h>
 #include <serialize.h>
 
+#include <cstdint>
 #include <string>
 #include <map>
 

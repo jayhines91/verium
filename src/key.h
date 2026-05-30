@@ -12,6 +12,7 @@
 #include <support/allocators/secure.h>
 #include <uint256.h>
 
+#include <cstdint>
 #include <stdexcept>
 #include <vector>
 

@@ -11,6 +11,7 @@
 #include <chain.h>
 #include <primitives/block.h>
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <string>

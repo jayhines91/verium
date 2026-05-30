@@ -11,6 +11,7 @@
 #include <script/interpreter.h>
 #include <script/standard.h>
 
+#include <cstdint>
 #include <string>
 
 class CCoinsViewCache;

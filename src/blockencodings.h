@@ -7,6 +7,7 @@
 
 #include <primitives/block.h>
 
+#include <cstdint>
 #include <memory>
 
 class CTxMemPool;

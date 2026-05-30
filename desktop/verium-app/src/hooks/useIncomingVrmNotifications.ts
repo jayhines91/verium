@@ -16,14 +16,9 @@ function formatBatchMessage(batch: IncomingVrmBatch): {
   const count = batch.events.length;
 
   if (count === 1) {
-    const tx = batch.events[0]!;
-    const conf =
-      tx.confirmations <= 0
-        ? "Unconfirmed"
-        : `${tx.confirmations} confirmation${tx.confirmations === 1 ? "" : "s"}`;
     return {
       title: `Received ${amount} VRM`,
-      description: conf,
+      description: "",
     };
   }
 

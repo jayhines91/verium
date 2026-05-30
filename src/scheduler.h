@@ -12,6 +12,7 @@
 //
 #include <boost/chrono/chrono.hpp>
 #include <boost/thread.hpp>
+#include <cstdint>
 #include <map>
 
 #include <sync.h>

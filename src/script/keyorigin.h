@@ -7,6 +7,7 @@
 
 #include <serialize.h>
 #include <streams.h>
+#include <cstdint>
 #include <vector>
 
 struct KeyOriginInfo

@@ -7,6 +7,7 @@
 
 #include <indirectmap.h>
 
+#include <cstdint>
 #include <stdlib.h>
 
 #include <map>
