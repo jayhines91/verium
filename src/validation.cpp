@@ -18,6 +18,8 @@
 #include <flatfile.h>
 #include <hash.h>
 #include <index/txindex.h>
+#include <logging.h>
+#include <logging/timer.h>
 #include <policy/fees.h>
 #include <policy/policy.h>
 #include <policy/settings.h>
@@ -338,12 +340,9 @@ bool CheckSequenceLocks(const CTxMemPool& pool, const CTransaction& tx, int flag
 // Returns the script flags which should be checked for a given block
 static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consensus::Params& chainparams);
 
-// Height gate for timestamp rules.
-// Default (INT_MAX) = effectively disabled: accept historical blocks regardless of time checks.
-// You can re-enable by launching with -timechecksheight=<H>, or by changing the default in 1.3.6.
-static inline int TimeChecksActivationHeight()
+static inline bool EnforceStricterTimeRulesAtHeight(const Consensus::Params& consensusParams, const int nHeight)
 {
-    return gArgs.GetArg("-timechecksheight", std::numeric_limits<int>::max());
+    return nHeight >= consensusParams.nTimeRulesActivationHeight;
 }
 
 static void LimitMempoolSize(CTxMemPool& pool, size_t limit, unsigned long age)
@@ -2102,6 +2101,10 @@ bool CChainState::FlushStateToDisk(
     static int64_t nLastFlush = 0;
     std::set<int> setFilesToPrune;
     bool full_flush_completed = false;
+
+    const size_t coins_count = CoinsTip().GetCacheSize();
+    const size_t coins_mem_usage = CoinsTip().DynamicMemoryUsage();
+
     try {
     {
         bool fFlushForPrune = false;
@@ -2109,8 +2112,12 @@ bool CChainState::FlushStateToDisk(
         LOCK(cs_LastBlockFile);
         if (fPruneMode && (fCheckForPruning || nManualPruneHeight > 0) && !fReindex) {
             if (nManualPruneHeight > 0) {
+                LOG_TIME_MILLIS("find files to prune (manual)", BCLog::BENCH);
+
                 FindFilesToPruneManual(setFilesToPrune, nManualPruneHeight);
             } else {
+                LOG_TIME_MILLIS("find files to prune", BCLog::BENCH);
+
                 FindFilesToPrune(setFilesToPrune, chainparams.PruneAfterHeight());
                 fCheckForPruning = false;
             }
@@ -2149,10 +2156,17 @@ bool CChainState::FlushStateToDisk(
             if (!CheckDiskSpace(GetBlocksDir())) {
                 return AbortNode(state, "Disk space is too low!", _("Error: Disk space is too low!").translated, CClientUIInterface::MSG_NOPREFIX);
             }
-            // First make sure all block and undo data is flushed to disk.
-            FlushBlockFile();
+            {
+                LOG_TIME_MILLIS("write block and undo data to disk", BCLog::BENCH);
+
+                // First make sure all block and undo data is flushed to disk.
+                FlushBlockFile();
+            }
+
             // Then update all block file information (which may refer to block and undo files).
             {
+                LOG_TIME_MILLIS("write block index to disk", BCLog::BENCH);
+
                 std::vector<std::pair<int, const CBlockFileInfo*> > vFiles;
                 vFiles.reserve(setDirtyFileInfo.size());
                 for (std::set<int>::iterator it = setDirtyFileInfo.begin(); it != setDirtyFileInfo.end(); ) {
@@ -2170,12 +2184,18 @@ bool CChainState::FlushStateToDisk(
                 }
             }
             // Finally remove any pruned files
-            if (fFlushForPrune)
+            if (fFlushForPrune) {
+                LOG_TIME_MILLIS("unlink pruned files", BCLog::BENCH);
+
                 UnlinkPrunedFiles(setFilesToPrune);
+            }
             nLastWrite = nNow;
         }
         // Flush best chain related state. This can only be done if the blocks / block index write was also done.
         if (fDoFullFlush && !CoinsTip().GetBestBlock().IsNull()) {
+            LOG_TIME_SECONDS(strprintf("write coins cache to disk (%d coins, %.2fkB)",
+                coins_count, coins_mem_usage / 1000));
+
             // Typical Coin structures on disk are around 48 bytes in size.
             // Pushing a new one to the database can cause it to be written
             // twice (once in the log, and once in the tables). This is already
@@ -3170,14 +3190,14 @@ bool CheckBlock(const CBlock& block, CValidationState& state, const Consensus::P
     if (block.vtx.empty() || !block.vtx[0]->IsCoinBase())
         return state.Invalid(ValidationInvalidReason::CONSENSUS, false, REJECT_INVALID, "bad-cb-missing", "first tx is not coinbase");
 
-    // Height gate for timestamp rules (runtime switch via -timechecksheight)
+    // Height gate for stricter timestamp consensus rules.
     int nHeight = 0;
     {
         LOCK(cs_main); // best-effort height for context-free CheckBlock
         const CBlockIndex* tip = ::ChainActive().Tip();
     nHeight = tip ? tip->nHeight + 1 : 0;
     }
-    const bool enforce_time = nHeight >= TimeChecksActivationHeight();
+    const bool enforce_time = EnforceStricterTimeRulesAtHeight(consensusParams, nHeight);
 
     
     // Check coinbase time drift
@@ -3286,16 +3306,24 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block,
         }
     }
 
-    // --- Ungated header timestamp checks (match 1.3.1 behavior) ---
+    // Height gate for stricter timestamp header consensus checks.
+    const bool enforce_time = EnforceStricterTimeRulesAtHeight(params.GetConsensus(), nHeight);
 
     // Not older than MedianTimePast
-    if (block.GetBlockTime() <= pindexPrev->GetMedianTimePast()) {
+    if (enforce_time && block.GetBlockTime() <= pindexPrev->GetMedianTimePast()) {
+        return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID,
+                             "time-too-old", "block's timestamp is too early");
+    }
+
+    // Stricter rule from version-2.0.1:
+    // do not allow a block timestamp that is older than previous block time by more than MAX_FUTURE_BLOCK_TIME.
+    if (enforce_time && block.GetBlockTime() + MAX_FUTURE_BLOCK_TIME < pindexPrev->GetBlockTime()) {
         return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID,
                              "time-too-old", "block's timestamp is too early");
     }
 
     // Not too far into the future
-    if (block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME) {
+    if (enforce_time && block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME) {
         return state.Invalid(ValidationInvalidReason::BLOCK_TIME_FUTURE, false, REJECT_INVALID,
                              "time-too-new", "block timestamp too far in the future");
     }
