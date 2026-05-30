@@ -76,6 +76,8 @@ static bool scrypt_sha256_use_shani()
     return false;
 #endif
 }
+
+extern "C" void scrypt_sha256_transform_shani(uint32_t* state, const uint32_t* block, int swap);
 #endif
 
 static const uint32_t sha256_h[8] = {
@@ -267,7 +269,6 @@ static inline uint32_t be32dec(const void *pp)
 static inline void scrypt_sha256_transform(uint32_t* state, const uint32_t* block, int swap)
 {
 #if defined(ENABLE_SHANI)
-    extern "C" void scrypt_sha256_transform_shani(uint32_t* state, const uint32_t* block, int swap);
     if (scrypt_sha256_use_shani()) {
         scrypt_sha256_transform_shani(state, block, swap);
         return;

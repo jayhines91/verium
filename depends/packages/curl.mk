@@ -32,7 +32,6 @@ $(package)_cxxflags=-std=c++11
 endef
 
 define $(package)_config_cmds
-  autoreconf -fi && \
   $($(package)_autoconf)
 endef
 
