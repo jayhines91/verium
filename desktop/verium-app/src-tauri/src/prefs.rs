@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tokio::fs;
+use tokio::fs as async_fs;
 
 use crate::coin_profile::{CoinId, NetworkMode};
 use crate::config::app_config_base;
@@ -60,6 +61,9 @@ pub struct UserPreferences {
     pub mining_power_watts: Option<f64>,
     #[serde(default)]
     pub mining_cost_per_kwh: Option<f64>,
+    /// Optional VRM/USD price assumption for solo revenue estimates.
+    #[serde(default)]
+    pub mining_vrm_price_usd: Option<f64>,
     /// "system" (follow OS), "light", or "dark". Defaults to "system".
     #[serde(default = "default_theme_mode")]
     pub theme_mode: String,
@@ -151,6 +155,7 @@ impl Default for UserPreferences {
             mine_core_affinity: default_mine_core_affinity(),
             mining_power_watts: None,
             mining_cost_per_kwh: None,
+            mining_vrm_price_usd: None,
             theme_mode: default_theme_mode(),
             wallet_unlock_duration_seconds: default_wallet_unlock_duration(),
             wallet_unlock_duration_by_coin: None,
@@ -184,6 +189,7 @@ pub struct PartialUserPreferences {
     pub mine_core_affinity: Option<String>,
     pub mining_power_watts: Option<f64>,
     pub mining_cost_per_kwh: Option<f64>,
+    pub mining_vrm_price_usd: Option<f64>,
     pub theme_mode: Option<String>,
     pub wallet_unlock_duration_seconds: Option<u32>,
     pub wallet_unlock_duration_by_coin: Option<HashMap<String, u32>>,
@@ -226,24 +232,23 @@ pub fn wallet_unlock_duration_for(prefs: &UserPreferences, coin: CoinId) -> u32 
 
 const PREFS_STORE_LABEL: &str = "user-preferences";
 
-pub async fn load() -> AppResult<UserPreferences> {
-    // Migrate legacy plaintext if present.
+/// Load preferences without blocking on the async runtime (safe from Tauri setup and sync commands).
+pub fn load_sync() -> AppResult<UserPreferences> {
     let legacy = legacy_prefs_path();
     let path = prefs_path();
     if legacy.exists() && !crate::secret_store::blob_exists(PREFS_STORE_LABEL) {
-        let raw = fs::read_to_string(&legacy).await?;
+        let raw = fs::read_to_string(&legacy)?;
         if let Ok(prefs) = serde_json::from_str::<UserPreferences>(&raw) {
-            save(&prefs).await?;
-            let _ = fs::remove_file(&legacy).await;
+            save_sync(&prefs)?;
+            let _ = fs::remove_file(&legacy);
             return Ok(prefs);
         }
     }
 
-    // Plaintext mirror (written on every save) survives keychain resets.
     if path.exists() && !crate::secret_store::blob_readable(PREFS_STORE_LABEL) {
-        let raw = fs::read_to_string(&path).await?;
+        let raw = fs::read_to_string(&path)?;
         if let Ok(prefs) = serde_json::from_str::<UserPreferences>(&raw) {
-            save(&prefs).await?;
+            save_sync(&prefs)?;
             return Ok(prefs);
         }
     }
@@ -255,10 +260,8 @@ pub async fn load() -> AppResult<UserPreferences> {
         UserPreferences::default(),
     )?;
 
-    // When both stores exist, reconcile network_mode from the plaintext mirror
-    // (always rewritten on save) in case encrypted load returned stale defaults.
     if path.exists() {
-        if let Ok(raw) = fs::read_to_string(&path).await {
+        if let Ok(raw) = fs::read_to_string(&path) {
             if let Ok(plain) = serde_json::from_str::<UserPreferences>(&raw) {
                 if plain.network_mode != prefs.network_mode {
                     prefs.network_mode = plain.network_mode;
@@ -270,16 +273,29 @@ pub async fn load() -> AppResult<UserPreferences> {
     Ok(prefs)
 }
 
+fn save_sync(prefs: &UserPreferences) -> AppResult<()> {
+    let path = prefs_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    crate::secret_store::save_json(PREFS_STORE_LABEL, prefs)?;
+    let json = serde_json::to_string_pretty(prefs)?;
+    fs::write(&path, json)?;
+    Ok(())
+}
+
+pub async fn load() -> AppResult<UserPreferences> {
+    load_sync()
+}
+
 pub async fn save(prefs: &UserPreferences) -> AppResult<()> {
     let path = prefs_path();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await?;
+        async_fs::create_dir_all(parent).await?;
     }
     crate::secret_store::save_json(PREFS_STORE_LABEL, prefs)?;
-    // Plaintext mirror survives Windows Credential Manager resets that orphan
-    // the encrypted blob's master key (aead decrypt failures on next launch).
     let json = serde_json::to_string_pretty(prefs)?;
-    fs::write(&path, json).await?;
+    async_fs::write(&path, json).await?;
     Ok(())
 }
 
@@ -330,6 +346,9 @@ pub fn merge(current: UserPreferences, partial: PartialUserPreferences) -> UserP
             .unwrap_or(current.mine_core_affinity),
         mining_power_watts: partial.mining_power_watts.or(current.mining_power_watts),
         mining_cost_per_kwh: partial.mining_cost_per_kwh.or(current.mining_cost_per_kwh),
+        mining_vrm_price_usd: partial
+            .mining_vrm_price_usd
+            .or(current.mining_vrm_price_usd),
         theme_mode: partial.theme_mode.unwrap_or(current.theme_mode),
         wallet_unlock_duration_seconds: partial
             .wallet_unlock_duration_seconds

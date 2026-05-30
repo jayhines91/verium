@@ -1,6 +1,5 @@
 import { useActiveCoin } from "@/lib/coin/context";
 import { coinQueryKey } from "@/lib/coin/profile";
-import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Card,
@@ -14,7 +13,8 @@ import { YourMiningPanel } from "@/components/YourMiningPanel";
 import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
 import { networkHashToKhm } from "@/lib/mining-revenue";
 import { rpcGetMiningInfo, rpcGetWalletInfo } from "@/lib/rpc/client";
-import { formatNumber, formatVrm } from "@/lib/utils";
+import { formatCoinAmount } from "@/lib/units";
+import { formatNumber } from "@/lib/utils";
 
 function formatUsd(value?: number): string {
   if (value === undefined || value === null) return "—";
@@ -70,20 +70,20 @@ export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
         <CardContent className="grid grid-cols-2 gap-3 text-sm">
           <MiniStat
             label="Balance"
-            value={wallet.data ? formatVrm(wallet.data.balance, 4) : "—"}
+            value={wallet.data ? formatCoinAmount(wallet.data.balance, coin, 4) : "—"}
           />
           <MiniStat
             label="Unconfirmed"
             value={
               wallet.data
-                ? formatVrm(wallet.data.unconfirmed_balance, 4)
+                ? formatCoinAmount(wallet.data.unconfirmed_balance, coin, 4)
                 : "—"
             }
           />
           <MiniStat
             label="Immature"
             value={
-              wallet.data ? formatVrm(wallet.data.immature_balance, 4) : "—"
+              wallet.data ? formatCoinAmount(wallet.data.immature_balance, coin, 4) : "—"
             }
           />
           <MiniStat
@@ -93,14 +93,6 @@ export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
             }
           />
         </CardContent>
-        <div className="border-t border-border px-4 py-2">
-          <Link
-            to="/wallet"
-            className="text-xs text-accent underline underline-offset-2"
-          >
-            Open wallet →
-          </Link>
-        </div>
       </Card>
 
       {explorerEnabled.data === true && (

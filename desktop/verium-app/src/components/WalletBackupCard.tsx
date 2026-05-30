@@ -24,6 +24,7 @@ import {
 import { invalidateWalletQueries } from "@/lib/invalidate-wallet-queries";
 import { TwoFactorPrompt } from "@/components/TwoFactorPrompt";
 import { useTwoFactorGate } from "@/hooks/useTwoFactorGate";
+import { ScheduledBackupControls } from "@/components/ScheduledBackupControls";
 
 export function WalletBackupCard() {
   const coin = useActiveCoin();
@@ -54,6 +55,11 @@ export function WalletBackupCard() {
       });
       if (!dest) return null;
       return rpcWalletBackup(coin, dest);
+    },
+    onSuccess: async (result) => {
+      if (result) {
+        await queryClient.invalidateQueries({ queryKey: ["backup-health"] });
+      }
     },
   });
 
@@ -243,6 +249,8 @@ export function WalletBackupCard() {
               {String(backup.error)}
             </div>
           )}
+
+          <ScheduledBackupControls />
 
           {showRestoreNote && (
             <div className="space-y-2 rounded-md border border-border bg-bg-subtle px-3 py-3 text-xs text-fg-muted">

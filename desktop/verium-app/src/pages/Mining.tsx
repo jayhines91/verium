@@ -33,6 +33,7 @@ import { fetchExplorerStats } from "@/lib/explorer-api";
 import { useExplorerQueriesEnabled } from "@/lib/network-mode";
 import {
   buildNetworkStats,
+  effectiveMiningVrmPriceUsd,
   estimateDailyMining,
   estimateHoursPerBlock,
   formatSessionDuration,
@@ -246,6 +247,15 @@ export function Mining() {
     networkHash != null ? networkHashToKhm(networkHash) : undefined;
   const share = networkSharePercent(localHashrate, networkHash);
   const estBlockRate = estimateHoursPerBlock(localHashrate, networkStats);
+  const marketPriceUsd = networkStats?.priceUsd;
+  const revenuePriceUsd = effectiveMiningVrmPriceUsd(
+    prefs.mining_vrm_price_usd,
+    marketPriceUsd,
+  );
+  const usingCustomVrmPrice =
+    prefs.mining_vrm_price_usd != null &&
+    Number.isFinite(prefs.mining_vrm_price_usd) &&
+    prefs.mining_vrm_price_usd > 0;
   const dailyEstimate =
     networkStats && localHashrate > 0
       ? estimateDailyMining({
@@ -253,7 +263,7 @@ export function Mining() {
           networkHashrateHs: networkStats.networkHash!,
           blocksPerHour: networkStats.blocksPerHour!,
           blockReward: networkStats.blockReward!,
-          priceUsd: networkStats.priceUsd,
+          priceUsd: revenuePriceUsd,
           priceBtc: networkStats.priceBtc,
         })
       : null;
@@ -535,12 +545,43 @@ export function Mining() {
               <CardHeader>
                 <CardTitle>Estimated revenue (solo)</CardTitle>
                 <CardDescription>
-                  {networkStats?.source === "explorer"
-                    ? "Live network stats from explorer."
-                    : "Network stats from local node — USD/BTC need explorer prices."}
+                  {usingCustomVrmPrice
+                    ? "Using your VRM price assumption for USD estimates."
+                    : networkStats?.source === "explorer"
+                      ? "Live network stats from explorer."
+                      : "Network stats from local node — USD/BTC need explorer prices."}
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex flex-col gap-4">
+                <div className="flex flex-col gap-1 text-sm sm:max-w-xs">
+                  <label className="text-fg-muted">VRM price ($)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.0001}
+                    placeholder={
+                      marketPriceUsd != null
+                        ? `Live: $${formatNumber(marketPriceUsd, 4)}`
+                        : "e.g. 0.07"
+                    }
+                    value={prefs.mining_vrm_price_usd ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      void updatePrefs({
+                        mining_vrm_price_usd:
+                          v === "" ? undefined : Number(v),
+                      });
+                    }}
+                    className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-sm tabular-nums outline-none focus:border-accent"
+                  />
+                  <p className="text-xs text-fg-subtle">
+                    Leave blank to use the live explorer price
+                    {marketPriceUsd != null
+                      ? ` ($${formatNumber(marketPriceUsd, 4)})`
+                      : ""}
+                    .
+                  </p>
+                </div>
                 <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
                   <div>
                     <div className="text-xs uppercase text-fg-subtle">

@@ -10,6 +10,7 @@ use crate::coin_profile::CoinId;
 use crate::config::{ensure_first_run_config, load_config_for_network, refresh_config_paths, DaemonConfig};
 use crate::daemon::DaemonManager;
 use crate::error::{AppError, AppResult};
+use crate::features::effective_network_mode;
 use crate::prefs;
 use crate::rpc::RpcClient;
 
@@ -60,10 +61,11 @@ pub type MinerLocalState = EarnLocalState;
 
 impl AppState {
     pub fn initialize(app: AppHandle) -> AppResult<Self> {
-        let prefs = tauri::async_runtime::block_on(prefs::load()).unwrap_or_default();
+        let prefs = prefs::load_sync().unwrap_or_default();
+        let network_mode = effective_network_mode(prefs.network_mode);
         let mut coins = HashMap::new();
         for coin in CoinId::all() {
-            let mut config = load_config_for_network(*coin, prefs.network_mode)?;
+            let mut config = load_config_for_network(*coin, network_mode)?;
             if let Err(e) = ensure_first_run_config(*coin, &mut config) {
                 tracing::warn!("first-run config bootstrap failed for {}: {e}", coin.as_str());
             }

@@ -16,6 +16,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { CoinId } from "@/lib/coin/profile";
 import { resetDaemonEnsureAttempt } from "@/hooks/useDaemonStatus";
 import { isExplorerApiEnabled } from "@/lib/explorer-api";
+import { BINARYTEST_ENABLED } from "@/lib/features";
 
 export type NetworkMode = "mainnet" | "binarytest";
 
@@ -89,6 +90,7 @@ export function useSetNetworkMode() {
 
 /** Convenience: true when the wallet is currently pointed at binarytest. */
 export function useIsTestNetwork(): boolean {
+  if (!BINARYTEST_ENABLED) return false;
   const q = useNetworkMode();
   return q.data?.is_test ?? false;
 }

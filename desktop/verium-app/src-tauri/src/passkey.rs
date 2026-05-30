@@ -30,7 +30,27 @@ pub fn load() -> AppResult<PasskeyConfig> {
 }
 
 pub fn save(config: &PasskeyConfig) -> AppResult<()> {
-    secret_store::save_json(STORE_LABEL, config)
+    secret_store::save_json(STORE_LABEL, config)?;
+    let path = config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(config)?;
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+fn validate_pin(pin: &str) -> AppResult<()> {
+    if pin.len() < 6 {
+        return Err(AppError::other("PIN must be at least 6 digits"));
+    }
+    if pin.len() > 12 {
+        return Err(AppError::other("PIN must be at most 12 digits"));
+    }
+    if !pin.chars().all(|c| c.is_ascii_digit()) {
+        return Err(AppError::other("PIN must contain digits only"));
+    }
+    Ok(())
 }
 
 fn hash_pin(pin: &str, salt: &[u8]) -> AppResult<String> {
@@ -56,9 +76,7 @@ fn pin_salt() -> AppResult<Vec<u8>> {
 }
 
 pub fn enroll_pin(pin: &str) -> AppResult<()> {
-    if pin.len() < 6 {
-        return Err(AppError::other("PIN must be at least 6 digits"));
-    }
+    validate_pin(pin)?;
     let salt = pin_salt()?;
     let hash = hash_pin(pin, &salt)?;
     let mut config = load()?;
@@ -77,6 +95,9 @@ pub fn verify_pin(pin: &str) -> AppResult<bool> {
     let Some(stored) = config.pin_hash_hex else {
         return Ok(false);
     };
+    if validate_pin(pin).is_err() {
+        return Ok(false);
+    }
     let salt = pin_salt()?;
     let hash = hash_pin(pin, &salt)?;
     Ok(stored == hash)
@@ -84,7 +105,7 @@ pub fn verify_pin(pin: &str) -> AppResult<bool> {
 
 pub fn disable(pin: &str) -> AppResult<()> {
     if !verify_pin(pin)? {
-        return Err(AppError::other("invalid PIN"));
+        return Err(AppError::other("Invalid PIN"));
     }
     let mut config = load()?;
     config.enabled = false;

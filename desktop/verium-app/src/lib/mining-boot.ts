@@ -20,6 +20,12 @@ export function miningInfoRefetchMs(
   hashrate: number,
   startedAt: number | undefined,
   idleMs = 5_000,
+  activeMs?: number,
 ): number {
-  return isMinerBooting(active, hashrate, startedAt) ? 1_000 : idleMs;
+  const fastMs = activeMs ?? idleMs;
+  if (isMinerBooting(active, hashrate, startedAt)) {
+    return Math.min(fastMs, 1_000);
+  }
+  if (active || hashrate > 0) return fastMs;
+  return idleMs;
 }

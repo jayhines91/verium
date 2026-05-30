@@ -161,7 +161,7 @@ export function VeriumConfEditorCard({ coin }: { coin: CoinId }) {
 
           {save.isSuccess && (
             <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
-              Configuration saved. Restart the daemon to reload settings.
+              Configuration saved. Restart the wallet to reload settings.
               <div className="mt-2">
                 <Button
                   size="sm"
@@ -169,7 +169,7 @@ export function VeriumConfEditorCard({ coin }: { coin: CoinId }) {
                   onClick={() => restart.mutate()}
                   disabled={restart.isPending}
                 >
-                  {restart.isPending ? "Restarting…" : "Restart daemon"}
+                  {restart.isPending ? "Restarting…" : "Restart Wallet"}
                 </Button>
               </div>
             </div>

@@ -10,11 +10,16 @@ CHANGELOG.md by version.
 
 ## Downloads
 
-- Windows installer: `Verium_X.Y.Z_x64-setup.exe`
-- macOS (Intel): `Verium_X.Y.Z_x64.dmg`
-- macOS (Apple Silicon): `Verium_X.Y.Z_aarch64.dmg`
-- Linux AppImage: `Verium_X.Y.Z_amd64.AppImage`
-- Linux .deb: `verium_X.Y.Z_amd64.deb`
+- Windows installer (x64): `Vericonomy_Wallet_X.Y.Z_Windows_x64.exe`
+- macOS (Intel): `Vericonomy_Wallet_X.Y.Z_macOS_Intel.dmg`
+- macOS (Apple Silicon): `Vericonomy_Wallet_X.Y.Z_macOS_AppleSilicon.dmg`
+- Linux AppImage (x64): `Vericonomy_Wallet_X.Y.Z_Linux_x64.AppImage`
+- Linux .deb (x64): `Vericonomy_Wallet_X.Y.Z_Linux_x64.deb`
+- Linux AppImage (ARM64): `Vericonomy_Wallet_X.Y.Z_Linux_ARM64.AppImage`
+- Linux .deb (ARM64): `Vericonomy_Wallet_X.Y.Z_Linux_ARM64.deb`
+
+On macOS, choose the DMG that matches your Mac: Apple Silicon (`aarch64`) for
+M-series Macs, Intel (`x64`) otherwise.
 
 ## Upgrading
 

@@ -10,7 +10,10 @@
       "windows_x64_setup": "https://docs.vericonomy.com/en/Downloads",
       "windows_x64_zip": "https://docs.vericonomy.com/en/Downloads",
       "macos": "https://docs.vericonomy.com/en/Downloads",
-      "linux_x64": "https://docs.vericonomy.com/en/Downloads"
+      "macos_intel": "https://docs.vericonomy.com/en/Downloads",
+      "macos_apple_silicon": "https://docs.vericonomy.com/en/Downloads",
+      "linux_x64": "https://docs.vericonomy.com/en/Downloads",
+      "linux_arm64": "https://docs.vericonomy.com/en/Downloads"
     }
   },
   "previous": [

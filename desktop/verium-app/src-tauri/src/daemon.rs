@@ -11,6 +11,11 @@ use crate::coin_profile::CoinId;
 use crate::config::{app_config_base, sync_cfg_rpc_credentials_from_conf, sync_performance_overrides, verium_uses_legacy_flat, DaemonConfig};
 use crate::error::{AppError, AppResult};
 
+/// BIP14 user-agent comment appended to the bundled daemons' P2P subversion
+/// string. Lets the network and block explorer peer lists identify nodes
+/// running this alpha build (e.g. `/Vericonomy:1.0.0(alpha1)/`).
+const DAEMON_UACOMMENT: &str = "alpha1";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DaemonBinarySource {
@@ -91,6 +96,9 @@ impl DaemonManager {
             .arg(format!("-rpcport={}", spawn_cfg.rpc_port))
             .arg(format!("-rpcbind={}", spawn_cfg.rpc_host))
             .arg("-rpcallowip=127.0.0.1")
+            // Tag this build's P2P user agent so alpha nodes are identifiable
+            // on the network/explorer peer list (e.g. /Vericonomy:1.0.0(alpha1)/).
+            .arg(format!("-uacomment={}", DAEMON_UACOMMENT))
             .arg("-printtoconsole=0");
         for (key, value) in sync_performance_overrides() {
             std_cmd.arg(format!("-{key}={value}"));

@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/Button";
 import { rpcWalletListUnspent } from "@/lib/rpc/client";
 import { useActiveCoin } from "@/lib/coin/context";
 import { coinQueryKey } from "@/lib/coin/profile";
-import { cn, formatNumber } from "@/lib/utils";
+import { formatCoinAmount } from "@/lib/units";
+import { cn } from "@/lib/utils";
 
 interface CoinControlDialogProps {
   open: boolean;
@@ -145,7 +146,7 @@ export function CoinControlDialog({
                         {u.address ?? "—"}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">
-                        {formatNumber(u.amount, 8)}
+                        {formatCoinAmount(u.amount, coin, 8)}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">
                         {u.confirmations}
@@ -166,7 +167,7 @@ export function CoinControlDialog({
             </span>{" "}
             UTXOs ·{" "}
             <span className="font-semibold tabular-nums text-fg">
-              {formatNumber(totalSelected, 8)} VRM
+              {formatCoinAmount(totalSelected, coin, 8)}
             </span>
           </div>
           <div className="flex gap-2">

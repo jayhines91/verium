@@ -167,7 +167,7 @@ fn config_from_saved(saved: SavedDaemonConfig) -> DaemonConfig {
 }
 
 pub fn load_or_default_config(coin: CoinId) -> AppResult<DaemonConfig> {
-    let prefs = tauri::async_runtime::block_on(prefs::load()).unwrap_or_default();
+    let prefs = prefs::load_sync().unwrap_or_default();
     load_config_for_network(coin, prefs.network_mode)
 }
 

@@ -29,11 +29,11 @@ import {
   rpcWalletSendWithInputs,
   rpcWalletSetTxFee,
 } from "@/lib/rpc/client";
-import { useActiveCoin } from "@/lib/coin/context";
+import { useActiveCoin, useCoinProfile } from "@/lib/coin/context";
 import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { useUserPreferences } from "@/lib/user-preferences";
-import { formatCoinAmount } from "@/lib/units";
-import { cn, formatNumber } from "@/lib/utils";
+import { coinSymbol, formatCoinAmount } from "@/lib/units";
+import { cn } from "@/lib/utils";
 import {
   auditLogRecord,
   spendingControlsCheckSend,
@@ -42,7 +42,9 @@ import {
   twoFactorIsGated,
 } from "@/lib/security/client";
 
-const EXAMPLE_ADDRESS = "VY6E3KSqrMk1hcy5Cu4EGyHrdDS5ch3YHU";
+const EXAMPLE_ADDRESSES: Partial<Record<CoinId, string>> = {
+  verium: "VY6E3KSqrMk1hcy5Cu4EGyHrdDS5ch3YHU",
+};
 const DEFAULT_FEE_RATE = 0.001;
 
 interface SendRecipient {
@@ -184,6 +186,9 @@ export function SendPanel({
   initialLabel,
 }: SendPanelProps) {
   const coin = useActiveCoin();
+  const profile = useCoinProfile();
+  const symbol = coinSymbol(coin);
+  const exampleAddress = EXAMPLE_ADDRESSES[coin];
   const queryClient = useQueryClient();
   const prefs = useUserPreferences((s) => s.prefs);
   const updatePrefs = useUserPreferences((s) => s.update);
@@ -431,6 +436,7 @@ export function SendPanel({
       />
       <SendConfirmDialog
         open={confirmOpen}
+        coin={coin}
         recipients={confirmRecipients}
         feeRatePerKb={feeRate}
         subtractFeeFromAmount={subtractFee}
@@ -466,6 +472,7 @@ export function SendPanel({
       <FeeRateDialog
         open={feeDialogOpen}
         current={feeRate}
+        symbol={symbol}
         onClose={() => setFeeDialogOpen(false)}
         onApply={(rate) => {
           setFeeRate(rate);
@@ -496,7 +503,11 @@ export function SendPanel({
                     onChange={(e) =>
                       updateRecipient(row.id, { address: e.target.value })
                     }
-                    placeholder={`Enter a Verium address (e.g. ${EXAMPLE_ADDRESS})`}
+                    placeholder={
+                      exampleAddress
+                        ? `Enter a ${profile.displayName} address (e.g. ${exampleAddress})`
+                        : `Enter a ${profile.displayName} address`
+                    }
                     className="h-10 min-w-0 flex-1 rounded-md border border-border bg-bg-panel px-3 text-xs outline-none focus:border-accent"
                   />
                   <Button
@@ -585,10 +596,11 @@ export function SendPanel({
                   />
                   <select
                     className="h-10 rounded-md border border-border bg-bg-panel px-2 text-sm outline-none focus:border-accent"
-                    defaultValue="VRM"
+                    value={symbol}
+                    disabled
                     aria-label="Coin unit"
                   >
-                    <option value="VRM">VRM</option>
+                    <option value={symbol}>{symbol}</option>
                   </select>
                   {index === 0 && (
                     <label className="flex cursor-pointer items-center gap-2 text-sm text-fg-muted">
@@ -622,7 +634,7 @@ export function SendPanel({
         <span className="text-fg-muted">
           Transaction Fee:{" "}
           <span className="font-medium tabular-nums text-fg">
-            {feeRate.toFixed(8)} VRM/kB
+            {feeRate.toFixed(8)} {symbol}/kB
           </span>
         </span>
         <Button
@@ -651,7 +663,7 @@ export function SendPanel({
           <span className="text-xs text-fg-muted">
             Selected inputs:{" "}
             <span className="font-medium tabular-nums text-fg">
-              {formatNumber(coinControlTotal, 8)} VRM
+              {formatCoinAmount(coinControlTotal, coin, 8)}
             </span>{" "}
             ·{" "}
             <button

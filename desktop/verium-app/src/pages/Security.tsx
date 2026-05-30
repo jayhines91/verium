@@ -2,12 +2,9 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  Download,
-  HardDrive,
   KeyRound,
   Lock,
   Shield,
-  ShieldCheck,
   Smartphone,
   Usb,
   Users,
@@ -27,15 +24,8 @@ import { DumpPrivkeyCard } from "@/components/DumpPrivkeyCard";
 import { TotpQrCode } from "@/components/TotpQrCode";
 import { useActiveCoin } from "@/lib/coin/context";
 import {
-  auditLogExport,
-  auditLogList,
   autoLockGetConfig,
   autoLockSetConfig,
-  backupExportCloud,
-  backupHealth,
-  backupRunNow,
-  backupSchedulerGetConfig,
-  backupSchedulerSaveConfig,
   hardwareWalletAdd,
   hardwareWalletImportXpub,
   hardwareWalletList,
@@ -46,10 +36,9 @@ import {
   passkeyDisable,
   passkeyEnrollPin,
   passkeyStatus,
+  PASSKEY_GATE_QUERY_KEY,
   recoveryApplyHdSeed,
   recoveryWalletIsHd,
-  slip39Combine,
-  slip39Split,
   spendingControlsGet,
   spendingControlsSave,
   twoFactorConfirmEnrollment,
@@ -57,7 +46,6 @@ import {
   twoFactorPendingOtpauthUri,
   twoFactorStartEnrollment,
   twoFactorStatus,
-  verifyInstallation,
   type AutoLockConfig,
   type HardwareWalletConfig,
   type MultisigWalletConfig,
@@ -73,11 +61,9 @@ export function Security() {
   const [totpCode, setTotpCode] = useState("");
   const [confirm2faError, setConfirm2faError] = useState<string | null>(null);
   const [pin, setPin] = useState("");
-  const [cloudPassword, setCloudPassword] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
   const [showRecovery, setShowRecovery] = useState(false);
   const [savedPhrase, setSavedPhrase] = useState("");
-  const [shamirShares, setShamirShares] = useState<string[]>([]);
-  const [combineInput, setCombineInput] = useState("");
 
   const twoFa = useQuery({ queryKey: ["two-factor"], queryFn: twoFactorStatus });
   const pendingOtpauth = useQuery({
@@ -87,14 +73,10 @@ export function Security() {
   });
   const passkey = useQuery({ queryKey: ["passkey"], queryFn: passkeyStatus });
   const autoLock = useQuery({ queryKey: ["auto-lock"], queryFn: autoLockGetConfig });
-  const audit = useQuery({ queryKey: ["audit-log"], queryFn: () => auditLogList(50) });
   const hw = useQuery({ queryKey: ["hw-wallets"], queryFn: hardwareWalletList });
   const ms = useQuery({ queryKey: ["multisig"], queryFn: multisigList });
   const spending = useQuery({ queryKey: ["spending-controls"], queryFn: spendingControlsGet });
-  const backupH = useQuery({ queryKey: ["backup-health"], queryFn: backupHealth });
-  const backupCfg = useQuery({ queryKey: ["backup-scheduler"], queryFn: backupSchedulerGetConfig });
   const isHd = useQuery({ queryKey: ["wallet-is-hd", coin], queryFn: () => recoveryWalletIsHd(coin) });
-  const installVerify = useQuery({ queryKey: ["install-verify"], queryFn: verifyInstallation });
 
   const enroll2fa = useMutation({
     mutationFn: twoFactorStartEnrollment,
@@ -140,26 +122,24 @@ export function Security() {
   });
   const enrollPin = useMutation({
     mutationFn: () => passkeyEnrollPin(pin),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["passkey"] }),
+    onSuccess: async () => {
+      setPin("");
+      setConfirmPin("");
+      await queryClient.invalidateQueries({ queryKey: ["passkey"] });
+      await queryClient.invalidateQueries({ queryKey: PASSKEY_GATE_QUERY_KEY });
+    },
   });
   const disablePin = useMutation({
     mutationFn: () => passkeyDisable(pin),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["passkey"] }),
+    onSuccess: async () => {
+      setPin("");
+      await queryClient.invalidateQueries({ queryKey: ["passkey"] });
+      await queryClient.invalidateQueries({ queryKey: PASSKEY_GATE_QUERY_KEY });
+    },
   });
   const applyHd = useMutation({
     mutationFn: () => recoveryApplyHdSeed(coin, savedPhrase),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["wallet-is-hd", coin] }),
-  });
-  const runBackup = useMutation({ mutationFn: () => backupRunNow(coin) });
-  const cloudBackup = useMutation({
-    mutationFn: () => backupExportCloud(coin, cloudPassword),
-  });
-  const splitShamir = useMutation({
-    mutationFn: () => slip39Split(savedPhrase, 2, 3),
-    onSuccess: (r) => setShamirShares(r.shares.map((s) => s.share_text)),
-  });
-  const combineShamir = useMutation({
-    mutationFn: () => slip39Combine(combineInput.split("\n").filter(Boolean)),
   });
 
   const saveAutoLock = async (patch: Partial<AutoLockConfig>) => {
@@ -229,30 +209,9 @@ export function Security() {
         <h1 className="text-2xl font-semibold">Security center</h1>
         <p className="mt-1 text-sm text-fg-muted">
           Recovery, 2FA, passkeys, hardware wallets, multisig, and spending controls.
+          Wallet backups are in Settings.
         </p>
       </div>
-
-      {/* Installer verification */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4 text-accent" /> Installer verification
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {installVerify.data && (
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <Badge tone={installVerify.data.app_verified ? "success" : "warning"}>
-                App {installVerify.data.app_verified ? "verified" : "unverified"}
-              </Badge>
-              <Badge tone={installVerify.data.sidecar_verified ? "success" : "warning"}>
-                Sidecar {installVerify.data.sidecar_verified ? "verified" : "unverified"}
-              </Badge>
-              <p className="text-xs text-fg-muted">{installVerify.data.message}</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       {/* Recovery phrase */}
       <Card>
@@ -412,31 +371,83 @@ export function Security() {
             {passkey.data?.enabled ? "PIN enrolled" : "Not enrolled"}
           </Badge>
           {!passkey.data?.enabled ? (
-            <div className="flex gap-2">
-              <input
-                type="password"
-                inputMode="numeric"
-                value={pin}
-                onChange={(e) => setPin(e.target.value)}
-                placeholder="6+ digit PIN"
-                className="h-9 w-40 rounded border border-border px-3 text-sm"
-              />
-              <Button size="sm" onClick={() => enrollPin.mutate()} disabled={pin.length < 6}>
-                Enroll PIN
-              </Button>
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-2">
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="new-password"
+                  maxLength={12}
+                  value={pin}
+                  onChange={(e) =>
+                    setPin(e.target.value.replace(/\D/g, "").slice(0, 12))
+                  }
+                  placeholder="6–12 digit PIN"
+                  className="h-9 w-40 rounded border border-border px-3 text-sm"
+                />
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="new-password"
+                  maxLength={12}
+                  value={confirmPin}
+                  onChange={(e) =>
+                    setConfirmPin(e.target.value.replace(/\D/g, "").slice(0, 12))
+                  }
+                  placeholder="Confirm PIN"
+                  className="h-9 w-40 rounded border border-border px-3 text-sm"
+                />
+                <Button
+                  size="sm"
+                  onClick={() => enrollPin.mutate()}
+                  disabled={
+                    pin.length < 6 ||
+                    pin !== confirmPin ||
+                    enrollPin.isPending
+                  }
+                >
+                  {enrollPin.isPending ? "Enrolling…" : "Enroll PIN"}
+                </Button>
+              </div>
+              {pin.length > 0 && confirmPin.length > 0 && pin !== confirmPin && (
+                <p className="text-xs text-danger">PINs do not match.</p>
+              )}
+              {enrollPin.error && (
+                <p className="text-xs text-danger">{String(enrollPin.error)}</p>
+              )}
+              {enrollPin.isSuccess && (
+                <p className="text-xs text-success">
+                  PIN enrolled. Enter it on the unlock screen to continue using the app.
+                </p>
+              )}
             </div>
           ) : (
-            <div className="flex gap-2">
-              <input
-                type="password"
-                value={pin}
-                onChange={(e) => setPin(e.target.value)}
-                placeholder="Current PIN"
-                className="h-9 w-40 rounded border border-border px-3 text-sm"
-              />
-              <Button size="sm" variant="danger" onClick={() => disablePin.mutate()}>
-                Remove PIN
-              </Button>
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="current-password"
+                  maxLength={12}
+                  value={pin}
+                  onChange={(e) =>
+                    setPin(e.target.value.replace(/\D/g, "").slice(0, 12))
+                  }
+                  placeholder="Current PIN"
+                  className="h-9 w-40 rounded border border-border px-3 text-sm"
+                />
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => disablePin.mutate()}
+                  disabled={pin.length < 6 || disablePin.isPending}
+                >
+                  {disablePin.isPending ? "Removing…" : "Remove PIN"}
+                </Button>
+              </div>
+              {disablePin.error && (
+                <p className="text-xs text-danger">{String(disablePin.error)}</p>
+              )}
             </div>
           )}
         </CardContent>
@@ -597,164 +608,6 @@ export function Security() {
           <Button size="sm" onClick={() => void createMultisig()}>
             Create 2-of-2 multisig
           </Button>
-        </CardContent>
-      </Card>
-
-      {/* Backup health + Shamir */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <HardDrive className="h-4 w-4 text-accent" /> Backup &amp; social recovery
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {backupH.data && (
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div>Backups: {backupH.data.backup_count}</div>
-              <div>
-                Last:{" "}
-                {backupH.data.last_backup_at
-                  ? new Date(backupH.data.last_backup_at * 1000).toLocaleString()
-                  : "never"}
-              </div>
-              <div>Scheduler: {backupH.data.scheduler_enabled ? "on (every 24h)" : "off"}</div>
-              <div>Cloud: {backupH.data.cloud_configured ? "configured" : "not set"}</div>
-            </div>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => runBackup.mutate()} disabled={runBackup.isPending}>
-              Run backup now
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={async () => {
-                const cfg = backupCfg.data ?? {
-                  enabled: true,
-                  daily_retention: 14,
-                  monthly_retention: 12,
-                  interval_hours: 24,
-                };
-                await backupSchedulerSaveConfig({ ...cfg, enabled: true });
-                queryClient.invalidateQueries({ queryKey: ["backup-scheduler"] });
-              }}
-            >
-              Enable scheduled backups
-            </Button>
-          </div>
-          <div className="border-t border-border pt-3">
-            <p className="mb-2 text-sm font-medium">Encrypted cloud backup</p>
-            <div className="flex gap-2">
-              <input
-                type="password"
-                value={cloudPassword}
-                onChange={(e) => setCloudPassword(e.target.value)}
-                placeholder="Separate backup password"
-                className="h-9 flex-1 rounded border border-border px-3 text-sm"
-              />
-              <Button
-                size="sm"
-                disabled={!cloudPassword || cloudBackup.isPending}
-                onClick={() => cloudBackup.mutate()}
-              >
-                Export
-              </Button>
-            </div>
-            {cloudBackup.data && (
-              <p className="mt-1 text-xs text-success">Saved to {cloudBackup.data}</p>
-            )}
-          </div>
-          <div className="border-t border-border pt-3">
-            <p className="mb-2 text-sm font-medium">Shamir social recovery (2-of-3)</p>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={!savedPhrase || splitShamir.isPending}
-              onClick={() => splitShamir.mutate()}
-            >
-              Split recovery phrase
-            </Button>
-            {shamirShares.length > 0 && (
-              <pre className="mt-2 max-h-32 overflow-auto rounded border border-border bg-bg-subtle p-2 text-[10px]">
-                {shamirShares.join("\n")}
-              </pre>
-            )}
-            <textarea
-              rows={3}
-              value={combineInput}
-              onChange={(e) => setCombineInput(e.target.value)}
-              placeholder="Paste 2+ shares to combine…"
-              className="mt-2 w-full rounded border border-border bg-bg-subtle p-2 text-[10px]"
-            />
-            <Button
-              size="sm"
-              className="mt-2"
-              onClick={() => combineShamir.mutate()}
-              disabled={combineShamir.isPending}
-            >
-              Combine shares
-            </Button>
-            {combineShamir.data && (
-              <p className="mt-1 text-xs text-success font-mono">{combineShamir.data}</p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Audit log */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Audit log</CardTitle>
-          <CardDescription>Signed record of sensitive operations.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-3 flex gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={async () => {
-                const json = await auditLogExport();
-                const blob = new Blob([json], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "vericonomy-audit-log.json";
-                a.click();
-              }}
-            >
-              <Download className="h-3.5 w-3.5" />
-              Export
-            </Button>
-          </div>
-          <div className="max-h-64 overflow-auto rounded border border-border">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-bg-panel text-fg-subtle">
-                <tr>
-                  <th className="px-3 py-1.5 text-left">Time</th>
-                  <th className="px-3 py-1.5 text-left">Action</th>
-                  <th className="px-3 py-1.5 text-left">Detail</th>
-                </tr>
-              </thead>
-              <tbody>
-                {audit.data?.slice().reverse().map((e) => (
-                  <tr key={e.id} className="border-t border-border">
-                    <td className="px-3 py-1.5 whitespace-nowrap text-fg-muted">
-                      {new Date(e.timestamp * 1000).toLocaleString()}
-                    </td>
-                    <td className="px-3 py-1.5">{e.action}</td>
-                    <td className="px-3 py-1.5 text-fg-muted">{e.detail}</td>
-                  </tr>
-                ))}
-                {(!audit.data || audit.data.length === 0) && (
-                  <tr>
-                    <td colSpan={3} className="px-3 py-6 text-center text-fg-subtle">
-                      No audit entries yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
         </CardContent>
       </Card>
 

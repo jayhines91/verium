@@ -11,6 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Security modernization**: encrypted storage (AES-256-GCM + OS keychain), BIP39 recovery phrase, TOTP 2FA, app unlock PIN, auto-lock, QR codes (BIP21) with `verium://` / `vericoin://` deep links, hardware wallet xpub + PSBT flow, multisig, spending controls, audit log, scheduled backups, Shamir social recovery, installer verification, and a dedicated **Security** page.
 
+## [1.0.0-alpha.1]
+
+> **Alpha release** for community install and testing. Expect bugs and
+> incomplete features. See [`ALPHA.md`](ALPHA.md) for the tester guide.
+
+### Added
+
+- **Five platform installers** published per `desktop-v*` tag: Windows x64 (NSIS), macOS Intel DMG, macOS Apple Silicon DMG (native `aarch64`), Linux x64 (deb/AppImage), and Linux ARM64 (deb/AppImage).
+- Native Apple Silicon build with `aarch64-apple-darwin` `veriumd` / `vericoind` sidecars (no longer Intel-only via Rosetta).
+- Linux ARM64 (`aarch64-unknown-linux-gnu`) CI job and release artifacts.
+- Frontend (`npm test`) and backend (`cargo test`) suites now run in CI before bundling.
+- Arch-aware update-checker download URLs (`macos_intel`, `macos_apple_silicon`, `linux_arm64`).
+
+### Known limitations
+
+- **Unsigned installers** — Windows SmartScreen and macOS Gatekeeper prompts on first launch; see [`ALPHA.md`](ALPHA.md) for workarounds.
+- **No auto-update** — download the next build from GitHub Releases to upgrade.
+- Explorer links point to the **staging** explorer (intentional for alpha).
+- Hardware wallet support is manual xpub / PSBT only.
+- Some security features (Shamir recovery, audit log viewer, cloud backup) have backend support but no UI yet.
+
 ## [2.0.0] - 2026-05-24
 
 ### Added
@@ -68,9 +89,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Block-found celebration (chime + banner) on the dashboard.
 - Day / week / month / year toggle for mining revenue cards.
 - Top-level error boundary with "Copy diagnostic bundle".
-- Cross-platform CI matrix: Windows (NSIS), macOS Intel + Apple Silicon
-  (DMG), Linux (AppImage + .deb). Tags matching `desktop-v*` publish a draft
-  GitHub Release with the bundle artifacts.
+- Cross-platform CI matrix: Windows (NSIS), macOS (DMG), Linux (AppImage +
+  .deb). Tags matching `desktop-v*` publish a draft GitHub Release with the
+  bundle artifacts. (Native Apple Silicon and Linux ARM64 builds were added
+  later in 1.0.0-alpha.1.)
 
 ### Changed
 

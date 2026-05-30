@@ -351,6 +351,10 @@ export async function rpcWalletBackup(
   return invoke<WalletBackupResult>("wallet_backup", { coin, destinationPath });
 }
 
+export async function openWalletBackupFolder(coin: CoinId): Promise<string> {
+  return invoke<string>("open_wallet_backup_folder", { coin });
+}
+
 export interface WalletRestoreResult {
   success: boolean;
   destination: string;

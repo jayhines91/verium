@@ -66,6 +66,7 @@ import {
   DEFAULT_TX_EXPLORER_TEMPLATE,
   DOCS_DOWNLOADS,
 } from "@/lib/verium-links";
+import { ADVANCED_SETTINGS_ENABLED } from "@/lib/features";
 
 export function Settings() {
   const enabledCoins = useEnabledCoins();
@@ -122,7 +123,8 @@ export function Settings() {
           </CardTitle>
           <CardDescription>
             Two-factor authentication, recovery phrase, hardware wallets,
-            backups, spending controls, and audit log.
+            and spending controls. Wallet backups and scheduled copies live in
+            Settings.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -389,6 +391,7 @@ export function Settings() {
 
       <VeriumConfEditorCard coin={daemonCoin} />
 
+      {ADVANCED_SETTINGS_ENABLED && (
       <Card>
         <CardHeader
           className="cursor-pointer select-none"
@@ -542,6 +545,7 @@ export function Settings() {
           </CardContent>
         )}
       </Card>
+      )}
     </div>
   );
 }

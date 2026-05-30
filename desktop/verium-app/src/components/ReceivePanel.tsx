@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/Button";
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { QrCodeDisplay } from "@/components/QrCodeDisplay";
 import { rpcGetNewAddress } from "@/lib/rpc/client";
-import { useActiveCoin } from "@/lib/coin/context";
-import { formatCoinAmount } from "@/lib/units";
+import { useActiveCoin, useCoinProfile } from "@/lib/coin/context";
+import { formatCoinAmount, coinSymbol } from "@/lib/units";
 import {
   receiveRequestsList,
   receiveRequestsSave,
@@ -20,6 +20,8 @@ interface ReceivePanelProps {
 
 export function ReceivePanel({ className }: ReceivePanelProps) {
   const coin = useActiveCoin();
+  const profile = useCoinProfile();
+  const symbol = coinSymbol(coin);
   const [label, setLabel] = useState("");
   const [amount, setAmount] = useState("");
   const [message, setMessage] = useState("");
@@ -130,10 +132,11 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
               />
               <select
                 className="h-10 rounded-md border border-border bg-bg-panel px-2 text-sm outline-none focus:border-accent"
-                defaultValue="VRM"
+                value={symbol}
+                disabled
                 aria-label="Coin unit"
               >
-                <option value="VRM">VRM</option>
+                <option value={symbol}>{symbol}</option>
               </select>
             </div>
           </div>
@@ -189,8 +192,8 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
                 <th className="px-4 py-2 text-left font-medium">Date</th>
                 <th className="px-4 py-2 text-left font-medium">Label</th>
                 <th className="px-4 py-2 text-left font-medium">Message</th>
-                <th className="px-4 py-2 text-right font-medium">
-                  Requested (VRM)
+                <th className="px-4 py-2 text-right font-medium bg-white dark:bg-slate-900 ">
+                  Requested ({profile.symbol})
                 </th>
               </tr>
             </thead>

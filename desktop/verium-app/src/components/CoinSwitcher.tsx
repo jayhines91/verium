@@ -1,16 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
-import {
-  ALL_COINS,
-  COIN_PROFILES,
-  type CoinId,
-} from "@/lib/coin/profile";
+import { ALL_COINS, COIN_LOGO_URLS, COIN_PROFILES } from "@/lib/coin/profile";
 import {
   useActiveCoin,
   useEnabledCoins,
   useSetActiveCoin,
 } from "@/lib/coin/context";
-import { getExplorerLogoUrl } from "@/lib/explorer-api";
 import { cn } from "@/lib/utils";
 
 export function CoinSwitcher() {
@@ -19,18 +14,9 @@ export function CoinSwitcher() {
   const enabledCoins = useEnabledCoins();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const [logoUrls, setLogoUrls] = useState<Partial<Record<CoinId, string>>>({});
 
   const active = COIN_PROFILES[activeCoin];
   const options = ALL_COINS.filter((coin) => enabledCoins.includes(coin));
-
-  useEffect(() => {
-    for (const coin of ALL_COINS) {
-      void getExplorerLogoUrl(coin).then((url) => {
-        setLogoUrls((prev) => ({ ...prev, [coin]: url }));
-      });
-    }
-  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -66,7 +52,7 @@ export function CoinSwitcher() {
         )}
       >
         <img
-          src={logoUrls[activeCoin]}
+          src={COIN_LOGO_URLS[activeCoin]}
           alt={active.displayName}
           className="h-9 w-9 shrink-0 rounded-lg object-contain"
         />
@@ -122,7 +108,7 @@ export function CoinSwitcher() {
                 )}
               >
                 <img
-                  src={logoUrls[coin]}
+                  src={COIN_LOGO_URLS[coin]}
                   alt=""
                   className="mt-0.5 h-7 w-7 shrink-0 rounded-md object-contain"
                 />
@@ -140,7 +126,9 @@ export function CoinSwitcher() {
                       {profile.symbol}
                     </span>
                   </div>
-                  <div className="text-xs text-fg-subtle">{profile.tagline}</div>
+                  <div className="text-xs text-fg-subtle">
+                    {profile.tagline}
+                  </div>
                 </div>
                 {isActive && (
                   <Check className="mt-0.5 h-4 w-4 shrink-0 text-accent" />

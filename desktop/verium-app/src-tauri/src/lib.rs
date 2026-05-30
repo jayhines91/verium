@@ -11,6 +11,7 @@ mod dace_commands;
 mod daemon;
 mod error;
 mod explorer_api;
+mod features;
 mod gpu_miner;
 mod hardware_wallet;
 mod installer_verify;
@@ -33,7 +34,7 @@ mod updates;
 mod wallet_secrets;
 
 use state::AppState;
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 use tracing_subscriber::EnvFilter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -50,6 +51,15 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let app = window.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    commands::graceful_shutdown_and_exit(app).await;
+                });
+            }
+        })
         .setup(|app| {
             let state = AppState::initialize(app.handle().clone())?;
             let startup_state = state.clone();
@@ -88,6 +98,7 @@ pub fn run() {
             commands::wallet_create_encrypted,
             commands::wallet_change_passphrase,
             commands::wallet_backup,
+            commands::open_wallet_backup_folder,
             commands::wallet_restore,
             commands::wallet_dump_privkey,
             commands::wallet_import_privkey,
@@ -201,8 +212,10 @@ pub fn run() {
             security_commands::spending_controls_check_allowlist,
             security_commands::backup_scheduler_get_config,
             security_commands::backup_scheduler_save_config,
+            security_commands::backup_scheduler_set_interval,
             security_commands::backup_health,
             security_commands::backup_run_now,
+            security_commands::backup_run_scheduled,
             security_commands::backup_export_cloud,
             security_commands::backup_verify,
             security_commands::slip39_split,

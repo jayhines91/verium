@@ -170,7 +170,7 @@ fn open_with_recovery(
             quarantine_corrupt_blob(label)?;
             if let Some(fallback) = plaintext_fallback {
                 if migrate_plaintext_json(label, fallback)? {
-                    return open(label);
+                    return open_with_recovery(label, Some(fallback));
                 }
                 if let Some(plain) = read_plaintext_fallback(Some(fallback))? {
                     seal(label, plain.as_ref())?;
@@ -242,6 +242,30 @@ pub fn migrate_plaintext_json(label: &str, plaintext_path: &std::path::Path) -> 
     Ok(true)
 }
 
+fn load_json_from_plaintext<T: serde::de::DeserializeOwned>(
+    label: &str,
+    plaintext_path: &std::path::Path,
+    default: T,
+) -> AppResult<T> {
+    let Some(bytes) = read_plaintext_fallback(Some(plaintext_path))? else {
+        return Ok(default);
+    };
+    let s = String::from_utf8(bytes.to_vec())
+        .map_err(|e| AppError::other(format!("invalid utf8 in {label} plaintext: {e}")))?;
+    match serde_json::from_str::<T>(&s) {
+        Ok(v) => {
+            if let Err(e) = seal(label, bytes.as_ref()) {
+                tracing::warn!("secret_store: re-seal {label} from plaintext failed: {e}");
+            }
+            Ok(v)
+        }
+        Err(e) => {
+            tracing::warn!("secret_store: invalid json in {label} plaintext, using defaults: {e}");
+            Ok(default)
+        }
+    }
+}
+
 /// Load JSON from encrypted store, falling back to plaintext migration.
 pub fn load_json<T: serde::de::DeserializeOwned>(
     label: &str,
@@ -258,12 +282,12 @@ pub fn load_json<T: serde::de::DeserializeOwned>(
             match serde_json::from_str::<T>(&s) {
                 Ok(v) => Ok(v),
                 Err(e) => {
-                    tracing::warn!("secret_store: invalid json in {label}, using defaults: {e}");
-                    Ok(default)
+                    tracing::warn!("secret_store: invalid json in {label}, trying plaintext: {e}");
+                    load_json_from_plaintext(label, plaintext_path, default)
                 }
             }
         }
-        None => Ok(default),
+        None => load_json_from_plaintext(label, plaintext_path, default),
     }
 }
 

@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import type { CoinId } from "@/lib/coin/profile";
 import { estimateSendFee } from "@/lib/send-fee-estimate";
 import {
+  formatCoinAlternates,
+  formatCoinAmount,
   formatRecipientLine,
-  formatVrmAlternates,
-  formatVrmAmount,
-} from "@/lib/vrm-units";
+} from "@/lib/units";
 import { cn, formatNumber } from "@/lib/utils";
 
 const CONFIRM_DELAY_SEC = 3;
@@ -19,6 +20,7 @@ export interface SendConfirmRecipient {
 
 interface SendConfirmDialogProps {
   open: boolean;
+  coin: CoinId;
   recipients: SendConfirmRecipient[];
   feeRatePerKb: number;
   subtractFeeFromAmount: boolean;
@@ -29,6 +31,7 @@ interface SendConfirmDialogProps {
 
 export function SendConfirmDialog({
   open,
+  coin,
   recipients,
   feeRatePerKb,
   subtractFeeFromAmount,
@@ -110,7 +113,7 @@ export function SendConfirmDialog({
             {!multiple ? (
               recipients[0] && (
                 <p className="break-all text-xs leading-relaxed text-fg">
-                  {formatRecipientLine(recipients[0])}
+                  {formatRecipientLine(coin, recipients[0])}
                 </p>
               )
             ) : (
@@ -125,7 +128,7 @@ export function SendConfirmDialog({
                       key={`${row.address}-${row.amount}`}
                       className="break-all text-[11px] leading-relaxed text-fg"
                     >
-                      {formatRecipientLine(row)}
+                      {formatRecipientLine(coin, row)}
                     </li>
                   ))}
                 </ul>
@@ -139,17 +142,17 @@ export function SendConfirmDialog({
               <p className="text-sm">
                 {multiple ? (
                   <>
-                    {formatVrmAmount(feeEstimate.feePerTx, 8)} per transaction (
+                    {formatCoinAmount(feeEstimate.feePerTx, coin, 8)} per transaction (
                     {formatNumber(feeEstimate.sizeKb, 3)} kB) ·{" "}
                     <span className="font-semibold tabular-nums text-danger">
-                      {formatVrmAmount(feeEstimate.totalFee, 8)} total
+                      {formatCoinAmount(feeEstimate.totalFee, coin, 8)} total
                     </span>
                   </>
                 ) : (
                   <>
                     ({formatNumber(feeEstimate.sizeKb, 3)} kB):{" "}
                     <span className="font-semibold tabular-nums text-danger">
-                      {formatVrmAmount(feeEstimate.feePerTx, 8)}
+                      {formatCoinAmount(feeEstimate.feePerTx, coin, 8)}
                     </span>
                   </>
                 )}
@@ -166,11 +169,11 @@ export function SendConfirmDialog({
               <p className="text-sm">
                 <span className="font-semibold">Total Amount:</span>{" "}
                 <span className="font-semibold tabular-nums">
-                  {formatVrmAmount(totalDebited, 8)}
+                  {formatCoinAmount(totalDebited, coin, 8)}
                 </span>
               </p>
               <p className="mt-1 text-xs tabular-nums text-fg-muted">
-                {formatVrmAlternates(totalDebited)}
+                {formatCoinAlternates(totalDebited, coin)}
               </p>
               {subtractFeeFromAmount && (
                 <p className="mt-1 text-[11px] text-fg-subtle">

@@ -3,7 +3,6 @@ import { DaemonStatusBadge } from "./DaemonStatusBadge";
 
 const titles: Record<string, string> = {
   "/dashboard": "Dashboard",
-  "/wallet": "Wallet",
   "/mining": "Mining",
   "/staking": "Staking",
   "/network": "Network",

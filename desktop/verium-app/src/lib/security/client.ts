@@ -100,6 +100,8 @@ export async function twoFactorIsGated(
 
 // ── Passkey / PIN ───────────────────────────────────────────────────────────
 
+export const PASSKEY_GATE_QUERY_KEY = ["passkey-gate"] as const;
+
 export interface PasskeyConfig {
   enabled: boolean;
   use_pin_fallback: boolean;
@@ -362,6 +364,19 @@ export interface BackupSchedulerConfig {
   cloud_folder?: string | null;
 }
 
+type BackupSchedulerConfigRaw = BackupSchedulerConfig & {
+  intervalHours?: number;
+};
+
+function normalizeBackupSchedulerConfig(
+  raw: BackupSchedulerConfigRaw,
+): BackupSchedulerConfig {
+  return {
+    ...raw,
+    interval_hours: raw.interval_hours ?? raw.intervalHours ?? 24,
+  };
+}
+
 export interface BackupHealth {
   last_backup_at?: number | null;
   last_verified_at?: number | null;
@@ -370,22 +385,68 @@ export interface BackupHealth {
   scheduler_enabled: boolean;
 }
 
+type BackupHealthRaw = BackupHealth & {
+  lastBackupAt?: number | null;
+  lastVerifiedAt?: number | null;
+  backupCount?: number;
+  cloudConfigured?: boolean;
+  schedulerEnabled?: boolean;
+};
+
+function normalizeBackupHealth(raw: BackupHealthRaw): BackupHealth {
+  return {
+    last_backup_at: raw.last_backup_at ?? raw.lastBackupAt ?? null,
+    last_verified_at: raw.last_verified_at ?? raw.lastVerifiedAt ?? null,
+    backup_count: raw.backup_count ?? raw.backupCount ?? 0,
+    cloud_configured: raw.cloud_configured ?? raw.cloudConfigured ?? false,
+    scheduler_enabled: raw.scheduler_enabled ?? raw.schedulerEnabled ?? false,
+  };
+}
+
 export async function backupSchedulerGetConfig(): Promise<BackupSchedulerConfig> {
-  return invoke("backup_scheduler_get_config");
+  const raw = await invoke<BackupSchedulerConfigRaw>("backup_scheduler_get_config");
+  return normalizeBackupSchedulerConfig(raw);
 }
 
 export async function backupSchedulerSaveConfig(
   config: BackupSchedulerConfig,
-): Promise<void> {
-  return invoke("backup_scheduler_save_config", { config });
+): Promise<BackupSchedulerConfig> {
+  const raw = await invoke<BackupSchedulerConfigRaw>("backup_scheduler_save_config", {
+    config: {
+      ...config,
+      interval_hours: config.interval_hours,
+    },
+  });
+  return normalizeBackupSchedulerConfig(raw);
+}
+
+export async function backupSchedulerSetInterval(
+  intervalHours: number,
+): Promise<BackupSchedulerConfig> {
+  const raw = await invoke<BackupSchedulerConfigRaw>("backup_scheduler_set_interval", {
+    intervalHours,
+  });
+  return normalizeBackupSchedulerConfig(raw);
 }
 
 export async function backupHealth(): Promise<BackupHealth> {
-  return invoke("backup_health");
+  const raw = await invoke<BackupHealthRaw>("backup_health");
+  return normalizeBackupHealth(raw);
 }
 
 export async function backupRunNow(coin: CoinId): Promise<string> {
   return invoke("backup_run_now", { coin });
+}
+
+export interface ScheduledBackupResult {
+  ran: boolean;
+  paths: string[];
+}
+
+export async function backupRunScheduled(
+  coins: CoinId[],
+): Promise<ScheduledBackupResult> {
+  return invoke("backup_run_scheduled", { coins });
 }
 
 export async function backupExportCloud(

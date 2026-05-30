@@ -13,6 +13,7 @@ use crate::coin_profile::{CoinId, CoinTarget, NetworkMode};
 use crate::config::{default_config_for_target, ensure_first_run_config, save_app_daemon_config};
 use crate::daemon::{dace_missing_hint, dace_sidecars_ready};
 use crate::error::{AppError, AppResult};
+use crate::features::{binarytest_enabled, effective_network_mode};
 use crate::prefs;
 use crate::state::AppState;
 
@@ -41,7 +42,8 @@ pub struct CoinEndpoint {
 #[tauri::command]
 pub async fn network_mode_get(_state: State<'_, AppState>) -> AppResult<NetworkModeInfo> {
     let prefs = prefs::load().await?;
-    Ok(build_network_mode_info(prefs.network_mode))
+    let mode = effective_network_mode(prefs.network_mode);
+    Ok(build_network_mode_info(mode))
 }
 
 #[tauri::command]
@@ -50,6 +52,11 @@ pub async fn network_mode_preview(
     mode: String,
 ) -> AppResult<NetworkModeInfo> {
     let mode = parse_mode(&mode)?;
+    if mode.is_test() && !binarytest_enabled() {
+        return Err(AppError::other(
+            "Binarytest is not available in this wallet build.",
+        ));
+    }
     Ok(build_network_mode_info(mode))
 }
 
@@ -62,6 +69,11 @@ pub async fn network_mode_set(
     mode: String,
 ) -> AppResult<NetworkModeInfo> {
     let mode = parse_mode(&mode)?;
+    if mode.is_test() && !binarytest_enabled() {
+        return Err(AppError::other(
+            "Binarytest is not available in this wallet build.",
+        ));
+    }
     let mut prefs = prefs::load().await?;
     if prefs.network_mode == mode {
         return Ok(build_network_mode_info(mode));
@@ -88,6 +100,32 @@ pub async fn network_mode_set(
 
     tracing::info!("network_mode switched to {}", mode.as_str());
     Ok(build_network_mode_info(mode))
+}
+
+/// If binarytest is disabled (e.g. alpha builds) but prefs still point at it,
+/// reset to mainnet and rewrite daemon configs before startup continues.
+pub async fn ensure_mainnet_when_binarytest_disabled(state: &AppState) -> AppResult<()> {
+    if binarytest_enabled() {
+        return Ok(());
+    }
+    let mut prefs = prefs::load().await?;
+    if !prefs.network_mode.is_test() {
+        return Ok(());
+    }
+
+    tracing::info!("binarytest disabled in this build; resetting network_mode to mainnet");
+    prefs.network_mode = NetworkMode::Mainnet;
+    prefs::save(&prefs).await?;
+
+    for coin in CoinId::all().iter().copied() {
+        let target = CoinTarget::new(coin, NetworkMode::Mainnet);
+        let mut cfg = default_config_for_target(target);
+        ensure_first_run_config(coin, &mut cfg)?;
+        save_app_daemon_config(coin, &cfg)?;
+        state.replace_config(coin, cfg).await?;
+    }
+
+    Ok(())
 }
 
 fn parse_mode(s: &str) -> AppResult<NetworkMode> {

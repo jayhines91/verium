@@ -252,7 +252,7 @@ npm run fetch:veriumd
 npm run tauri:build          # or tauri:build:msvc on Windows
 ```
 
-Artifacts land under `src-tauri/target/<triple>/release/bundle/`. CI builds Windows (MSI/NSIS), macOS (DMG), and Linux (deb/AppImage) — see [`.github/workflows/desktop-app.yml`](../../.github/workflows/desktop-app.yml).
+Artifacts land under `src-tauri/target/<triple>/release/bundle/`. CI builds Windows x64 (NSIS), macOS Intel + Apple Silicon (separate DMGs), and Linux x64 + ARM64 (deb/AppImage) — see [`.github/workflows/desktop-app.yml`](../../.github/workflows/desktop-app.yml).
 
 Tag releases with `desktop-v*` to trigger the draft GitHub Release job.
 
@@ -288,11 +288,13 @@ RPC console command history is stored in browser `localStorage` only (see [`docs
 
 Pre-built installers are published on [GitHub Releases](https://github.com/JoshiOS-VRY/verium/releases) (`desktop-v*` tags).
 
-| Platform | Typical asset |
+| Platform | Asset |
 | --- | --- |
-| Windows 10/11 | `*_x64-setup.exe` |
-| macOS (Intel) | `*_x64.dmg` |
-| Linux | `.deb` or `.AppImage` |
+| Windows 10/11 (x64) | `Vericonomy_Wallet_<version>_Windows_x64.exe` |
+| macOS (Intel) | `Vericonomy_Wallet_<version>_macOS_Intel.dmg` |
+| macOS (Apple Silicon) | `Vericonomy_Wallet_<version>_macOS_AppleSilicon.dmg` |
+| Linux x64 | `Vericonomy_Wallet_<version>_Linux_x64.deb` or `.AppImage` |
+| Linux ARM64 | `Vericonomy_Wallet_<version>_Linux_ARM64.deb` or `.AppImage` |
 
 **Backup:** Settings → Wallet backup & passphrase → choose a **new** filename in the `backups` folder (never overwrite live `wallet.dat`).
 

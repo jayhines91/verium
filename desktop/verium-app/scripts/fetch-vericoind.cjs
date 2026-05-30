@@ -92,7 +92,17 @@ function archiveUrlsFor(triple, version) {
     ];
   }
   if (isMacTriple(triple)) {
-    return [`${vBase}vericoin-${v}-macos-intel.tar.gz`];
+    // Separate native macOS builds per architecture (Apple Silicon vs Intel).
+    if (triple.includes("aarch64")) {
+      return [
+        `${vBase}vericoin-${v}-macos-arm64.tar.gz`,
+        `${vBase}vericoin-${v}-aarch64-apple-darwin.tar.gz`,
+      ];
+    }
+    return [
+      `${vBase}vericoin-${v}-macos-intel.tar.gz`,
+      `${vBase}vericoin-${v}-x86_64-apple-darwin.tar.gz`,
+    ];
   }
   if (triple.includes("aarch64") && triple.includes("linux")) {
     return [`${vBase}vericoin-${v}-aarch64-linux-gnu.tar.gz`];

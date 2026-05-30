@@ -124,15 +124,15 @@ export function ExplorerRecentBlocks({
   });
 
   const blocks = useQuery({
-    queryKey: ["explorer-blocks", isDashboard ? 50 : 10],
+    queryKey: ["explorer-blocks", isDashboard ? 10 : 10],
 
-    queryFn: () => fetchExplorerBlocks(coin, isDashboard ? 50 : 10),
+    queryFn: () => fetchExplorerBlocks(coin, isDashboard ? 10 : 10),
 
     enabled: isDashboard || enabled.data === true,
 
     staleTime: isDashboard ? DASHBOARD_BLOCKS_REFETCH_MS : 0,
 
-    refetchInterval: isDashboard ? DASHBOARD_BLOCKS_REFETCH_MS : 10_000,
+    refetchInterval: isDashboard ? DASHBOARD_BLOCKS_REFETCH_MS : 5_000,
 
     refetchOnWindowFocus: !isDashboard,
 
@@ -193,7 +193,7 @@ export function ExplorerRecentBlocks({
   return (
     <Card
       className={cn(
-        isDashboard && "flex min-h-[min(560px,55vh)] flex-col",
+        isDashboard && "flex  flex-col",
 
         className,
       )}
@@ -258,7 +258,7 @@ export function ExplorerRecentBlocks({
             className={cn(
               "overflow-auto",
 
-              isDashboard ? "min-h-[420px] flex-1" : "max-h-[360px]",
+              isDashboard ? "flex-1" : "max-h-[360px]",
             )}
           >
             <table className="w-full border-collapse text-sm">
@@ -266,19 +266,25 @@ export function ExplorerRecentBlocks({
                 <tr>
                   <th className="px-4 py-2 text-left font-medium">Height</th>
 
-                  <th className="px-4 py-2 text-right font-medium">Time</th>
+                  <th className="px-4 py-2 text-right font-medium bg-white dark:bg-slate-900 ">
+                    Time
+                  </th>
 
-                  <th className="px-4 py-2 text-right font-medium">Txs</th>
+                  <th className="px-4 py-2 text-right font-medium bg-white dark:bg-slate-900 ">
+                    Txs
+                  </th>
 
-                  <th className="px-4 py-2 text-right font-medium">Out</th>
+                  <th className="px-4 py-2 text-right font-medium bg-white dark:bg-slate-900 ">
+                    Out
+                  </th>
 
                   {isDashboard && (
                     <>
-                      <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">
+                      <th className="hidden px-4 py-2 text-right font-medium bg-white dark:bg-slate-900  sm:table-cell">
                         Size
                       </th>
 
-                      <th className="hidden px-4 py-2 text-right font-medium md:table-cell">
+                      <th className="hidden px-4 py-2 text-right font-medium bg-white dark:bg-slate-900  md:table-cell">
                         Difficulty
                       </th>
                     </>

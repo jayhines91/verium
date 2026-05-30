@@ -8,11 +8,12 @@
 // their test wallet with their real wallet.
 
 import { Link } from "react-router-dom";
+import { BINARYTEST_ENABLED } from "@/lib/features";
 import { useIsTestNetwork } from "@/lib/network-mode";
 
 export function NetworkModeBanner() {
   const isTest = useIsTestNetwork();
-  if (!isTest) return null;
+  if (!BINARYTEST_ENABLED || !isTest) return null;
 
   return (
     <div className="w-full bg-amber-500/20 border-b border-amber-500/50 text-amber-100 px-4 py-2 text-xs flex items-center justify-between">

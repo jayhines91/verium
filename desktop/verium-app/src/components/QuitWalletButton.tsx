@@ -9,10 +9,12 @@ export function QuitWalletButton() {
 
   const onQuit = async () => {
     setQuitting(true);
+    setConfirmOpen(false);
     try {
       await tauriQuitWallet();
-    } catch {
-      // The invoke can fail while the WebView tears down during app.exit().
+    } catch (err) {
+      setQuitting(false);
+      console.error("quit_wallet failed:", err);
     }
   };
 
@@ -23,9 +25,10 @@ export function QuitWalletButton() {
         size="sm"
         className="mt-2 w-full justify-start gap-2 px-0 text-fg-muted hover:text-fg"
         onClick={() => setConfirmOpen(true)}
+        disabled={quitting}
       >
         <Power className="h-3.5 w-3.5" />
-        Quit wallet
+        {quitting ? "Quitting…" : "Quit wallet"}
       </Button>
 
       {confirmOpen && (
@@ -41,17 +44,11 @@ export function QuitWalletButton() {
                 variant="secondary"
                 size="sm"
                 onClick={() => setConfirmOpen(false)}
-                disabled={quitting}
               >
                 Cancel
               </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={onQuit}
-                disabled={quitting}
-              >
-                {quitting ? "Quitting…" : "Quit wallet"}
+              <Button variant="danger" size="sm" onClick={onQuit}>
+                Quit wallet
               </Button>
             </div>
           </div>

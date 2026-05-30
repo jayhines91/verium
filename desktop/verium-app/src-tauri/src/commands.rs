@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
@@ -7,7 +7,7 @@ static SHUTDOWN_ONCE: AtomicBool = AtomicBool::new(false);
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::addressbook::{self, AddressBookEntry};
 use crate::bootstrap::{cancel_bootstrap as request_bootstrap_cancel, import_bootstrap as run_import_bootstrap, BootstrapResult};
@@ -53,11 +53,40 @@ use crate::wallet_secrets::{
     self, is_forever_unlock_duration, WALLET_UNLOCK_FOREVER_SECONDS,
 };
 
-async fn stop_inner(state: &AppState, coin: CoinId) -> AppResult<()> {
-    stop_inner_with_policy(state, coin, false).await
+const SHUTDOWN_PROGRESS_EVENT: &str = "shutdown-progress";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShutdownProgress {
+    pub step: String,
+    pub message: String,
+    pub percent: f64,
 }
 
-async fn stop_inner_with_policy(state: &AppState, coin: CoinId, fast: bool) -> AppResult<()> {
+fn emit_shutdown_progress(app: Option<&AppHandle>, step: &str, message: &str, percent: f64) {
+    let Some(app) = app else {
+        return;
+    };
+    let _ = app.emit(
+        SHUTDOWN_PROGRESS_EVENT,
+        ShutdownProgress {
+            step: step.to_string(),
+            message: message.to_string(),
+            percent,
+        },
+    );
+}
+
+async fn stop_inner(state: &AppState, coin: CoinId) -> AppResult<()> {
+    stop_inner_with_policy(None, state, coin, false).await
+}
+
+async fn stop_inner_with_policy(
+    app: Option<&AppHandle>,
+    state: &AppState,
+    coin: CoinId,
+    fast: bool,
+) -> AppResult<()> {
     let cfg = state.config(coin).await?;
     let binary = coin.binary_base();
     let child_wait = if fast {
@@ -77,14 +106,23 @@ async fn stop_inner_with_policy(state: &AppState, coin: CoinId, fast: bool) -> A
     };
 
     if coin == CoinId::Verium {
+        emit_shutdown_progress(app, "miner_stop", "Shutting down Verium miner…", 40.0);
         if let Ok(client) = state.rpc_client(coin).await {
             let _ = client.call_no_result("minerstop", json!([])).await;
         }
     } else if coin == CoinId::Vericoin {
+        emit_shutdown_progress(app, "staking_stop", "Shutting down Vericoin staking…", 55.0);
         if let Ok(client) = state.rpc_client(coin).await {
             let _ = client.call_no_result("stakingstop", json!([])).await;
         }
     }
+
+    emit_shutdown_progress(
+        app,
+        "daemon_stop",
+        &format!("Stopping {}…", binary),
+        if coin == CoinId::Verium { 50.0 } else { 65.0 },
+    );
 
     if let Ok(client) = state.rpc_client(coin).await {
         let _ = client.call_no_result("stop", json!([])).await;
@@ -111,7 +149,14 @@ async fn stop_inner_with_policy(state: &AppState, coin: CoinId, fast: bool) -> A
     Ok(())
 }
 
-async fn lock_wallet_best_effort(state: &AppState, coin: CoinId) {
+async fn lock_wallet_best_effort(app: Option<&AppHandle>, state: &AppState, coin: CoinId) {
+    let percent = if coin == CoinId::Verium { 20.0 } else { 28.0 };
+    emit_shutdown_progress(
+        app,
+        &format!("lock_{}", coin.as_str()),
+        &format!("Locking {} wallet…", coin.display_name()),
+        percent,
+    );
     let Ok(cfg) = state.config_fresh(coin).await else {
         return;
     };
@@ -127,6 +172,7 @@ async fn lock_wallet_best_effort(state: &AppState, coin: CoinId) {
 /// attempted even if disabled in preferences. Otherwise only enabled coins with
 /// a bundled, managed, or RPC-reachable daemon are stopped.
 pub async fn shutdown_all_vericonomy_processes(
+    app: Option<&AppHandle>,
     state: &AppState,
     gpu: Option<&crate::gpu_miner::GpuMinerHandle>,
     stop_all_coins: bool,
@@ -136,18 +182,21 @@ pub async fn shutdown_all_vericonomy_processes(
         return;
     }
 
+    emit_shutdown_progress(app, "preparing", "Preparing to quit…", 5.0);
+
     for coin in CoinId::all() {
         request_bootstrap_cancel(state, *coin);
     }
 
     if let Some(gpu) = gpu {
+        emit_shutdown_progress(app, "gpu", "Stopping GPU miner…", 12.0);
         if let Err(e) = gpu.stop().await {
             tracing::warn!("shutdown: GPU miner stop failed: {e}");
         }
     }
 
     for coin in CoinId::all() {
-        lock_wallet_best_effort(state, *coin).await;
+        lock_wallet_best_effort(app, state, *coin).await;
     }
 
     let prefs = prefs::load().await.unwrap_or_default();
@@ -186,46 +235,78 @@ pub async fn shutdown_all_vericonomy_processes(
         }
 
         tracing::info!("shutdown ({}): stopping earn mode and daemon", coin.as_str());
-        if let Err(e) = stop_inner_with_policy(state, *coin, true).await {
+        if let Err(e) = stop_inner_with_policy(app, state, *coin, true).await {
             tracing::warn!("shutdown ({}): stop failed: {e}", coin.as_str());
         }
     }
+
+    emit_shutdown_progress(app, "closing", "Closing wallet…", 90.0);
 }
 
 /// Stop earn mode and daemons when the wallet UI closes.
 pub async fn shutdown_daemon_on_app_exit(state: &AppState) {
-    shutdown_all_vericonomy_processes(state, None, true).await;
+    shutdown_all_vericonomy_processes(None, state, None, true).await;
 }
 
-/// Run shutdown off the WebView main thread so quit/exit does not freeze the UI.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Stop managed processes, then request application exit.
+pub async fn graceful_shutdown_and_exit(app: AppHandle) {
+    tracing::info!("graceful_shutdown: starting");
+    if let Some(state) = app.try_state::<AppState>() {
+        let gpu = app.try_state::<crate::gpu_miner::GpuMinerHandle>();
+        match tokio::time::timeout(
+            SHUTDOWN_TIMEOUT,
+            shutdown_all_vericonomy_processes(
+                Some(&app),
+                state.inner(),
+                gpu.as_ref().map(|s| s.inner()),
+                true,
+            ),
+        )
+        .await
+        {
+            Ok(()) => tracing::info!("graceful_shutdown: completed"),
+            Err(_) => tracing::warn!("graceful_shutdown: timed out after {}s", SHUTDOWN_TIMEOUT.as_secs()),
+        }
+    } else {
+        tracing::warn!("graceful_shutdown: AppState unavailable");
+    }
+    app.exit(0);
+}
+
+/// Best-effort shutdown when the process is exiting without `graceful_shutdown_and_exit`.
+/// Must not block the Exit handler — that freezes the UI on Windows.
 pub fn run_shutdown_on_exit(app: &AppHandle) {
+    if SHUTDOWN_ONCE.load(Ordering::SeqCst) {
+        tracing::debug!("shutdown: skip exit hook, already completed");
+        return;
+    }
     let app = app.clone();
-    let handle = std::thread::Builder::new()
+    let _ = std::thread::Builder::new()
         .name("verium-app-shutdown".into())
         .spawn(move || {
             if let Some(state) = app.try_state::<AppState>() {
                 let gpu = app.try_state::<crate::gpu_miner::GpuMinerHandle>();
-                let shutdown = shutdown_all_vericonomy_processes(
-                    state.inner(),
-                    gpu.as_ref().map(|s| s.inner()),
-                    true,
-                );
                 let _ = tauri::async_runtime::block_on(async {
-                    tokio::time::timeout(Duration::from_secs(20), shutdown).await
+                    tokio::time::timeout(
+                        Duration::from_secs(15),
+                        shutdown_all_vericonomy_processes(
+                            Some(&app),
+                            state.inner(),
+                            gpu.as_ref().map(|s| s.inner()),
+                            true,
+                        ),
+                    )
+                    .await
                 });
             }
         });
-
-    if let Ok(handle) = handle {
-        let _ = handle.join();
-    }
 }
 
 #[tauri::command]
-pub fn quit_wallet(app: AppHandle) -> AppResult<()> {
-    // Shutdown runs once from RunEvent::Exit. Request exit immediately so the
-    // WebView is not blocked on a long daemon stop RPC sequence here.
-    app.exit(0);
+pub async fn quit_wallet(app: AppHandle) -> AppResult<()> {
+    graceful_shutdown_and_exit(app).await;
     Ok(())
 }
 
@@ -1337,19 +1418,14 @@ pub struct WalletBackupResult {
     pub message: String,
 }
 
-#[tauri::command]
-pub async fn wallet_backup(
-    state: State<'_, AppState>,
-    coin: String,
-    destination_path: String,
-) -> AppResult<WalletBackupResult> {
-    let coin = parse_coin_id(&coin)?;
-    if destination_path.is_empty() {
-        return Err(AppError::other("destination_path must not be empty"));
-    }
-    let cfg = state.config(coin).await?;
-    let dest = std::path::PathBuf::from(&destination_path);
-    if is_live_wallet_destination(coin, &cfg, &dest) {
+/// Flush and copy wallet.dat to `dest` via backupwallet RPC when the node is running.
+pub async fn backup_wallet_to_path(
+    state: &AppState,
+    coin: CoinId,
+    cfg: &DaemonConfig,
+    dest: &Path,
+) -> AppResult<()> {
+    if is_live_wallet_destination(coin, cfg, dest) {
         return Err(AppError::other(
             "Cannot save over the live wallet.dat file. Pick a different name — for example verium-wallet-YYYYMMDD-HHMMSS.dat in the backups folder.",
         ));
@@ -1360,7 +1436,7 @@ pub async fn wallet_backup(
         }
     }
 
-    let backup_dir = wallet_backup_dir(coin, &cfg)?;
+    let backup_dir = wallet_backup_dir(coin, cfg)?;
     let snapshot = backup_dir.join(format!(
         ".snapshot-{}.dat",
         uuid::Uuid::new_v4().simple()
@@ -1378,46 +1454,73 @@ pub async fn wallet_backup(
         .await;
 
     if rpc_result.is_ok() && snapshot.is_file() {
-        // Preferred path: veriumd flushed Berkeley DB and wrote the snapshot.
-    } else {
-        if let Err(AppError::Rpc { message, .. }) = &rpc_result {
-            tracing::warn!("wallet backup: backupwallet rpc failed: {message}");
-        } else if rpc_result.is_ok() {
-            tracing::warn!(
-                "wallet backup: backupwallet returned ok but snapshot missing at {}",
-                snapshot.display()
-            );
-        }
-        let live = resolve_wallet_dat_path(coin, &cfg).ok_or_else(|| {
-            AppError::other("No wallet.dat found on disk to copy.")
-        })?;
-        std::fs::copy(&live, &dest).map_err(|e| {
+        std::fs::copy(&snapshot, dest).map_err(|e| {
             AppError::other(format!(
-                "Could not copy wallet.dat to {}: {e}. If the node just started, wait a moment and try again.",
+                "Could not copy wallet backup to {}: {e}",
                 dest.display()
             ))
         })?;
         let _ = std::fs::remove_file(&snapshot);
-        return Ok(WalletBackupResult {
-            success: true,
-            destination: destination_path,
-            message: "Wallet backup saved (live file copy while the node is running).".into(),
-        });
+        return Ok(());
     }
 
-    std::fs::copy(&snapshot, &dest).map_err(|e| {
+    if let Err(AppError::Rpc { message, .. }) = &rpc_result {
+        tracing::warn!("wallet backup: backupwallet rpc failed: {message}");
+    } else if rpc_result.is_ok() {
+        tracing::warn!(
+            "wallet backup: backupwallet returned ok but snapshot missing at {}",
+            snapshot.display()
+        );
+    }
+    let live = resolve_wallet_dat_path(coin, cfg).ok_or_else(|| {
+        AppError::other("No wallet.dat found on disk to copy.")
+    })?;
+    std::fs::copy(&live, dest).map_err(|e| {
         AppError::other(format!(
-            "Could not copy wallet backup to {}: {e}",
+            "Could not copy wallet.dat to {}: {e}. If the node just started, wait a moment and try again.",
             dest.display()
         ))
     })?;
     let _ = std::fs::remove_file(&snapshot);
+    Ok(())
+}
 
+#[tauri::command]
+pub async fn wallet_backup(
+    state: State<'_, AppState>,
+    coin: String,
+    destination_path: String,
+) -> AppResult<WalletBackupResult> {
+    let coin = parse_coin_id(&coin)?;
+    if destination_path.is_empty() {
+        return Err(AppError::other("destination_path must not be empty"));
+    }
+    let cfg = state.config(coin).await?;
+    let dest = std::path::PathBuf::from(&destination_path);
+    backup_wallet_to_path(state.inner(), coin, &cfg, &dest).await?;
+    if let Err(e) = crate::backup_scheduler::register_backup_hash(&dest) {
+        tracing::warn!("wallet backup: hash register failed: {e}");
+    }
     Ok(WalletBackupResult {
         success: true,
         destination: destination_path,
         message: "Wallet backup saved.".into(),
     })
+}
+
+#[tauri::command]
+pub async fn open_wallet_backup_folder(
+    state: State<'_, AppState>,
+    coin: String,
+) -> AppResult<String> {
+    let coin = parse_coin_id(&coin)?;
+    let cfg = state.config(coin).await?;
+    let dir = wallet_backup_dir(coin, &cfg)?;
+    std::fs::create_dir_all(&dir)?;
+    open::that(&dir).map_err(|e| {
+        AppError::other(format!("failed to open backup folder: {e}"))
+    })?;
+    Ok(dir.display().to_string())
 }
 
 #[derive(Debug, Clone, Serialize)]

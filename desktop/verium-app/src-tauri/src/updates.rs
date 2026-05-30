@@ -58,7 +58,13 @@ struct ManifestDownloads {
     #[serde(default)]
     macos: Option<String>,
     #[serde(default)]
+    macos_intel: Option<String>,
+    #[serde(default)]
+    macos_apple_silicon: Option<String>,
+    #[serde(default)]
     linux_x64: Option<String>,
+    #[serde(default)]
+    linux_arm64: Option<String>,
 }
 
 fn platform_download_url(d: &ManifestDownloads) -> Option<String> {
@@ -67,7 +73,15 @@ fn platform_download_url(d: &ManifestDownloads) -> Option<String> {
             .clone()
             .or_else(|| d.windows_x64_zip.clone())
     } else if cfg!(target_os = "macos") {
-        d.macos.clone()
+        if cfg!(target_arch = "aarch64") {
+            d.macos_apple_silicon
+                .clone()
+                .or_else(|| d.macos.clone())
+        } else {
+            d.macos_intel.clone().or_else(|| d.macos.clone())
+        }
+    } else if cfg!(target_arch = "aarch64") {
+        d.linux_arm64.clone().or_else(|| d.linux_x64.clone())
     } else {
         d.linux_x64.clone()
     }

@@ -6,8 +6,9 @@ import { cn } from "@/lib/utils";
 interface FeeRateDialogProps {
   open: boolean;
   current: number;
+  symbol: string;
   onClose: () => void;
-  onApply: (rateVrmPerKb: number) => void;
+  onApply: (ratePerKb: number) => void;
 }
 
 const PRESETS: { id: string; rate: number; label: string; hint: string }[] = [
@@ -20,6 +21,7 @@ const PRESETS: { id: string; rate: number; label: string; hint: string }[] = [
 export function FeeRateDialog({
   open,
   current,
+  symbol,
   onClose,
   onApply,
 }: FeeRateDialogProps) {
@@ -87,7 +89,7 @@ export function FeeRateDialog({
                 >
                   <span className="text-sm font-medium">{preset.label}</span>
                   <span className="text-[11px] tabular-nums text-fg-muted">
-                    {preset.rate.toFixed(8)} VRM/kB
+                    {preset.rate.toFixed(8)} {symbol}/kB
                   </span>
                   <span className="text-[11px] text-fg-subtle">
                     {preset.hint}
@@ -98,7 +100,7 @@ export function FeeRateDialog({
           </div>
 
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-fg-muted">Custom fee (VRM/kB)</label>
+            <label className="text-xs text-fg-muted">Custom fee ({symbol}/kB)</label>
             <input
               type="number"
               min={0}

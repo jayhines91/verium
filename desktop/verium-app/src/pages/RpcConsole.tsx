@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { Terminal as TerminalIcon } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { AlertTriangle, Terminal as TerminalIcon } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -9,9 +9,11 @@ import {
   CardTitle,
 } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { rpcRaw } from "@/lib/rpc/client";
+import { coinQueryKey } from "@/lib/coin/profile";
+import { rpcGetWalletInfo, rpcRaw } from "@/lib/rpc/client";
 import { useActiveCoin } from "@/lib/coin/context";
 import { cn } from "@/lib/utils";
+import { isWalletLocked } from "@/lib/wallet-unlock";
 
 interface ConsoleEntry {
   id: string;
@@ -48,6 +50,12 @@ function saveHistory(history: string[]) {
 
 export function RpcConsole() {
   const coin = useActiveCoin();
+  const wallet = useQuery({
+    queryKey: coinQueryKey(coin, "getwalletinfo"),
+    queryFn: () => rpcGetWalletInfo(coin),
+    refetchInterval: 5_000,
+  });
+  const walletLocked = isWalletLocked(wallet.data);
   const [draft, setDraft] = useState("");
   const [entries, setEntries] = useState<ConsoleEntry[]>([]);
   const [history, setHistory] = useState<string[]>(() => loadHistory());
@@ -137,6 +145,17 @@ export function RpcConsole() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {walletLocked && (
+            <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                Wallet is locked. Node RPCs still work, but wallet commands
+                (send, sign, export keys, etc.) will fail until you unlock — or
+                you run <span className="font-mono">walletpassphrase</span> here.
+                Unlock from Mining, Transactions, or Security for a safer path.
+              </span>
+            </div>
+          )}
           <div
             ref={scrollRef}
             className="max-h-[55vh] min-h-[280px] overflow-y-auto rounded-md border border-border bg-bg-subtle/60 p-3 text-xs"

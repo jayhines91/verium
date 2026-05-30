@@ -51,6 +51,11 @@ export const COIN_PROFILES: Record<CoinId, CoinProfile> = {
 
 export const ALL_COINS: CoinId[] = ["verium", "vericoin"];
 
+export const COIN_LOGO_URLS: Record<CoinId, string> = {
+  verium: "/img/vericonomy/verium-logo.svg",
+  vericoin: "/img/vericonomy/vericoin-logo.svg",
+};
+
 export function getCoinProfile(coin: CoinId): CoinProfile {
   return COIN_PROFILES[coin];
 }

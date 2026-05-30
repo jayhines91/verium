@@ -6,7 +6,8 @@ use tauri::State;
 
 use crate::audit_log::{self, AuditEntry};
 use crate::auto_lock::{self, AutoLockConfig};
-use crate::backup_scheduler::{self, BackupHealth, BackupSchedulerConfig};
+use crate::backup_scheduler::{self, BackupHealth, BackupSchedulerConfig, ScheduledBackupResult};
+use crate::commands;
 use crate::coin_profile::{parse_coin_id, CoinId};
 use crate::error::{AppError, AppResult};
 use crate::hardware_wallet::{self, HardwareWalletConfig, HardwareVendor, PsbtSendResult};
@@ -358,8 +359,28 @@ pub fn backup_scheduler_get_config() -> AppResult<BackupSchedulerConfig> {
 }
 
 #[tauri::command]
-pub fn backup_scheduler_save_config(config: BackupSchedulerConfig) -> AppResult<()> {
-    backup_scheduler::save_config(&config)
+pub fn backup_scheduler_save_config(config: BackupSchedulerConfig) -> AppResult<BackupSchedulerConfig> {
+    let mut existing = backup_scheduler::load_config()?;
+    existing.enabled = config.enabled;
+    existing.daily_retention = config.daily_retention;
+    existing.monthly_retention = config.monthly_retention;
+    if config.cloud_folder.is_some() {
+        existing.cloud_folder = config.cloud_folder;
+    }
+    if config.last_run_at.is_some() {
+        existing.last_run_at = config.last_run_at;
+    }
+    // interval_hours is updated only via backup_scheduler_set_interval.
+    backup_scheduler::save_config(&existing)?;
+    Ok(existing)
+}
+
+#[tauri::command]
+pub fn backup_scheduler_set_interval(interval_hours: u32) -> AppResult<BackupSchedulerConfig> {
+    let mut config = backup_scheduler::load_config()?;
+    config.interval_hours = interval_hours;
+    backup_scheduler::save_config(&config)?;
+    Ok(config)
 }
 
 #[tauri::command]
@@ -374,11 +395,77 @@ pub async fn backup_run_now(
 ) -> AppResult<String> {
     let coin = parse_coin_id(&coin)?;
     let cfg = state.config(coin).await?;
-    let path = backup_scheduler::create_local_backup(&cfg, coin)?;
+    let dest = backup_scheduler::auto_backup_path(&cfg, coin)?;
+    commands::backup_wallet_to_path(state.inner(), coin, &cfg, &dest).await?;
+    backup_scheduler::register_backup_hash(&dest)?;
     let config = backup_scheduler::load_config()?;
     backup_scheduler::prune_old_backups(coin, &cfg, &config)?;
-    audit_log::append("backup", &format!("Auto backup to {path}"), Some(coin.as_str()))?;
+    backup_scheduler::touch_last_run_at()?;
+    let path = dest.display().to_string();
+    if let Err(e) = audit_log::append("backup", &format!("Manual backup to {path}"), Some(coin.as_str()))
+    {
+        tracing::warn!("audit log append failed: {e}");
+    }
     Ok(path)
+}
+
+#[tauri::command]
+pub async fn backup_run_scheduled(
+    state: State<'_, AppState>,
+    coins: Vec<String>,
+) -> AppResult<ScheduledBackupResult> {
+    let config = backup_scheduler::load_config()?;
+    if !backup_scheduler::is_backup_due(&config) {
+        return Ok(ScheduledBackupResult {
+            ran: false,
+            paths: Vec::new(),
+        });
+    }
+
+    let mut paths = Vec::new();
+    for coin_str in coins {
+        let coin = parse_coin_id(&coin_str)?;
+        let cfg = match state.config(coin).await {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                tracing::warn!("scheduled backup skipped for {}: {e}", coin.as_str());
+                continue;
+            }
+        };
+        if crate::config::resolve_wallet_dat_path(coin, &cfg).is_none() {
+            continue;
+        }
+        let dest = match backup_scheduler::auto_backup_path(&cfg, coin) {
+            Ok(dest) => dest,
+            Err(e) => {
+                tracing::warn!("scheduled backup path failed for {}: {e}", coin.as_str());
+                continue;
+            }
+        };
+        match commands::backup_wallet_to_path(state.inner(), coin, &cfg, &dest).await {
+            Ok(()) => {
+                if let Err(e) = backup_scheduler::register_backup_hash(&dest) {
+                    tracing::warn!("scheduled backup hash register failed for {}: {e}", coin.as_str());
+                }
+                let config = backup_scheduler::load_config()?;
+                let _ = backup_scheduler::prune_old_backups(coin, &cfg, &config);
+                paths.push(dest.display().to_string());
+            }
+            Err(e) => {
+                tracing::warn!("scheduled backup failed for {}: {e}", coin.as_str());
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        return Ok(ScheduledBackupResult {
+            ran: false,
+            paths: Vec::new(),
+        });
+    }
+
+    backup_scheduler::touch_last_run_at()?;
+    Ok(ScheduledBackupResult { ran: true, paths })
 }
 
 #[tauri::command]

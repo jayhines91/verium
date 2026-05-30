@@ -1,7 +1,7 @@
 {
   "name": "vericonomy-app",
   "private": true,
-  "version": "2.0.0",
+  "version": "1.0.0-alpha.1",
   "type": "module",
   "description": "Modern Tauri + React desktop wallet for Verium (VRM) and Vericoin (VRC).",
   "scripts": {

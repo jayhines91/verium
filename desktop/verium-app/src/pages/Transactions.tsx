@@ -28,6 +28,10 @@ import { consumePendingPaymentUri } from "@/lib/payment-uri-pending";
 
 type TransferMode = "send" | "receive";
 
+const stickyTableHeadClass =
+  "sticky top-0 z-10 border-b border-border bg-bg-panel text-xs uppercase text-fg-subtle";
+const stickyTableHeadCellClass = "bg-bg-panel px-4 py-2 font-medium";
+
 function TransferModeToggle({
   value,
   onChange,
@@ -161,8 +165,8 @@ export function Transactions() {
               <CardTitle>{mode === "send" ? "Send" : "Receive"}</CardTitle>
               <CardDescription>
                 {mode === "send"
-                  ? "Pay to one or more Verium addresses. Labels are saved locally with the transaction comment."
-                  : "Create receiving addresses with optional label, amount, and message."}
+                  ? `Pay to one or more ${profile.displayName} addresses. Labels are saved locally with the transaction comment.`
+                  : `Create ${profile.symbol} receiving addresses with optional label, amount, and message.`}
               </CardDescription>
             </div>
             <TransferModeToggle value={mode} onChange={setMode} />
@@ -194,17 +198,46 @@ export function Transactions() {
             <div className="max-h-[480px] overflow-auto">
               {showExplorerFallback ? (
                 <table className="w-full border-collapse text-sm">
-                  <thead className="sticky top-0 bg-bg-panel text-xs uppercase text-fg-subtle">
+                  <thead className={stickyTableHeadClass}>
                     <tr>
-                      <th className="px-4 py-2 text-left font-medium">When</th>
-                      <th className="px-4 py-2 text-left font-medium">Txid</th>
-                      <th className="px-4 py-2 text-right font-medium">
+                      <th
+                        className={cn(
+                          stickyTableHeadCellClass,
+                          "text-left",
+                        )}
+                      >
+                        When
+                      </th>
+                      <th
+                        className={cn(
+                          stickyTableHeadCellClass,
+                          "text-left",
+                        )}
+                      >
+                        Txid
+                      </th>
+                      <th
+                        className={cn(
+                          stickyTableHeadCellClass,
+                          "text-right",
+                        )}
+                      >
                         Amount
                       </th>
-                      <th className="px-4 py-2 text-right font-medium">
+                      <th
+                        className={cn(
+                          stickyTableHeadCellClass,
+                          "text-right",
+                        )}
+                      >
                         Block
                       </th>
-                      <th className="px-4 py-2 text-right font-medium">
+                      <th
+                        className={cn(
+                          stickyTableHeadCellClass,
+                          "text-right",
+                        )}
+                      >
                         Explorer
                       </th>
                     </tr>
@@ -241,20 +274,54 @@ export function Transactions() {
                 </table>
               ) : (
                 <table className="w-full border-collapse text-sm">
-                  <thead className="sticky top-0 bg-bg-panel text-xs uppercase text-fg-subtle">
+                  <thead className={stickyTableHeadClass}>
                     <tr>
-                      <th className="px-4 py-2 text-left font-medium">When</th>
-                      <th className="px-4 py-2 text-left font-medium">Type</th>
-                      <th className="px-4 py-2 text-left font-medium">
+                      <th
+                        className={cn(
+                          stickyTableHeadCellClass,
+                          "text-left",
+                        )}
+                      >
+                        When
+                      </th>
+                      <th
+                        className={cn(
+                          stickyTableHeadCellClass,
+                          "text-left",
+                        )}
+                      >
+                        Type
+                      </th>
+                      <th
+                        className={cn(
+                          stickyTableHeadCellClass,
+                          "text-left",
+                        )}
+                      >
                         Address
                       </th>
-                      <th className="px-4 py-2 text-right font-medium">
+                      <th
+                        className={cn(
+                          stickyTableHeadCellClass,
+                          "text-right",
+                        )}
+                      >
                         Amount
                       </th>
-                      <th className="px-4 py-2 text-right font-medium">
+                      <th
+                        className={cn(
+                          stickyTableHeadCellClass,
+                          "text-right",
+                        )}
+                      >
                         Confs
                       </th>
-                      <th className="px-4 py-2 text-right font-medium">
+                      <th
+                        className={cn(
+                          stickyTableHeadCellClass,
+                          "text-right",
+                        )}
+                      >
                         Explorer
                       </th>
                     </tr>

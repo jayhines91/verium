@@ -79,8 +79,10 @@ export function ExplorerLink({
         className,
       )}
     >
-      {label}
-      {showIcon && <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />}
+      {label.slice(0, 20)}...
+      {showIcon && (
+        <ExternalLink className="h-3 w-3 shrink-0 opacity-70 truncate" />
+      )}
     </button>
   );
 }

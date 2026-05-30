@@ -6,7 +6,6 @@ import { CoinProvider } from "@/lib/coin/context";
 import { useActiveCoin } from "@/lib/coin/context";
 import { AddressBook } from "@/pages/AddressBook";
 import { Dashboard } from "@/pages/Dashboard";
-import { Wallet } from "@/pages/Wallet";
 import { Mining } from "@/pages/Mining";
 import { Staking } from "@/pages/Staking";
 import { Network } from "@/pages/Network";
@@ -19,10 +18,12 @@ import { Setup } from "@/pages/Setup";
 import { SignVerify } from "@/pages/SignVerify";
 import { Resources } from "@/pages/Resources";
 import { BinaryChain } from "@/pages/BinaryChain";
+import { BINARYTEST_ENABLED } from "@/lib/features";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { useWebAudioGestureUnlock } from "@/lib/web-audio";
 import { PasskeyGate } from "@/components/PasskeyGate";
 import { useAutoLock } from "@/hooks/useAutoLock";
+import { useScheduledBackup } from "@/hooks/useScheduledBackup";
 import { useAdaptiveMiningThreads } from "@/hooks/useAdaptiveMiningThreads";
 import { useAutoMine } from "@/hooks/useAutoMine";
 import { useAutoStake } from "@/hooks/useAutoStake";
@@ -60,6 +61,7 @@ function AppHooks() {
   useAdaptiveMiningThreads();
   useAutoStake();
   useAutoLock();
+  useScheduledBackup();
   useTheme();
   useBlockMinedWatcher();
   useBlockMinedSound();
@@ -100,11 +102,13 @@ function AppRoutes() {
         <Route element={<AppShell />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/wallet" element={<Wallet />} />
+          <Route path="/wallet" element={<Navigate to="/dashboard" replace />} />
           <Route path="/mining" element={<Mining />} />
           <Route path="/staking" element={<Staking />} />
           <Route path="/network" element={<Network />} />
-          <Route path="/binary-chain" element={<BinaryChain />} />
+          {BINARYTEST_ENABLED && (
+            <Route path="/binary-chain" element={<BinaryChain />} />
+          )}
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/addresses" element={<AddressBook />} />
           <Route path="/sign" element={<SignVerify />} />

@@ -127,6 +127,20 @@ export function estimateHoursPerBlock(
   return null;
 }
 
+export function effectiveMiningVrmPriceUsd(
+  assumption: number | undefined,
+  marketPrice: number | undefined,
+): number | undefined {
+  if (
+    assumption != null &&
+    Number.isFinite(assumption) &&
+    assumption > 0
+  ) {
+    return assumption;
+  }
+  return marketPrice;
+}
+
 export interface DailyMiningEstimate {
   blocksPerDay: number;
   vrmPerDay: number;

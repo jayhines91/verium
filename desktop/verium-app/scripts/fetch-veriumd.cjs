@@ -129,9 +129,17 @@ function archiveUrlsFor(triple, version) {
     ];
   }
   if (isMacTriple(triple)) {
-    // CDN ships Intel macOS builds only; Apple Silicon CI cross-compiles to x86_64.
+    // macOS ships separate native builds per architecture: Apple Silicon
+    // (aarch64) and Intel (x86_64). Try both common CDN naming schemes.
+    if (triple.includes("aarch64")) {
+      return [
+        `${vBase}verium-${v}-macos-arm64.tar.gz`,
+        `${vBase}verium-${v}-aarch64-apple-darwin.tar.gz`,
+      ];
+    }
     return [
       `${vBase}verium-${v}-macos-intel.tar.gz`,
+      `${vBase}verium-${v}-x86_64-apple-darwin.tar.gz`,
       `${legacy}verium-1.3.5-x86_64-apple-darwin.zip`,
     ];
   }

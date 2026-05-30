@@ -11,6 +11,7 @@ use crate::commands::{
 };
 use crate::node::constants::{STARTUP_RPC_WAIT, SUPERVISOR_TICK};
 use crate::node::state::NodeSnapshot;
+use crate::network_mode_commands;
 use crate::prefs;
 use crate::state::AppState;
 
@@ -42,6 +43,11 @@ pub fn maybe_emit_state(app: &AppHandle, coin: CoinId, snap: &NodeSnapshot) {
 
 /// Single entry point for app startup: prepare chain, ensure daemons, start supervisor.
 pub async fn startup(app: AppHandle, state: &AppState) {
+    if let Err(e) = network_mode_commands::ensure_mainnet_when_binarytest_disabled(state).await
+    {
+        tracing::warn!("startup: binarytest→mainnet migration failed: {e}");
+    }
+
     let prefs = prefs::load().await.unwrap_or_default();
 
     for coin in CoinId::all() {

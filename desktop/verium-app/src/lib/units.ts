@@ -1,5 +1,6 @@
 import type { CoinId } from "@/lib/coin/profile";
 import { getCoinProfile } from "@/lib/coin/profile";
+import { formatNumber } from "@/lib/utils";
 
 const SATS_PER_COIN = 100_000_000;
 
@@ -28,6 +29,31 @@ export function coinSymbol(coin: CoinId): string {
 
 export function coinMaturityConfirmations(coin: CoinId): number {
   return getCoinProfile(coin).confirmationsMatured;
+}
+
+/** Alternative subdivisions shown in the send confirmation dialog. */
+export function formatCoinAlternates(total: number, coin: CoinId): string {
+  const symbol = getCoinProfile(coin).symbol;
+  const milli = total * 1_000;
+  const micro = total * 1_000_000;
+  const sats = Math.round(total * SATS_PER_COIN);
+  return `(=${formatNumber(milli, 5)} m${symbol} or ${formatNumber(micro, 2)} µ${symbol} or ${formatNumber(sats, 0)} ${symbol}i)`;
+}
+
+export function formatRecipientLine(
+  coin: CoinId,
+  options: {
+    amount: number;
+    address: string;
+    label?: string;
+  },
+): string {
+  const amount = formatCoinAmount(options.amount, coin, 8);
+  const label = options.label?.trim();
+  if (label) {
+    return `${amount} to '${label}' (${options.address})`;
+  }
+  return `${amount} to ${options.address}`;
 }
 
 export { SATS_PER_COIN };

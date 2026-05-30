@@ -1,8 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Cpu, Users, Wallet } from "lucide-react";
+import { Coins, Cpu, Users, Wallet } from "lucide-react";
 import { ExplorerLink } from "@/components/ExplorerLink";
-import { Badge } from "@/components/ui/Badge";
 import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import {
@@ -25,6 +24,7 @@ import {
 import {
   networkCoinsStakingPercent,
   mergeStakingNetworkKpis,
+  walletStakeSharePercent,
 } from "@/lib/staking-stats";
 import {
   blocksBehindNetwork,
@@ -32,7 +32,8 @@ import {
   syncTargetHeight,
 } from "@/lib/bootstrap-policy";
 import { BLOCK_AGE_TICK_MS } from "@/lib/block-tip";
-import { cn, formatBlockAge, formatNumber, formatPercent } from "@/lib/utils";
+import { miningInfoRefetchMs } from "@/lib/mining-boot";
+import { cn, formatBlockAge, formatNumber } from "@/lib/utils";
 
 function StatusPill({
   children,
@@ -115,15 +116,26 @@ function VeriumSummaryCard() {
     queryFn: () => rpcGetWalletInfo(coin),
     refetchInterval: 10_000,
   });
-  const mining = useQuery({
-    queryKey: coinQueryKey(coin, "getmininginfo"),
-    queryFn: () => rpcGetMiningInfo(coin),
-    refetchInterval: 5_000,
-  });
   const minerState = useQuery({
     queryKey: coinQueryKey(coin, "get_miner_state"),
     queryFn: () => rpcGetMinerState(coin),
     refetchInterval: 5_000,
+  });
+  const minerActive = minerState.data?.active ?? false;
+  const minerStartedAt = minerState.data?.started_at;
+  const mining = useQuery({
+    queryKey: coinQueryKey(coin, "getmininginfo"),
+    queryFn: () => rpcGetMiningInfo(coin),
+    refetchInterval: (query) => {
+      const hashrate = query.state.data?.hashrate ?? 0;
+      return miningInfoRefetchMs(
+        minerActive,
+        hashrate,
+        minerStartedAt,
+        5_000,
+        500,
+      );
+    },
   });
   const explorer = useQuery({
     queryKey: coinQueryKey(coin, "explorer-stats"),
@@ -159,7 +171,6 @@ function VeriumSummaryCard() {
   const matchesExplorer = heightDelta != null && Math.abs(heightDelta) <= 1;
 
   const localHashrate = mining.data?.hashrate ?? 0;
-  const minerActive = minerState.data?.active ?? false;
   const networkStats = buildNetworkStats(explorer.data, mining.data);
   const share = networkSharePercent(localHashrate, networkStats?.networkHash);
   const networkHashKhm =
@@ -203,9 +214,7 @@ function VeriumSummaryCard() {
         <StatusPill tone="neutral">
           {blockchain.data?.chain === "test" ? "Testnet" : "Mainnet"}
         </StatusPill>
-        {explorerEnabled && matchesExplorer && (
-          <StatusPill tone="success">Matches explorer</StatusPill>
-        )}
+
         {explorerEnabled && heightDelta != null && !matchesExplorer && (
           <StatusPill tone="neutral">
             {heightDelta >= 0 ? "+" : ""}
@@ -251,7 +260,7 @@ function VeriumSummaryCard() {
             value={
               localHashrate > 0 ? `${formatNumber(localHashrate, 0)} H/m` : "—"
             }
-            sub={minerActive ? "Active" : "Idle"}
+            sub={minerActive ? "Active" : "Inactive"}
             subClassName={
               minerActive ? "font-semibold text-success" : undefined
             }
@@ -302,6 +311,7 @@ function VeriumSummaryCard() {
             blockTimeMin != null ? `${formatNumber(blockTimeMin, 1)} min` : "—"
           }
         />
+        <NetworkMetric label="Last block" value={blockAge} />
         <NetworkMetric
           label={`${profile.symbol} price`}
           value={
@@ -326,6 +336,7 @@ function VeriumSummaryCard() {
 function VericoinSummaryCard() {
   const coin = "vericoin" as const;
   const profile = getCoinProfile(coin);
+  const [ageTick, setAgeTick] = useState(0);
   const { data: status } = useDaemonStatus(coin);
   const connected = status?.connected === true;
   const explorerEnabled = useExplorerQueriesEnabled();
@@ -358,6 +369,15 @@ function VericoinSummaryCard() {
     retry: 0,
   });
 
+  useEffect(() => {
+    const id = window.setInterval(
+      () => setAgeTick((n) => n + 1),
+      BLOCK_AGE_TICK_MS,
+    );
+    return () => window.clearInterval(id);
+  }, []);
+
+  const stakingActive = stakingState.data?.active ?? false;
   const networkTip = explorer.data?.height;
   const syncCtx = {
     connected,
@@ -367,9 +387,34 @@ function VericoinSummaryCard() {
   const phase = chainSyncPhase(blockchain.data, syncCtx);
   const synced = phase === "synced";
   const localBlocks = blockchain.data?.blocks;
+  const syncTarget = syncTargetHeight(blockchain.data, networkTip);
+  const behind = blocksBehindNetwork(localBlocks, syncTarget);
+  const heightDelta =
+    localBlocks != null && networkTip != null
+      ? localBlocks - networkTip
+      : undefined;
+  const matchesExplorer = heightDelta != null && Math.abs(heightDelta) <= 1;
+
   const vrcNetwork = mergeStakingNetworkKpis(vrcMining.data, explorer.data);
   const networkStakePct = networkCoinsStakingPercent(vrcNetwork.netStakeWeight);
+  const stakeShare = walletStakeSharePercent(
+    wallet.data?.stake,
+    vrcNetwork.netStakeWeight,
+  );
   const connections = status?.connections ?? 0;
+  const connectionLabel =
+    connections === 1
+      ? "1 connection"
+      : `${formatNumber(connections, 0)} connections`;
+  const blockHash = blockchain.data?.bestblockhash;
+  const blockAge =
+    blockchain.data?.mediantime != null
+      ? formatBlockAge(blockchain.data.mediantime, ageTick)
+      : "—";
+  const mempool = vrcMining.data?.pooledtx ?? explorer.data?.pooled_tx;
+  const posDifficulty =
+    vrcNetwork.posDifficulty ?? blockchain.data?.difficulty;
+  const blockReward = vrcNetwork.blockReward ?? explorer.data?.block_reward;
 
   return (
     <div className="rounded-xl border border-border bg-bg-panel p-5 shadow-sm">
@@ -382,101 +427,140 @@ function VericoinSummaryCard() {
             ? "Fully synced"
             : phase === "offline"
               ? "Offline"
-              : "Syncing"}
+              : blockchain.data?.initialblockdownload
+                ? "Syncing"
+                : "Catching up"}
         </StatusPill>
         <StatusPill tone="neutral">
           {blockchain.data?.chain === "test" ? "Testnet" : "Mainnet"}
         </StatusPill>
-        {stakingState.data?.active && (
-          <Badge tone="success">Staking active</Badge>
+
+        {explorerEnabled && heightDelta != null && !matchesExplorer && (
+          <StatusPill tone="neutral">
+            {heightDelta >= 0 ? "+" : ""}
+            {formatNumber(heightDelta, 0)} vs explorer
+          </StatusPill>
         )}
       </div>
 
       <div className="mt-5 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">
-            Latest block
+            Latest Block
           </div>
-          <div className="mt-1 text-4xl font-bold tabular-nums tracking-tight">
+          <div className="mt-1 text-4xl font-bold tabular-nums tracking-tight text-fg">
             {connected && localBlocks != null ? formatNumber(localBlocks) : "—"}
           </div>
+          {!synced && syncTarget != null && syncTarget > (localBlocks ?? 0) && (
+            <div className="mt-1 text-xs text-fg-muted">
+              of ~{formatNumber(syncTarget)} network tip
+              {behind != null && behind > 0 && (
+                <> · ~{formatNumber(behind, 0)} blocks behind</>
+              )}
+            </div>
+          )}
+          {blockHash && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="rounded-md bg-bg-subtle p-2 text-xs text-fg-muted">
+                {blockHash.slice(0, 36)}…
+              </span>
+              <ExplorerLink
+                coin={coin}
+                target={{ kind: "block", hashOrHeight: blockHash }}
+                label="View block"
+              />
+            </div>
+          )}
         </div>
-        <div className="grid w-full grid-cols-2 gap-4 sm:grid-cols-4 lg:w-auto">
-          <div>
-            <div className="text-xs text-fg-subtle">Spendable</div>
-            <div className="text-lg font-semibold tabular-nums">
-              {wallet.data
-                ? formatCoinAmount(wallet.data.balance, coin, 4)
-                : "—"}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-fg-subtle">Stake weight</div>
-            <div className="text-lg font-semibold tabular-nums">
-              {wallet.data
+
+        <div className="grid w-full shrink-0 grid-cols-1 gap-3 sm:grid-cols-3 lg:w-auto lg:min-w-[420px]">
+          <StatBox
+            icon={<Coins className="h-3.5 w-3.5" />}
+            label="Staking"
+            value={
+              wallet.data
                 ? formatCoinAmount(wallet.data.stake ?? 0, coin, 4)
-                : "—"}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-fg-subtle">Interest rate</div>
-            <div className="text-lg font-semibold tabular-nums">
-              {vrcNetwork.interestRate != null
-                ? `${formatNumber(vrcNetwork.interestRate, 2)}%`
-                : "—"}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-fg-subtle">Peers</div>
-            <div className="text-lg font-semibold tabular-nums">
-              {formatNumber(connections, 0)}
-            </div>
-          </div>
+                : "—"
+            }
+            sub={stakingActive ? "Active" : "Inactive"}
+            subClassName={
+              stakingActive ? "font-semibold text-success" : undefined
+            }
+          />
+          <StatBox
+            icon={<Wallet className="h-3.5 w-3.5" />}
+            label="Available"
+            value={
+              wallet.data ? formatCoinAmount(wallet.data.balance, coin, 4) : "—"
+            }
+            sub={
+              wallet.data && wallet.data.unconfirmed_balance > 0
+                ? `${formatCoinAmount(wallet.data.unconfirmed_balance, coin, 4)} unconfirmed`
+                : undefined
+            }
+          />
+          <StatBox
+            icon={<Users className="h-3.5 w-3.5" />}
+            label="Peers"
+            value={formatNumber(connections, 0)}
+            sub={connectionLabel}
+          />
         </div>
       </div>
 
-      {explorerEnabled && explorer.data && (
-        <div className="mt-6 grid grid-cols-2 gap-4 border-t border-border pt-5 sm:grid-cols-4">
-          <NetworkMetric
-            label={`${profile.symbol} price`}
-            value={
-              explorer.data.price_usd != null
-                ? `$${formatNumber(explorer.data.price_usd, 4)}`
-                : "—"
-            }
-          />
-          <NetworkMetric
-            label="Network staked"
-            value={
-              networkStakePct != null
-                ? `${formatNumber(networkStakePct, 2)}%`
-                : "—"
-            }
-          />
-          <NetworkMetric
-            label="Supply"
-            value={
-              explorer.data.supply != null
-                ? formatNumber(explorer.data.supply, 0)
-                : "—"
-            }
-          />
-          <NetworkMetric
-            label="Block reward"
-            value={
-              explorer.data.block_reward != null
-                ? `${formatNumber(explorer.data.block_reward, 4)} ${profile.symbol}`
-                : "—"
-            }
-          />
-        </div>
-      )}
-
-      {!synced && blockchain.data && (
-        <div className="mt-3 text-xs text-fg-muted">
-          {formatPercent(blockchain.data.verificationprogress, 0)} verified
-        </div>
-      )}
+      <div className="mt-6 grid grid-cols-2 gap-4 border-t border-border pt-5 sm:grid-cols-3 lg:grid-cols-6">
+        <NetworkMetric
+          label="PoS difficulty"
+          value={
+            posDifficulty != null
+              ? posDifficulty >= 0.0001
+                ? formatNumber(posDifficulty, 4)
+                : formatNumber(posDifficulty, 6)
+              : "—"
+          }
+        />
+        <NetworkMetric
+          label="Network staked"
+          value={
+            networkStakePct != null
+              ? `${formatNumber(networkStakePct, 2)}%`
+              : "—"
+          }
+        />
+        <NetworkMetric
+          label="Interest rate"
+          value={
+            vrcNetwork.interestRate != null
+              ? `${formatNumber(vrcNetwork.interestRate, 2)}%`
+              : "—"
+          }
+        />
+        <NetworkMetric label="Last block" value={blockAge} />
+        <NetworkMetric
+          label={`${profile.symbol} price`}
+          value={
+            explorer.data?.price_usd != null
+              ? `$${formatNumber(explorer.data.price_usd, 4)}`
+              : "—"
+          }
+        />
+        <NetworkMetric
+          label="Mempool"
+          value={mempool != null ? formatNumber(mempool, 0) : "—"}
+        />
+        <NetworkMetric
+          label="Stake share"
+          value={stakeShare != null ? `${formatNumber(stakeShare, 2)}%` : "—"}
+        />
+        <NetworkMetric
+          label="Block reward"
+          value={
+            blockReward != null
+              ? `${formatNumber(blockReward, 4)} ${profile.symbol}`
+              : "—"
+          }
+        />
+      </div>
     </div>
   );
 }

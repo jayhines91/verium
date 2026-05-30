@@ -28,6 +28,8 @@ export interface UserPreferences {
   auto_mine_threads?: number;
   mining_power_watts?: number;
   mining_cost_per_kwh?: number;
+  /** Optional VRM/USD price for solo revenue estimates; blank uses live explorer price. */
+  mining_vrm_price_usd?: number;
   theme_mode?: ThemeMode;
   /** @deprecated use wallet_unlock_duration_by_coin */
   wallet_unlock_duration_seconds?: number;
