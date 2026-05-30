@@ -157,23 +157,27 @@
   }
 }
 
-.you-mined-row-fresh {
-  animation: you-mined-glow 2.8s ease-in-out infinite;
+/* Shimmer on row background — tr::after escapes the table on macOS WebKit. */
+.you-mined-row.you-mined-row-fresh {
+  background-image: linear-gradient(
+      105deg,
+      transparent 40%,
+      color-mix(in srgb, var(--accent) 10%, transparent) 50%,
+      transparent 60%
+    ),
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--accent) 14%, transparent),
+      color-mix(in srgb, var(--bg-panel) 40%, transparent),
+      transparent
+    );
+  background-size: 200% 100%, 100% 100%;
+  animation: you-mined-shimmer 3.5s ease-in-out infinite;
 }
 
-.you-mined-row-fresh::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(
-    105deg,
-    transparent 40%,
-    color-mix(in srgb, var(--accent) 10%, transparent) 50%,
-    transparent 60%
-  );
-  background-size: 200% 100%;
-  animation: you-mined-shimmer 3.5s ease-in-out infinite;
+.you-mined-row-fresh > td {
+  position: relative;
+  animation: you-mined-glow 2.8s ease-in-out infinite;
 }
 
 .you-mined-badge-fresh {

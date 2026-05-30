@@ -256,7 +256,7 @@ export function ExplorerRecentBlocks({
         ) : (
           <div
             className={cn(
-              "overflow-auto",
+              "isolate overflow-auto",
 
               isDashboard ? "flex-1" : "max-h-[360px]",
             )}
@@ -327,7 +327,7 @@ export function ExplorerRecentBlocks({
                           youMinedRowClassName({ isYours, isFresh, isTip }),
                         )}
                       >
-                        <td className="relative px-4 py-2 tabular-nums">
+                        <td className="px-4 py-2 tabular-nums">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span
                               className={cn(

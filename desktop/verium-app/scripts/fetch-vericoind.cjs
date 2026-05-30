@@ -92,11 +92,12 @@ function archiveUrlsFor(triple, version) {
     ];
   }
   if (isMacTriple(triple)) {
-    // Separate native macOS builds per architecture (Apple Silicon vs Intel).
     if (triple.includes("aarch64")) {
       return [
         `${vBase}vericoin-${v}-macos-arm64.tar.gz`,
         `${vBase}vericoin-${v}-aarch64-apple-darwin.tar.gz`,
+        `${vBase}vericoin-${v}-macos-intel.tar.gz`,
+        `${vBase}vericoin-${v}-x86_64-apple-darwin.tar.gz`,
       ];
     }
     return [

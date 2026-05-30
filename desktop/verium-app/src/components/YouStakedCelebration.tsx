@@ -16,8 +16,9 @@ export function youStakedRowClassName(options: {
   const { isYours, isFresh } = options;
   if (!isYours) return "odd:bg-bg-subtle/30";
   return cn(
-    "relative border-l-[3px] border-l-accent",
-    "bg-gradient-to-r from-accent/14 via-bg-panel/40 to-transparent",
+    "you-mined-row border-l-[3px] border-l-accent",
+    !isFresh &&
+      "bg-gradient-to-r from-accent/14 via-bg-panel/40 to-transparent",
     isFresh && "you-mined-row-fresh",
   );
 }

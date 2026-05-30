@@ -129,12 +129,16 @@ function archiveUrlsFor(triple, version) {
     ];
   }
   if (isMacTriple(triple)) {
-    // macOS ships separate native builds per architecture: Apple Silicon
-    // (aarch64) and Intel (x86_64). Try both common CDN naming schemes.
+    // macOS ships separate native builds per architecture when available.
+    // CDN often has Intel-only packages; Apple Silicon builds fall back to
+    // the Intel binary (runs under Rosetta on arm64 Macs).
     if (triple.includes("aarch64")) {
       return [
         `${vBase}verium-${v}-macos-arm64.tar.gz`,
         `${vBase}verium-${v}-aarch64-apple-darwin.tar.gz`,
+        `${vBase}verium-${v}-macos-intel.tar.gz`,
+        `${vBase}verium-${v}-x86_64-apple-darwin.tar.gz`,
+        `${legacy}verium-1.3.5-x86_64-apple-darwin.zip`,
       ];
     }
     return [
@@ -354,6 +358,19 @@ function isRealBinary(filePath) {
   }
 }
 
+/** True when an aarch64 sidecar path contains an x86_64 Mach-O binary (stale Intel fetch). */
+function sidecarArchMismatch(dest, triple) {
+  if (!triple.includes("aarch64") || !triple.includes("apple-darwin")) return false;
+  if (!fs.existsSync(dest)) return false;
+  try {
+    const r = spawnSync("file", ["-b", dest], { encoding: "utf8" });
+    const desc = (r.stdout || "").toLowerCase();
+    return desc.includes("x86_64") && !desc.includes("arm64");
+  } catch {
+    return false;
+  }
+}
+
 /** Look for a locally-built veriumd inside the monorepo. The DACE-capable
  *  binary lives under vericoin/src/ (the unified tree builds both veriumd
  *  and vericoind via CLIENT_IS_VERIUM). */
@@ -387,8 +404,14 @@ async function main() {
       log(`Removing stub sidecar at ${dest} (too small to be a real binary).`);
       fs.unlinkSync(dest);
     } else if (process.env.VERIUMD_SKIP_IF_PRESENT === "1" || args["skip-if-present"]) {
-      log(`Sidecar already present (${dest}); skipping.`);
-      return;
+      if (sidecarArchMismatch(dest, triple)) {
+        log(
+          `Sidecar at ${dest} is Intel (x86_64) but target is ${triple}; re-fetching.`,
+        );
+      } else {
+        log(`Sidecar already present (${dest}); skipping.`);
+        return;
+      }
     } else {
       log(`Overwriting existing sidecar at ${dest} (set VERIUMD_FORCE=0 to skip).`);
     }
@@ -448,6 +471,12 @@ async function main() {
       }
       assertLegacyFlatVeriumd(dest);
       log(`Sidecar installed: ${dest}`);
+      if (triple.includes("aarch64") && sidecarArchMismatch(dest, triple)) {
+        log(
+          "NOTE: Installed Intel veriumd for Apple Silicon (CDN has no arm64 build). " +
+            "It runs via Rosetta. For native arm64, set VERIUMD_LOCAL to a local build.",
+        );
+      }
       warnIfNotDace("veriumd", dest);
       return;
     } catch (e) {
