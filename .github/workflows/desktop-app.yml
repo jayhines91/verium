@@ -2,7 +2,14 @@ name: Build Vericonomy Wallet (Tauri)
 
 on:
   push:
-    branches: [main, master, testnet, tippy-gui-changes-modern-template]
+    branches:
+      [
+        main,
+        master,
+        testnet,
+        tippy-gui-changes-modern-template,
+        tippy-binary-chain-implementation,
+      ]
     tags:
       - "desktop-v*"
     paths:
