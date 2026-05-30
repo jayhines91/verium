@@ -124,7 +124,7 @@ fn default_notify_on_vrc_received() -> bool {
 }
 
 fn default_tx_template() -> String {
-    "https://explorer-vrm.vericonomy.com/#tx/%s".to_string()
+    "https://staging-explorer.vericonomy.com/vrm/tx/%s".to_string()
 }
 
 impl Default for UserPreferences {

@@ -24,9 +24,9 @@ export function DaemonConnectingBanner({
       <p className="mt-1 text-xs text-fg-muted">
         {reindexing
           ? detail ||
-            `${profile.binaryName} is rebuilding the block index after a database error. This can take several minutes.`
+            `The wallet is rebuilding the block index after a database error. This can take several minutes.`
           : detail ||
-            `Connecting to ${profile.binaryName} on your machine. This can take up to a minute while the chain index loads.`}
+            `Connecting to blockchain... This can take up to a minute while the chain index loads.`}
       </p>
     </div>
   );

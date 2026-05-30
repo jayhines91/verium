@@ -11,6 +11,7 @@ import { ExplorerLink } from "@/components/ExplorerLink";
 import { useActiveCoin } from "@/lib/coin/context";
 import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
+import { resolveBlockTimeMinutes } from "@/lib/mining-revenue";
 import { formatNumber } from "@/lib/utils";
 
 function formatUsd(value?: number): string {
@@ -45,6 +46,8 @@ export function ExplorerMarketCard({ coin: coinProp }: { coin?: CoinId }) {
 
   if (enabled.data !== true) return null;
 
+  const blockTimeMin = resolveBlockTimeMinutes(stats.data, null);
+
   return (
     <Card>
       <CardHeader className="flex-row items-start justify-between">
@@ -60,7 +63,7 @@ export function ExplorerMarketCard({ coin: coinProp }: { coin?: CoinId }) {
           )}
           <ExplorerLink
             coin={coin}
-            target={{ kind: "raw", url: profile.explorerBase }}
+            target={{ kind: "home" }}
             label="Explorer"
           />
         </div>
@@ -103,8 +106,8 @@ export function ExplorerMarketCard({ coin: coinProp }: { coin?: CoinId }) {
             <Stat
               label="Block time"
               value={
-                stats.data?.block_time_min !== undefined
-                  ? `${formatNumber(stats.data.block_time_min, 0)} min`
+                blockTimeMin != null
+                  ? `${formatNumber(blockTimeMin, 1)} min`
                   : "—"
               }
             />

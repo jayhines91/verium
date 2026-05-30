@@ -11,7 +11,8 @@ export interface CoinProfile {
   defaultRpcPort: number;
   earnMode: "mining" | "staking";
   confirmationsMatured: number;
-  explorerBase: string;
+  /** Production explorer host used for REST/API fetches (see Rust `explorer_api_base`). */
+  explorerApiBase: string;
   bootstrapCdn: string;
   accentClass: string;
 }
@@ -27,7 +28,7 @@ export const COIN_PROFILES: Record<CoinId, CoinProfile> = {
     defaultRpcPort: 33987,
     earnMode: "mining",
     confirmationsMatured: 100,
-    explorerBase: "https://explorer-vrm.vericonomy.com",
+    explorerApiBase: "https://explorer-vrm.vericonomy.com",
     bootstrapCdn: "https://files.vericonomy.com/vrm/bootstrap",
     accentClass: "bg-accent/15 text-accent border-accent/30",
   },
@@ -42,7 +43,7 @@ export const COIN_PROFILES: Record<CoinId, CoinProfile> = {
     defaultRpcPort: 58683,
     earnMode: "staking",
     confirmationsMatured: 500,
-    explorerBase: "https://explorer-vrc.vericonomy.com",
+    explorerApiBase: "https://explorer-vrc.vericonomy.com",
     bootstrapCdn: "https://files.vericonomy.com/vrc/bootstrap",
     accentClass: "bg-bg-panel text-fg-muted border-border-strong",
   },

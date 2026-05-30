@@ -354,6 +354,7 @@ function discoverMonorepoBinary(isWindows) {
   const candidates = [
     path.join(ROOT, "..", "..", "..", "verium-legacy", "verium", "src", name),
     path.join(ROOT, "..", "..", "..", "verium-legacy", "verium", "src", "qt", name),
+    path.join(ROOT, "..", "..", "..", "verium-legacy", "verium", "build_msvc", "x64", "Release", name),
     path.join(ROOT, "..", "..", "..", "verium", "src", name),
     path.join(ROOT, "..", "..", "..", "vericoin", "src", name),
     path.join(ROOT, "..", "..", "..", "vericoin", "src", "qt", name),

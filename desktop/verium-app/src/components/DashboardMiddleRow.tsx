@@ -1,12 +1,7 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, Wallet } from "lucide-react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/Card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { MiningPickaxeAnimation } from "@/components/MiningPickaxeAnimation";
 import { MinerBootBadge } from "@/components/MinerBootIndicator";
@@ -121,9 +116,7 @@ export function DashboardMiddleRow({ coin }: { coin: CoinId }) {
           <MiniStat
             label="Balance"
             value={
-              wallet.data
-                ? formatCoinAmount(wallet.data.balance, coin, 4)
-                : "—"
+              wallet.data ? formatCoinAmount(wallet.data.balance, coin, 4) : "—"
             }
           />
           <MiniStat
@@ -144,9 +137,7 @@ export function DashboardMiddleRow({ coin }: { coin: CoinId }) {
           />
           <MiniStat
             label="Transactions"
-            value={
-              wallet.data ? formatNumber(wallet.data.txcount, 0) : "—"
-            }
+            value={wallet.data ? formatNumber(wallet.data.txcount, 0) : "—"}
           />
         </CardContent>
       </Card>
@@ -158,7 +149,11 @@ export function DashboardMiddleRow({ coin }: { coin: CoinId }) {
               <TrendingUp className="h-4 w-4 text-accent" />
               Market
             </CardTitle>
-            <ExplorerLink coin={coin} target={{ kind: "home" }} label="Explorer" />
+            <ExplorerLink
+              coin={coin}
+              target={{ kind: "home" }}
+              label="Explorer"
+            />
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-3 pb-5 pt-0 text-sm">
             <MiniStat label="VRM" value={formatUsd(stats.data?.price_usd)} />
@@ -187,52 +182,48 @@ export function DashboardMiddleRow({ coin }: { coin: CoinId }) {
       )}
 
       {coin === "verium" && (
-        <Card className="flex flex-col">
-          <CardHeader className="flex-row items-center justify-between pb-2">
-            <CardTitle className="flex items-center gap-2 text-base normal-case tracking-normal text-fg">
-              <MiningPickaxeAnimation
-                active={minerActive && !minerBooting}
-                booting={minerBooting}
+        <Link
+          to="/mining"
+          aria-label="Open mining page"
+          className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+        >
+          <Card className="flex h-full flex-col transition-colors group-hover:border-accent/40 group-hover:bg-bg-subtle/20">
+            <CardHeader className="flex-row items-center justify-between pb-2">
+              <CardTitle className="flex items-center gap-2 text-base normal-case tracking-normal text-fg">
+                <MiningPickaxeAnimation
+                  active={minerActive && !minerBooting}
+                  booting={minerBooting}
+                />
+                Your mining
+              </CardTitle>
+              <MinerBootBadge booting={minerBooting} active={minerActive} />
+            </CardHeader>
+            <CardContent className="grid flex-1 grid-cols-2 gap-3 pb-5 pt-0 text-sm">
+              <MiniStat
+                label="Blocks found"
+                value={formatNumber(blocksFound, 0)}
               />
-              Your mining
-            </CardTitle>
-            <MinerBootBadge booting={minerBooting} active={minerActive} />
-          </CardHeader>
-          <CardContent className="grid flex-1 grid-cols-2 gap-3 pb-3 pt-0 text-sm">
-            <MiniStat
-              label="Blocks found"
-              value={formatNumber(blocksFound, 0)}
-            />
-            <MiniStat
-              label="Hashrate"
-              value={
-                minerBooting
-                  ? "Starting…"
-                  : localHashrate > 0
-                    ? `${formatNumber(localHashrate, 0)} H/m`
-                    : "—"
-              }
-            />
-            <MiniStat
-              label="Network share"
-              value={share != null ? `${formatNumber(share, 2)}%` : "—"}
-            />
-            <MiniStat
-              label="Est. daily"
-              value={
-                daily ? `${formatNumber(daily.vrmPerDay, 3)} VRM` : "—"
-              }
-            />
-          </CardContent>
-          <div className="border-t border-border px-5 py-2.5">
-            <Link
-              to="/mining"
-              className="text-xs font-medium text-accent hover:underline"
-            >
-              Open mining page →
-            </Link>
-          </div>
-        </Card>
+              <MiniStat
+                label="Hashrate"
+                value={
+                  minerBooting
+                    ? "Starting…"
+                    : localHashrate > 0
+                      ? `${formatNumber(localHashrate, 0)} H/m`
+                      : "—"
+                }
+              />
+              <MiniStat
+                label="Network share"
+                value={share != null ? `${formatNumber(share, 2)}%` : "—"}
+              />
+              <MiniStat
+                label="Est. daily"
+                value={daily ? `${formatNumber(daily.vrmPerDay, 3)} VRM` : "—"}
+              />
+            </CardContent>
+          </Card>
+        </Link>
       )}
     </div>
   );

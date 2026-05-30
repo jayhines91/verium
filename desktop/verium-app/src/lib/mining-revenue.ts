@@ -18,6 +18,29 @@ export interface NetworkStats {
   source: NetworkStatsSource;
 }
 
+/** Observed average block time (minutes), preferring last-hour block rate over RPC target spacing. */
+export function resolveBlockTimeMinutes(
+  explorer: ExplorerStats | undefined | null,
+  mining: MiningInfo | undefined | null,
+): number | null {
+  const blocksPerHour =
+    explorer?.blocks_per_hour ?? mining?.blocksperhour ?? undefined;
+  if (
+    blocksPerHour != null &&
+    Number.isFinite(blocksPerHour) &&
+    blocksPerHour > 0
+  ) {
+    return 60 / blocksPerHour;
+  }
+
+  const target = explorer?.block_time_min ?? mining?.blocktime;
+  if (target != null && Number.isFinite(target) && target > 0) {
+    return target;
+  }
+
+  return null;
+}
+
 export function buildNetworkStats(
   explorer: ExplorerStats | undefined | null,
   mining: MiningInfo | undefined | null,
@@ -28,8 +51,7 @@ export function buildNetworkStats(
     explorer?.block_reward ?? mining?.blockreward ?? undefined;
   const blocksPerHour =
     explorer?.blocks_per_hour ?? mining?.blocksperhour ?? undefined;
-  const blockTimeMin =
-    explorer?.block_time_min ?? mining?.blocktime ?? undefined;
+  const blockTimeMin = resolveBlockTimeMinutes(explorer, mining) ?? undefined;
 
   if (
     networkHash === undefined ||

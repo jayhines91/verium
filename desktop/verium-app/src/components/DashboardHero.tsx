@@ -20,8 +20,12 @@ import {
   buildNetworkStats,
   networkHashToKhm,
   networkSharePercent,
+  resolveBlockTimeMinutes,
 } from "@/lib/mining-revenue";
-import { networkCoinsStakingPercent, mergeStakingNetworkKpis } from "@/lib/staking-stats";
+import {
+  networkCoinsStakingPercent,
+  mergeStakingNetworkKpis,
+} from "@/lib/staking-stats";
 import {
   blocksBehindNetwork,
   chainSyncPhase,
@@ -130,7 +134,10 @@ function VeriumSummaryCard() {
   });
 
   useEffect(() => {
-    const id = window.setInterval(() => setAgeTick((n) => n + 1), BLOCK_AGE_TICK_MS);
+    const id = window.setInterval(
+      () => setAgeTick((n) => n + 1),
+      BLOCK_AGE_TICK_MS,
+    );
     return () => window.clearInterval(id);
   }, []);
 
@@ -146,9 +153,10 @@ function VeriumSummaryCard() {
   const syncTarget = syncTargetHeight(blockchain.data, networkTip);
   const behind = blocksBehindNetwork(localBlocks, syncTarget);
   const heightDelta =
-    localBlocks != null && networkTip != null ? localBlocks - networkTip : undefined;
-  const matchesExplorer =
-    heightDelta != null && Math.abs(heightDelta) <= 1;
+    localBlocks != null && networkTip != null
+      ? localBlocks - networkTip
+      : undefined;
+  const matchesExplorer = heightDelta != null && Math.abs(heightDelta) <= 1;
 
   const localHashrate = mining.data?.hashrate ?? 0;
   const minerActive = minerState.data?.active ?? false;
@@ -161,9 +169,10 @@ function VeriumSummaryCard() {
         ? networkHashToKhm(mining.data.networkhashps)
         : null;
   const difficulty =
-    explorer.data?.difficulty ?? blockchain.data?.difficulty ?? mining.data?.difficulty;
-  const blockTimeMin =
-    explorer.data?.block_time_min ?? mining.data?.blocktime ?? null;
+    explorer.data?.difficulty ??
+    blockchain.data?.difficulty ??
+    mining.data?.difficulty;
+  const blockTimeMin = resolveBlockTimeMinutes(explorer.data, mining.data);
   const mempool = mining.data?.pooledtx ?? explorer.data?.pooled_tx;
   const blockHash = blockchain.data?.bestblockhash;
   const blockAge =
@@ -172,7 +181,9 @@ function VeriumSummaryCard() {
       : "—";
   const connections = status?.connections ?? 0;
   const connectionLabel =
-    connections === 1 ? "1 connection" : `${formatNumber(connections, 0)} connections`;
+    connections === 1
+      ? "1 connection"
+      : `${formatNumber(connections, 0)} connections`;
 
   return (
     <div className="rounded-xl border border-border bg-bg-panel p-5 shadow-sm">
@@ -206,7 +217,7 @@ function VeriumSummaryCard() {
       <div className="mt-5 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">
-            Latest block · {blockAge}
+            Latest Block
           </div>
           <div className="mt-1 text-4xl font-bold tabular-nums tracking-tight text-fg">
             {connected && localBlocks != null ? formatNumber(localBlocks) : "—"}
@@ -221,8 +232,8 @@ function VeriumSummaryCard() {
           )}
           {blockHash && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="rounded-md bg-bg-subtle px-2 py-1 text-xs text-fg-muted">
-                {blockHash.slice(0, 20)}…
+              <span className="rounded-md bg-bg-subtle p-2 text-xs text-fg-muted">
+                {blockHash.slice(0, 36)}…
               </span>
               <ExplorerLink
                 coin={coin}
@@ -238,20 +249,18 @@ function VeriumSummaryCard() {
             icon={<Cpu className="h-3.5 w-3.5" />}
             label="Mining"
             value={
-              localHashrate > 0
-                ? `${formatNumber(localHashrate, 0)} H/m`
-                : "—"
+              localHashrate > 0 ? `${formatNumber(localHashrate, 0)} H/m` : "—"
             }
             sub={minerActive ? "Active" : "Idle"}
-            subClassName={minerActive ? "font-semibold text-success" : undefined}
+            subClassName={
+              minerActive ? "font-semibold text-success" : undefined
+            }
           />
           <StatBox
             icon={<Wallet className="h-3.5 w-3.5" />}
             label="Available"
             value={
-              wallet.data
-                ? formatCoinAmount(wallet.data.balance, coin, 4)
-                : "—"
+              wallet.data ? formatCoinAmount(wallet.data.balance, coin, 4) : "—"
             }
             sub={
               wallet.data && wallet.data.immature_balance > 0
@@ -283,7 +292,7 @@ function VeriumSummaryCard() {
             difficulty != null
               ? difficulty >= 0.0001
                 ? formatNumber(difficulty, 4)
-                : difficulty.toExponential(2)
+                : formatNumber(difficulty, 6)
               : "—"
           }
         />
@@ -369,7 +378,11 @@ function VericoinSummaryCard() {
           {synced && (
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-success" />
           )}
-          {synced ? "Fully synced" : phase === "offline" ? "Offline" : "Syncing"}
+          {synced
+            ? "Fully synced"
+            : phase === "offline"
+              ? "Offline"
+              : "Syncing"}
         </StatusPill>
         <StatusPill tone="neutral">
           {blockchain.data?.chain === "test" ? "Testnet" : "Mainnet"}

@@ -55,7 +55,8 @@ export function NetworkPulse({
             <Badge tone="accent">via {stats.data.source}</Badge>
           )}
           <ExplorerLink
-            target={{ kind: "raw", url: profile.explorerBase }}
+            coin={coin}
+            target={{ kind: "home" }}
             label="Open explorer"
           />
         </div>
