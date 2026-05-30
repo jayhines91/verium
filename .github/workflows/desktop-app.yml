@@ -40,7 +40,7 @@ jobs:
   # (native Linux/macOS via depends; Windows cross-compiled with MinGW).
   vericonomy-sidecar:
     # Bundled daemon (veriumd) built from source — "Vericonomy" branding in P2P subversion.
-    name: Vericonomy sidecar (${{ matrix.label }})
+    name: Vericonomy Wallet (Alpha) (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
@@ -70,7 +70,7 @@ jobs:
             kind: macos
             configure_extra: "--enable-arm-crypto"
           - target: x86_64-pc-windows-msvc
-            label: Windows x64 (sidecar)
+            label: Windows x64
             os: ubuntu-22.04
             host: x86_64-w64-mingw32
             kind: mingw
@@ -111,8 +111,11 @@ jobs:
         if: matrix.kind == 'macos'
         run: |
           brew update
-          brew install automake libtool pkg-config python@3.12
-          python3 -m pip install --upgrade pip setuptools wheel
+          brew install automake libtool pkg-config
+          # depends/native_biplist needs setuptools. Homebrew Python is PEP 668
+          # ("externally managed"); use --user on CI runners (ephemeral VMs).
+          python3 -m pip install --user --upgrade pip setuptools wheel
+          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
 
       - name: Cache depends
         uses: actions/cache@v4
