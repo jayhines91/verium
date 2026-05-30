@@ -124,8 +124,8 @@ jobs:
           path: |
             depends/built
             depends/sources
-          key: depends-${{ matrix.host }}-noqt-v3-${{ hashFiles('depends/Makefile', 'depends/packages/*.mk') }}
-          restore-keys: depends-${{ matrix.host }}-noqt-v3-
+          key: depends-${{ matrix.host }}-noqt-v4-${{ hashFiles('depends/Makefile', 'depends/packages/*.mk', 'depends/hosts/*.mk', 'depends/builders/*.mk') }}
+          restore-keys: depends-${{ matrix.host }}-noqt-v4-
 
       - name: Prepare daemon-only depends (strip Qt from cache)
         shell: bash
