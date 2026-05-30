@@ -8,7 +8,7 @@ use crate::audit_log::{self, AuditEntry};
 use crate::auto_lock::{self, AutoLockConfig};
 use crate::backup_scheduler::{self, BackupHealth, BackupSchedulerConfig, ScheduledBackupResult};
 use crate::commands;
-use crate::coin_profile::{parse_coin_id, CoinId};
+use crate::coin_profile::parse_coin_id;
 use crate::error::{AppError, AppResult};
 use crate::hardware_wallet::{self, HardwareWalletConfig, HardwareVendor, PsbtSendResult};
 use crate::installer_verify::{self, VerificationStatus};
@@ -47,19 +47,57 @@ pub fn recovery_verify_words(
     Ok(recovery::verify_words_at_indices(&phrase, &indices, &answers))
 }
 
+const RECOVERY_UNLOCK_SECONDS: i64 = 600;
+
+fn wallet_info_is_locked(info: &serde_json::Value) -> bool {
+    let Some(until) = info.get("unlocked_until").and_then(|v| v.as_i64()) else {
+        return false;
+    };
+    if until == 0 {
+        return true;
+    }
+    let now = chrono::Utc::now().timestamp();
+    until <= now
+}
+
 #[tauri::command]
 pub async fn recovery_apply_hd_seed(
     state: State<'_, AppState>,
     coin: String,
     phrase: String,
     bip39_passphrase: Option<String>,
+    unlock_passphrase: Option<String>,
 ) -> AppResult<String> {
     let coin = parse_coin_id(&coin)?;
-    let wif = recovery::master_xpriv_to_wif(&phrase, bip39_passphrase.as_deref())?;
+    let wif = recovery::master_xpriv_to_wif(coin, &phrase, bip39_passphrase.as_deref())?;
     let client = state.rpc_client(coin).await?;
+    let info: serde_json::Value = client.call("getwalletinfo", json!([])).await?;
+
+    if wallet_info_is_locked(&info) {
+        let pass = unlock_passphrase.filter(|p| !p.is_empty()).ok_or_else(|| {
+            AppError::other(
+                "Wallet is locked. Enter your wallet passphrase to apply the recovery phrase.",
+            )
+        })?;
+        client
+            .call_no_result(
+                "walletpassphrase",
+                json!([pass, RECOVERY_UNLOCK_SECONDS]),
+            )
+            .await?;
+    }
+
     client
         .call_no_result("sethdseed", json!([true, wif]))
         .await?;
+
+    let after: serde_json::Value = client.call("getwalletinfo", json!([])).await?;
+    if after.get("hdseedid").is_none() {
+        return Err(AppError::other(
+            "Recovery seed was not applied (wallet is still non-HD). Back up wallet.dat, then try again or restore on a new wallet file.",
+        ));
+    }
+
     audit_log::append("set_hd_seed", "Applied BIP39 HD seed via sethdseed", Some(coin.as_str()))?;
     Ok("HD seed applied. Back up wallet.dat immediately.".into())
 }

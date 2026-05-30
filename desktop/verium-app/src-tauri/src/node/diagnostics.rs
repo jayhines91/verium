@@ -7,6 +7,8 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use chrono::{DateTime, Utc};
 
+use crate::coin_profile::CoinId;
+use crate::config::{debug_log_candidate_dirs, DaemonConfig};
 use crate::error::AppResult;
 
 pub async fn tail_debug_log(datadir: &Path, max_lines: usize) -> AppResult<Vec<String>> {
@@ -28,6 +30,22 @@ pub async fn tail_debug_log(datadir: &Path, max_lines: usize) -> AppResult<Vec<S
     }
     let take = lines.len().saturating_sub(max_lines);
     Ok(lines[take..].iter().map(|s| s.to_string()).collect())
+}
+
+/// Tail `debug.log` from every plausible datadir for this coin; return the richest result.
+pub async fn tail_coin_debug_log(
+    coin: CoinId,
+    cfg: &DaemonConfig,
+    max_lines: usize,
+) -> AppResult<Vec<String>> {
+    let mut best: Vec<String> = Vec::new();
+    for dir in debug_log_candidate_dirs(coin, cfg) {
+        let lines = tail_debug_log(&dir, max_lines).await?;
+        if lines.len() > best.len() {
+            best = lines;
+        }
+    }
+    Ok(best)
 }
 
 const CORRUPTION_MARKERS: &[&str] = &[

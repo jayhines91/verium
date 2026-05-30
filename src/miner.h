@@ -13,6 +13,7 @@
 
 #include <memory>
 #include <stdint.h>
+#include <string>
 
 #include <boost/multi_index_container.hpp>
 #include <boost/multi_index/ordered_index.hpp>
@@ -203,7 +204,8 @@ int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParam
 /** Base sha256 mining transform */
 void SHA256Transform(void* pstate, void* pinput, const void* pinit);
 
-void GenerateVerium(bool fGenerate, CWallet* pwallet, int nThreads);
+/** When payout_address is non-empty, coinbase pays that address instead of a new reserved wallet address. */
+void GenerateVerium(bool fGenerate, CWallet* pwallet, int nThreads, const std::string& payout_address = "");
 
 int GetNumBlocksOfPeers();
 

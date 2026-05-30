@@ -17,6 +17,7 @@
 #include <crypto/scrypt.h>
 #include <crypto/scrypt_dispatch.h>
 #include <crypto/scrypt_alloc.h>
+#include <key_io.h>
 #include <logging.h>
 #include <net.h>
 #include <policy/feerate.h>
@@ -726,7 +727,7 @@ void Miner(CWallet *pwallet, int thread_index, int thread_count, const CScript& 
     }
 }
 
-void GenerateVerium(bool fGenerate, CWallet* pwallet, int nThreads)
+void GenerateVerium(bool fGenerate, CWallet* pwallet, int nThreads, const std::string& payout_address)
 {
     fGenerateVerium = fGenerate;
     g_miner_stop.store(true);
@@ -743,7 +744,14 @@ void GenerateVerium(bool fGenerate, CWallet* pwallet, int nThreads)
         return;
 
     CScript scriptChange;
-    {
+    if (!payout_address.empty()) {
+        CTxDestination dest = DecodeDestination(payout_address);
+        if (!IsValidDestination(dest)) {
+            LogPrintf("GenerateVerium: invalid payout address\n");
+            return;
+        }
+        scriptChange = GetScriptForDestination(dest);
+    } else {
         LOCK(cs_main);
         ReserveDestination reservedest(pwallet);
         CTxDestination dest;

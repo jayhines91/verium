@@ -192,6 +192,20 @@ On **Windows**, prefer `npm run tauri:dev` over `tauri dev` directly so the MSVC
 
 ### Sidecar options
 
+**Production releases (GitHub Actions):** Tagged `desktop-v*` builds compile `veriumd` from this repo and bundle it automatically — users never run `fetch:veriumd` or build tools. See [`.github/workflows/desktop-app.yml`](../../.github/workflows/desktop-app.yml).
+
+**Local development:** `npm run fetch:veriumd` downloads the published CDN binary (1.3.5.2 today) unless you already built from source. After building `src/veriumd`, the fetch script prefers that binary automatically (set `VERIUMD_CDN_ONLY=1` to force CDN).
+
+**macOS Apple Silicon — build and bundle from source:**
+
+```bash
+# From desktop/verium-app (installs Homebrew deps, configures, makes src/veriumd, copies sidecar)
+./scripts/build-veriumd-macos.sh
+npx tauri build --target aarch64-apple-darwin
+```
+
+Or manually:
+
 ```bash
 # Use your own built veriumd instead of CDN download
 VERIUMD_LOCAL=/path/to/veriumd npm run fetch:veriumd

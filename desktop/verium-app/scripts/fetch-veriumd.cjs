@@ -438,19 +438,28 @@ async function main() {
     return;
   }
 
-  // Path 1b: DACE_DEV — prefer the monorepo build before the CDN. The
-  // production CDN veriumd does not include DACE / binarytest support.
-  if (process.env.DACE_DEV === "1" || args["dace-dev"]) {
+  // Path 1b: monorepo build (src/veriumd after `make`) — preferred over CDN for
+  // local dev so wallet features match the tree you are editing. Set
+  // VERIUMD_CDN_ONLY=1 to force CDN download. CI release builds use artifacts
+  // instead (see .github/workflows/desktop-app.yml).
+  const preferMonorepo =
+    process.env.VERIUMD_CDN_ONLY !== "1" &&
+    (process.env.DACE_DEV === "1" ||
+      args["dace-dev"] ||
+      process.env.VERIUMD_USE_MONOREPO !== "0");
+  if (preferMonorepo) {
     const monorepo = discoverMonorepoBinary(isWindowsTriple(triple));
     if (monorepo) {
-      log(`DACE_DEV: using monorepo build at ${monorepo}`);
+      log(`Using monorepo veriumd at ${monorepo}`);
       copyLocalBinary(monorepo, dest);
       return;
     }
-    log(
-      "DACE_DEV=1 set but no monorepo veriumd found. Build with: " +
-        "cd vericoin && ./autogen.sh && ./configure --enable-verium --without-gui && make",
-    );
+    if (process.env.DACE_DEV === "1" || args["dace-dev"]) {
+      log(
+        "DACE_DEV=1 set but no monorepo veriumd found. Build with: " +
+          "./autogen.sh && make -C depends HOST=<triple> NO_QT=1 && ./configure --host=<triple> ... && make src/veriumd",
+      );
+    }
   }
 
   // Path 2: download archive from CDN (try known filenames until one works)

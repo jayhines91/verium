@@ -18,7 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 export function UpgradeToHdCard() {
   const coin = useActiveCoin();
   const queryClient = useQueryClient();
-  const [phrase, setPhrase] = useState("");
+  const [walletPassphrase, setWalletPassphrase] = useState("");
   const [showWizard, setShowWizard] = useState(false);
 
   const isHd = useQuery({
@@ -27,10 +27,18 @@ export function UpgradeToHdCard() {
   });
 
   const apply = useMutation({
-    mutationFn: () => recoveryApplyHdSeed(coin, phrase),
+    mutationFn: ({
+      phrase,
+      unlockPassphrase,
+    }: {
+      phrase: string;
+      unlockPassphrase?: string;
+    }) =>
+      recoveryApplyHdSeed(coin, phrase, undefined, unlockPassphrase),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "wallet-is-hd") });
       setShowWizard(false);
+      setWalletPassphrase("");
     },
   });
 
@@ -54,12 +62,23 @@ export function UpgradeToHdCard() {
             Generate recovery phrase &amp; upgrade
           </Button>
         ) : (
-          <RecoveryPhraseWizard
-            onComplete={(p) => {
-              setPhrase(p);
-              apply.mutate();
-            }}
-          />
+          <div className="flex flex-col gap-3">
+            <input
+              type="password"
+              value={walletPassphrase}
+              onChange={(e) => setWalletPassphrase(e.target.value)}
+              placeholder="Wallet passphrase (to unlock before upgrade)"
+              className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-sm outline-none focus:border-accent"
+            />
+            <RecoveryPhraseWizard
+              onComplete={(p) => {
+                apply.mutate({
+                  phrase: p,
+                  unlockPassphrase: walletPassphrase || undefined,
+                });
+              }}
+            />
+          </div>
         )}
         {apply.isSuccess && (
           <p className="mt-2 text-xs text-success">{apply.data}</p>

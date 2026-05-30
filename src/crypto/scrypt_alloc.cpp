@@ -15,6 +15,7 @@
 #include <windows.h>
 #elif defined(__APPLE__)
 #include <mach/mach.h>
+#include <mach/mach_vm.h>
 #include <mach/vm_map.h>
 #include <sys/mman.h>
 #else
@@ -56,7 +57,7 @@ unsigned char* ScryptScratchAlloc(size_t size)
         return buf;
     }
 #elif defined(__APPLE__)
-    vm_address_t addr = 0;
+    mach_vm_address_t addr = 0;
     kern_return_t kr = mach_vm_allocate(mach_task_self(), &addr, size, VM_FLAGS_ANYWHERE | VM_FLAGS_SUPERPAGE_SIZE_2MB);
     if (kr == KERN_SUCCESS) {
         buf = reinterpret_cast<unsigned char*>(addr);
@@ -89,7 +90,7 @@ void ScryptScratchFree(unsigned char* buf)
 #if defined(_WIN32)
     VirtualFree(buf, 0, MEM_RELEASE);
 #elif defined(__APPLE__)
-    mach_vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(buf), size);
+    mach_vm_deallocate(mach_task_self(), reinterpret_cast<mach_vm_address_t>(buf), size);
 #elif defined(__linux__)
     if (munmap(buf, size) != 0) {
         free(buf);

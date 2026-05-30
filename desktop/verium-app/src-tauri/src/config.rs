@@ -279,6 +279,66 @@ pub fn verium_uses_legacy_flat(cfg: &DaemonConfig) -> bool {
     cfg.chain == "main"
 }
 
+fn dir_has_chain_activity(dir: &std::path::Path) -> bool {
+    dir.join("blocks").exists()
+        || dir.join("chainstate").exists()
+        || dir.join("debug.log").exists()
+}
+
+/// Where the running node stores blocks, chainstate, and `debug.log`.
+///
+/// May differ from [`chain_datadir`] when bootstrap or a legacy binary used the
+/// flat parent layout (`…/Vericonomy/blocks` instead of `…/Vericonomy/vericoin/blocks`).
+pub fn effective_chain_datadir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
+    if coin == CoinId::Verium && verium_uses_legacy_flat(cfg) {
+        return legacy_root_chain_dir(cfg);
+    }
+    let chain = chain_datadir(coin, cfg);
+    let root = legacy_root_chain_dir(cfg);
+    if chain == root {
+        return chain;
+    }
+    let chain_active = dir_has_chain_activity(&chain);
+    let root_active = dir_has_chain_activity(&root);
+    let prefer_subdir = binary_supports_unified_subdir(coin, cfg);
+    match (chain_active, root_active) {
+        (true, false) => chain,
+        (false, true) => root,
+        (true, true) | (false, false) => {
+            if prefer_subdir {
+                chain
+            } else {
+                root
+            }
+        }
+    }
+}
+
+/// Directories to search for `debug.log`, most likely first.
+pub fn debug_log_candidate_dirs(coin: CoinId, cfg: &DaemonConfig) -> Vec<PathBuf> {
+    let primary = effective_chain_datadir(coin, cfg);
+    let chain = chain_datadir(coin, cfg);
+    let root = legacy_root_chain_dir(cfg);
+    let mut dirs = vec![primary];
+    for d in [chain, root] {
+        if !dirs.contains(&d) {
+            dirs.push(d);
+        }
+    }
+    dirs
+}
+
+/// Best-known `debug.log` path (existing file, or where the next log line will appear).
+pub fn expected_debug_log_path(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
+    for dir in debug_log_candidate_dirs(coin, cfg) {
+        let path = dir.join("debug.log");
+        if path.is_file() {
+            return path;
+        }
+    }
+    effective_chain_datadir(coin, cfg).join("debug.log")
+}
+
 /// Remove corrupt block index LevelDB so veriumd can rebuild from existing blk*.dat via `-reindex`.
 /// Preserves a populated `chainstate/` when present (typical after bootstrap import).
 pub fn prepare_block_index_reindex(coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {

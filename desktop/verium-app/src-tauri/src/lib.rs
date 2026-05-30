@@ -118,6 +118,7 @@ pub fn run() {
             commands::stop_daemon,
             commands::restart_daemon,
             commands::tail_logs,
+            commands::debug_log_status,
             commands::check_for_updates,
             commands::open_external_url,
             commands::read_verium_conf,

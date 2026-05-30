@@ -132,6 +132,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "prioritisetransaction", 1, "dummy" },
     { "prioritisetransaction", 2, "fee_delta" },
     { "minerstart", 0, "nthreads" },
+    { "minerstart", 1, "address" },
     { "setban", 2, "bantime" },
     { "setban", 3, "absolute" },
     { "setnetworkactive", 0, "state" },

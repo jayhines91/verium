@@ -13,6 +13,9 @@ use crate::error::AppResult;
 pub struct UserPreferences {
     #[serde(default)]
     pub setup_completed: bool,
+    /// First-run wizard finished per chain (`verium`, `vericoin`).
+    #[serde(default)]
+    pub setup_completed_by_coin: Option<HashMap<String, bool>>,
     #[serde(default)]
     pub bootstrap_dismissed_at: Option<i64>,
     #[serde(default = "default_active_coin")]
@@ -135,6 +138,7 @@ impl Default for UserPreferences {
     fn default() -> Self {
         Self {
             setup_completed: false,
+            setup_completed_by_coin: None,
             bootstrap_dismissed_at: None,
             active_coin: default_active_coin(),
             verium_enabled: true,
@@ -169,6 +173,7 @@ impl Default for UserPreferences {
 #[derive(Debug, Deserialize, Default)]
 pub struct PartialUserPreferences {
     pub setup_completed: Option<bool>,
+    pub setup_completed_by_coin: Option<HashMap<String, bool>>,
     pub bootstrap_dismissed_at: Option<i64>,
     pub active_coin: Option<String>,
     pub verium_enabled: Option<bool>,
@@ -270,6 +275,12 @@ pub fn load_sync() -> AppResult<UserPreferences> {
         }
     }
 
+    if prefs.setup_completed {
+        let mut m = prefs.setup_completed_by_coin.clone().unwrap_or_default();
+        m.entry(CoinId::Verium.as_str().to_string()).or_insert(true);
+        prefs.setup_completed_by_coin = Some(m);
+    }
+
     Ok(prefs)
 }
 
@@ -302,6 +313,9 @@ pub async fn save(prefs: &UserPreferences) -> AppResult<()> {
 pub fn merge(current: UserPreferences, partial: PartialUserPreferences) -> UserPreferences {
     UserPreferences {
         setup_completed: partial.setup_completed.unwrap_or(current.setup_completed),
+        setup_completed_by_coin: partial
+            .setup_completed_by_coin
+            .or(current.setup_completed_by_coin),
         bootstrap_dismissed_at: partial
             .bootstrap_dismissed_at
             .or(current.bootstrap_dismissed_at),

@@ -21,7 +21,7 @@ import { Badge } from "@/components/ui/Badge";
 import { RecoveryPhraseWizard } from "@/components/RecoveryPhraseWizard";
 import { HardwarePsbtSendCard } from "@/components/HardwarePsbtSendCard";
 import { DumpPrivkeyCard } from "@/components/DumpPrivkeyCard";
-import { TotpQrCode } from "@/components/TotpQrCode";
+import { TwoFactorEnrollmentPanel } from "@/components/TwoFactorEnrollmentPanel";
 import { useActiveCoin } from "@/lib/coin/context";
 import {
   autoLockGetConfig,
@@ -41,10 +41,7 @@ import {
   recoveryWalletIsHd,
   spendingControlsGet,
   spendingControlsSave,
-  twoFactorConfirmEnrollment,
   twoFactorDisable,
-  twoFactorPendingOtpauthUri,
-  twoFactorStartEnrollment,
   twoFactorStatus,
   type AutoLockConfig,
   type HardwareWalletConfig,
@@ -59,18 +56,12 @@ export function Security() {
   const coin = useActiveCoin();
   const queryClient = useQueryClient();
   const [totpCode, setTotpCode] = useState("");
-  const [confirm2faError, setConfirm2faError] = useState<string | null>(null);
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [showRecovery, setShowRecovery] = useState(false);
-  const [savedPhrase, setSavedPhrase] = useState("");
+  const [walletUnlockPass, setWalletUnlockPass] = useState("");
 
   const twoFa = useQuery({ queryKey: ["two-factor"], queryFn: twoFactorStatus });
-  const pendingOtpauth = useQuery({
-    queryKey: ["two-factor-pending-uri", twoFa.data?.secret_base32],
-    queryFn: twoFactorPendingOtpauthUri,
-    enabled: Boolean(!twoFa.data?.enabled && twoFa.data?.secret_base32),
-  });
   const passkey = useQuery({ queryKey: ["passkey"], queryFn: passkeyStatus });
   const autoLock = useQuery({ queryKey: ["auto-lock"], queryFn: autoLockGetConfig });
   const hw = useQuery({ queryKey: ["hw-wallets"], queryFn: hardwareWalletList });
@@ -78,41 +69,6 @@ export function Security() {
   const spending = useQuery({ queryKey: ["spending-controls"], queryFn: spendingControlsGet });
   const isHd = useQuery({ queryKey: ["wallet-is-hd", coin], queryFn: () => recoveryWalletIsHd(coin) });
 
-  const enroll2fa = useMutation({
-    mutationFn: twoFactorStartEnrollment,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["two-factor"] }),
-  });
-  const enrollmentSecret =
-    enroll2fa.data?.secret_base32 ?? twoFa.data?.secret_base32 ?? null;
-  const enrollmentOtpauth =
-    enroll2fa.data?.otpauth_uri ?? pendingOtpauth.data ?? null;
-  const showEnrollmentPanel =
-    !twoFa.data?.enabled && Boolean(enrollmentSecret && enrollmentOtpauth);
-  const confirm2fa = useMutation({
-    mutationFn: ({ code, secret }: { code: string; secret: string }) =>
-      twoFactorConfirmEnrollment(code, secret),
-    onMutate: () => setConfirm2faError(null),
-    onSuccess: async () => {
-      setTotpCode("");
-      setConfirm2faError(null);
-      enroll2fa.reset();
-      queryClient.setQueryData(
-        ["two-factor"],
-        (prev: Awaited<ReturnType<typeof twoFactorStatus>> | undefined) => ({
-          ...(prev ?? {
-            enabled: false,
-            gated_actions: [],
-            secret_base32: null,
-          }),
-          enabled: true,
-          secret_base32: null,
-        }),
-      );
-      await queryClient.invalidateQueries({ queryKey: ["two-factor"] });
-      await queryClient.invalidateQueries({ queryKey: ["two-factor-pending-uri"] });
-    },
-    onError: (err) => setConfirm2faError(String(err)),
-  });
   const disable2fa = useMutation({
     mutationFn: (code: string) => twoFactorDisable(code),
     onSuccess: () => {
@@ -138,8 +94,18 @@ export function Security() {
     },
   });
   const applyHd = useMutation({
-    mutationFn: () => recoveryApplyHdSeed(coin, savedPhrase),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["wallet-is-hd", coin] }),
+    mutationFn: ({
+      phrase,
+      unlockPassphrase,
+    }: {
+      phrase: string;
+      unlockPassphrase?: string;
+    }) =>
+      recoveryApplyHdSeed(coin, phrase, undefined, unlockPassphrase),
+    onSuccess: () => {
+      setWalletUnlockPass("");
+      queryClient.invalidateQueries({ queryKey: ["wallet-is-hd", coin] });
+    },
   });
 
   const saveAutoLock = async (patch: Partial<AutoLockConfig>) => {
@@ -235,12 +201,33 @@ export function Security() {
           {!showRecovery ? (
             <Button onClick={() => setShowRecovery(true)}>Set up recovery phrase</Button>
           ) : (
-            <RecoveryPhraseWizard
-              onComplete={(phrase) => {
-                setSavedPhrase(phrase);
-                if (!isHd.data) applyHd.mutate();
-              }}
-            />
+            <div className="flex flex-col gap-3">
+              {!isHd.data && (
+                <input
+                  type="password"
+                  value={walletUnlockPass}
+                  onChange={(e) => setWalletUnlockPass(e.target.value)}
+                  placeholder="Wallet passphrase (required to unlock before upgrade)"
+                  className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-sm outline-none focus:border-accent"
+                />
+              )}
+              <RecoveryPhraseWizard
+                onComplete={(phrase) => {
+                  if (!isHd.data) {
+                    applyHd.mutate({
+                      phrase,
+                      unlockPassphrase: walletUnlockPass || undefined,
+                    });
+                  }
+                }}
+              />
+            </div>
+          )}
+          {applyHd.isPending && (
+            <p className="text-xs text-fg-muted">Applying HD seed…</p>
+          )}
+          {applyHd.error && (
+            <p className="text-xs text-danger">{String(applyHd.error)}</p>
           )}
           {applyHd.isSuccess && (
             <p className="text-xs text-success">HD seed applied via sethdseed.</p>
@@ -263,73 +250,8 @@ export function Security() {
           <Badge tone={twoFa.data?.enabled ? "success" : "neutral"}>
             {twoFa.data?.enabled ? "Enabled" : "Disabled"}
           </Badge>
-          {confirm2fa.isSuccess && twoFa.data?.enabled && (
-            <p className="text-xs text-success">
-              Two-factor authentication is enabled for sends, passphrase changes, and key exports.
-            </p>
-          )}
           {!twoFa.data?.enabled && (
-            <>
-              {!showEnrollmentPanel && (
-                <Button size="sm" onClick={() => enroll2fa.mutate()} disabled={enroll2fa.isPending}>
-                  Start enrollment
-                </Button>
-              )}
-              {enroll2fa.error && (
-                <p className="text-xs text-danger">{String(enroll2fa.error)}</p>
-              )}
-              {showEnrollmentPanel && enrollmentSecret && enrollmentOtpauth && (
-                <div className="space-y-3 rounded-md border border-border bg-bg-subtle p-4 text-xs">
-                  <TotpQrCode
-                    otpauthUri={enrollmentOtpauth}
-                    secretBase32={enrollmentSecret}
-                  />
-                  <p className="text-fg-muted">
-                    Enter the 6-digit code from your app to confirm. Use the QR or manual key
-                    shown here—do not start enrollment again or the code will change.
-                  </p>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    value={totpCode}
-                    onChange={(e) => {
-                      setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6));
-                      setConfirm2faError(null);
-                    }}
-                    placeholder="6-digit code"
-                    className={totpInputClass}
-                  />
-                  {confirm2faError && (
-                    <p className="text-danger">{confirm2faError}</p>
-                  )}
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      if (totpCode.length < 6) {
-                        setConfirm2faError("Enter the full 6-digit code from your authenticator.");
-                        return;
-                      }
-                      confirm2fa.mutate({ code: totpCode, secret: enrollmentSecret });
-                    }}
-                    disabled={confirm2fa.isPending || totpCode.length < 6}
-                  >
-                    {confirm2fa.isPending ? "Confirming…" : "Confirm 2FA"}
-                  </Button>
-                  {enroll2fa.data?.recovery_codes && (
-                    <details>
-                      <summary className="cursor-pointer text-fg-muted">
-                        Recovery codes (save these offline)
-                      </summary>
-                      <pre className="mt-1 text-fg">
-                        {enroll2fa.data.recovery_codes.join("\n")}
-                      </pre>
-                    </details>
-                  )}
-                </div>
-              )}
-            </>
+            <TwoFactorEnrollmentPanel showStartButton />
           )}
           {twoFa.data?.enabled && (
             <div className="flex gap-2">

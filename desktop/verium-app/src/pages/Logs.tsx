@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pause, Play, RefreshCcw, Square } from "lucide-react";
 import {
   Card,
@@ -10,19 +11,43 @@ import {
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { useActiveCoin } from "@/lib/coin/context";
-import { getCoinProfile } from "@/lib/coin/profile";
-import { tauriTailLogs } from "@/lib/rpc/client";
+import { coinQueryKey, getCoinProfile } from "@/lib/coin/profile";
+import { tauriDebugLogStatus, tauriTailLogs } from "@/lib/rpc/client";
 
 const POLL_MS = 2_000;
 
 export function Logs() {
   const coin = useActiveCoin();
   const profile = getCoinProfile(coin);
+  const queryClient = useQueryClient();
   const [lines, setLines] = useState<string[]>([]);
   const [liveMode, setLiveMode] = useState(false);
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const logStatus = useQuery({
+    queryKey: coinQueryKey(coin, "debug-log-status"),
+    queryFn: () => tauriDebugLogStatus(coin),
+    refetchInterval: liveMode && !paused ? POLL_MS : false,
+  });
+
+  const refreshOnce = useCallback(async () => {
+    try {
+      const next = await tauriTailLogs(coin, 400);
+      setLines(next);
+      setError(null);
+      await queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "debug-log-status"),
+      });
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [coin, queryClient]);
+
+  useEffect(() => {
+    void refreshOnce();
+  }, [refreshOnce]);
 
   useEffect(() => {
     if (!liveMode) return;
@@ -37,6 +62,9 @@ export function Logs() {
         if (!stopped) {
           setLines(next);
           setError(null);
+          void queryClient.invalidateQueries({
+            queryKey: coinQueryKey(coin, "debug-log-status"),
+          });
         }
       } catch (e) {
         if (!stopped) setError(String(e));
@@ -53,7 +81,7 @@ export function Logs() {
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [coin, liveMode, paused]);
+  }, [coin, liveMode, paused, queryClient]);
 
   useEffect(() => {
     if (!liveMode || paused) return;
@@ -63,14 +91,8 @@ export function Logs() {
     });
   }, [lines, liveMode, paused]);
 
-  const refreshOnce = async () => {
-    try {
-      setLines(await tauriTailLogs(coin, 400));
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  };
+  const logPath = logStatus.data?.path;
+  const logExists = logStatus.data?.exists ?? false;
 
   return (
     <Card>
@@ -78,7 +100,19 @@ export function Logs() {
         <div>
           <CardTitle>Node logs</CardTitle>
           <CardDescription>
-            Tail of {profile.binaryName} debug.log from your data directory.
+            Tail of {profile.binaryName}{" "}
+            <span className="font-mono text-[11px]">debug.log</span>
+            {logPath ? (
+              <>
+                {" "}
+                at{" "}
+                <span className="break-all font-mono text-[11px] text-fg-muted">
+                  {logPath}
+                </span>
+              </>
+            ) : (
+              <> from your data directory.</>
+            )}
           </CardDescription>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -137,7 +171,22 @@ export function Logs() {
         >
           {lines.length === 0 ? (
             <div className="text-fg-subtle">
-              No log lines yet. Start live tail or refresh.
+              {logExists ? (
+                <>Log file exists but has no readable lines yet. Refresh again.</>
+              ) : (
+                <>
+                  No log lines yet.
+                  {logPath ? (
+                    <>
+                      {" "}
+                      Start the {profile.binaryName} node from Setup or Settings —
+                      logging writes to the path above once the daemon runs.
+                    </>
+                  ) : (
+                    <> Start live tail or refresh.</>
+                  )}
+                </>
+              )}
             </div>
           ) : (
             lines.map((line, i) => (

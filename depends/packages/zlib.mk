@@ -1,4 +1,5 @@
 package=zlib
+$(package)_patches=darwin_fdopen.patch
 $(package)_version=1.2.11
 $(package)_download_path=https://www.zlib.net
 $(package)_file_name=$(package)-$($(package)_version).tar.gz
@@ -11,6 +12,7 @@ $(package)_config_opts+=RANLIB="$($(package)_ranlib)"
 $(package)_config_opts+=AR="$($(package)_ar)"
 $(package)_config_opts_darwin+=AR="$($(package)_libtool)"
 $(package)_config_opts_darwin+=ARFLAGS="-o"
+$(package)_config_opts_darwin+=CFLAGS="$($(package)_cflags) $($(package)_cppflags) -fPIC -Dfdopen=fdopen"
 endef
 
 # zlib has its own custom configure script that takes in options like CC,
