@@ -3,7 +3,7 @@ $(package)_version=1.0.1k
 $(package)_download_path=https://www.openssl.org/source
 $(package)_file_name=$(package)-$($(package)_version).tar.gz
 $(package)_sha256_hash=8f9faeaebad088e772f4ef5e38252d472be4d878c6b3a2718c10a4fcebe7a41c
-$(package)_patches=0001-Add-OpenSSL-termios-fix-for-musl-libc.patch
+$(package)_patches=0001-Add-OpenSSL-termios-fix-for-musl-libc.patch 0002-darwin64-arm64-cc.patch
 
 define $(package)_set_vars
 $(package)_config_env=AR="ar" RANLIB="ranlib" CC="$($(package)_cc)"
@@ -65,8 +65,7 @@ endef
 define $(package)_preprocess_cmds
   patch -p1 < $($(package)_patch_dir)/0001-Add-OpenSSL-termios-fix-for-musl-libc.patch && \
   if ! grep -q darwin64-arm64-cc Configure; then \
-    sed -i.old '/"darwin64-x86_64-cc"/a\
-"darwin64-arm64-cc","cc:-arch arm64 -O3 -DL_ENDIAN -Wall::-D_REENTRANT:MACOSX:-Wl,-search_paths_first%:SIXTY_FOUR_BIT_LONG RC4_CHUNK DES_INT DES_UNROLL:$${no_asm}:dlfcn:darwin-shared:-fPIC -fno-common:-arch arm64 -dynamiclib:.$$(SHLIB_MAJOR).$$(SHLIB_MINOR).dylib",' Configure; \
+    patch -p1 < $($(package)_patch_dir)/0002-darwin64-arm64-cc.patch; \
   fi && \
   sed -i.old "/define DATE/d" util/mkbuildinf.pl && \
   sed -i.old "s|engines apps test|engines|" Makefile.org

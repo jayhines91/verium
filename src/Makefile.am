@@ -420,7 +420,7 @@ endif
 if ENABLE_AVX2
 # sha2-x64.S / scrypt-x64.S gate AVX2 routines on USE_AVX2 (not ENABLE_AVX2).
 crypto_libbitcoin_crypto_base_a_CPPFLAGS += -DUSE_AVX2
-crypto_libbitcoin_crypto_base_a_CCASFLAGS += $(AVX2_CXXFLAGS)
+crypto_libbitcoin_crypto_base_a_CCASFLAGS = $(AVX2_CXXFLAGS)
 endif
 
 crypto_libbitcoin_crypto_sse41_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
