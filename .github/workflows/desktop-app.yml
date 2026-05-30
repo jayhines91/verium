@@ -113,8 +113,9 @@ jobs:
           brew update
           brew install automake libtool pkg-config
           # depends/native_biplist needs setuptools. Homebrew Python is PEP 668
-          # ("externally managed"); use --user on CI runners (ephemeral VMs).
-          python3 -m pip install --user --upgrade pip setuptools wheel
+          # ("externally managed") and rejects even --user installs, so override
+          # with --break-system-packages (safe on ephemeral CI runner VMs).
+          python3 -m pip install --user --break-system-packages --upgrade pip setuptools wheel
           echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
 
       - name: Cache depends
@@ -197,7 +198,12 @@ jobs:
             --enable-reduce-exports --disable-shared --enable-static \
             ${{ matrix.configure_extra }} $MINGW_FLAGS \
           || { echo "=== config.log (tail) ==="; tail -n 150 config.log || true; exit 1; }
-          make -j"$JOBS" src/veriumd
+          # Windows (MinGW) produces veriumd.exe; native targets produce veriumd.
+          if [ "${{ matrix.kind }}" = "mingw" ]; then
+            make -j"$JOBS" src/veriumd.exe
+          else
+            make -j"$JOBS" src/veriumd
+          fi
 
       - name: Smoke test (print version / subversion)
         if: matrix.kind != 'mingw'

@@ -1165,7 +1165,7 @@ bool AppInitSanityChecks()
         return InitError(strprintf(_("Initialization sanity check failed. %s is shutting down.").translated, PACKAGE_NAME));
 
     if (!ScryptDispatchInit()) {
-        return InitError(_("Scrypt consensus self-test failed. Verium cannot mine or validate safely; shutting down."));
+        return InitError(_("Scrypt consensus self-test failed. Verium cannot mine or validate safely; shutting down.").translated);
     }
 
     // Probe the data directory lock to give an early error message, if possible

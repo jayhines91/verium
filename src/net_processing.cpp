@@ -1532,8 +1532,8 @@ void static ProcessGetData(CNode* pfrom, const CChainParams& chainparams, CConnm
     // disconnecting us).
     if (pfrom->m_tx_relay != nullptr) {
         // mempool entries added before this time have likely expired from mapRelay
-        const std::chrono::seconds longlived_mempool_time = GetTime<std::chrono::seconds>() - RELAY_TX_CACHE_TIME;
-        const std::chrono::seconds mempool_req = pfrom->m_tx_relay->m_last_mempool_req.load();
+        const int64_t longlived_mempool_time = GetTime() - RELAY_TX_CACHE_TIME.count();
+        const int64_t mempool_req = pfrom->m_tx_relay->timeLastMempoolReq.load();
 
         LOCK(cs_main);
 
@@ -1554,15 +1554,14 @@ void static ProcessGetData(CNode* pfrom, const CChainParams& chainparams, CConnm
             if (mi != mapRelay.end()) {
                 connman->PushMessage(pfrom, msgMaker.Make(nSendFlags, NetMsgType::TX, *mi->second));
                 push = true;
-<<<<<<< HEAD
             } else {
                 auto txinfo = mempool.info(inv.hash);
                 // To protect privacy, do not answer getdata using the mempool when
                 // that TX couldn't have been INVed in reply to a MEMPOOL request,
                 // or when it's too recent to have expired from mapRelay.
                 if (txinfo.tx && (
-                     (mempool_req.count() && txinfo.m_time <= mempool_req)
-                      || (txinfo.m_time <= longlived_mempool_time)))
+                     (mempool_req && txinfo.nTime <= mempool_req)
+                      || (txinfo.nTime <= longlived_mempool_time)))
                 {
                     connman->PushMessage(pfrom, msgMaker.Make(nSendFlags, NetMsgType::TX, *txinfo.tx));
                     push = true;
