@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Vericonomy Wallet",
+  "productName": "Vericonomy Wallet (Alpha)",
   "version": "1.0.0-alpha.1",
   "identifier": "com.vericonomy.wallet.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Vericonomy Wallet",
+        "title": "Vericonomy Wallet (Alpha)",
         "width": 1280,
         "height": 800,
         "minWidth": 1024,
@@ -44,7 +44,7 @@
       "icons/icon.ico"
     ],
     "category": "Finance",
-    "shortDescription": "Vericonomy Wallet",
+    "shortDescription": "Vericonomy Wallet (Alpha)",
     "longDescription": "Modern desktop wallet for Verium (VRM) and Vericoin (VRC) with bundled veriumd and vericoind nodes, CPU mining, PoST staking, send/receive, transaction history, and chain bootstrap.",
     "publisher": "Vericonomy",
     "externalBin": ["binaries/veriumd", "binaries/vericoind"],

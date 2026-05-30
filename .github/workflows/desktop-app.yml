@@ -38,39 +38,47 @@ jobs:
   # advertises /Vericonomy:1.0.0(alpha1)/ on the network instead of the stock
   # CDN /Verium:1.3.5.2/ binary. Reuses the proven per-platform recipes
   # (native Linux/macOS via depends; Windows cross-compiled with MinGW).
-  veriumd:
-    name: veriumd sidecar (${{ matrix.target }})
+  vericonomy-sidecar:
+    # Bundled daemon (veriumd) built from source — "Vericonomy" branding in P2P subversion.
+    name: Vericonomy sidecar (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
+            label: Linux x64
             os: ubuntu-22.04
             host: x86_64-linux-gnu
             kind: linux
             configure_extra: ""
           - target: aarch64-unknown-linux-gnu
+            label: Linux ARM64
             os: ubuntu-24.04-arm
             host: aarch64-linux-gnu
             kind: linux
             configure_extra: "--enable-arm-crypto"
           - target: x86_64-apple-darwin
-            os: macos-13
+            label: macOS Intel
+            os: macos-15-intel
             host: x86_64-apple-darwin
             kind: macos
             configure_extra: ""
           - target: aarch64-apple-darwin
+            label: macOS Apple Silicon
             os: macos-14
             host: aarch64-apple-darwin
             kind: macos
             configure_extra: "--enable-arm-crypto"
           - target: x86_64-pc-windows-msvc
+            label: Windows x64 (sidecar)
             os: ubuntu-22.04
             host: x86_64-w64-mingw32
             kind: mingw
             configure_extra: ""
 
     runs-on: ${{ matrix.os }}
+    env:
+      NO_QT: "1"
 
     steps:
       - name: Checkout (with submodules)
@@ -86,6 +94,11 @@ jobs:
           sudo apt-get install -y \
             build-essential libtool autotools-dev automake pkg-config \
             bsdmainutils python3 curl ca-certificates
+          # Native ARM64 runner builds aarch64-linux-gnu locally; x86 runners
+          # cross-compiling to ARM need the toolchain (ubuntu-22.04 matrix leg).
+          if [ "${{ matrix.host }}" = "aarch64-linux-gnu" ] && [ "$(uname -m)" != "aarch64" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          fi
 
       - name: MinGW cross toolchain
         if: matrix.kind == 'mingw'
@@ -98,7 +111,8 @@ jobs:
         if: matrix.kind == 'macos'
         run: |
           brew update
-          brew install automake libtool pkg-config
+          brew install automake libtool pkg-config python@3.12
+          python3 -m pip install --upgrade pip setuptools wheel
 
       - name: Cache depends
         uses: actions/cache@v4
@@ -106,8 +120,23 @@ jobs:
           path: |
             depends/built
             depends/sources
-          key: depends-${{ matrix.host }}-${{ hashFiles('depends/packages/*.mk') }}
-          restore-keys: depends-${{ matrix.host }}-
+          key: depends-${{ matrix.host }}-noqt-v3-${{ hashFiles('depends/Makefile', 'depends/packages/*.mk') }}
+          restore-keys: depends-${{ matrix.host }}-noqt-v3-
+
+      - name: Prepare daemon-only depends (strip Qt from cache)
+        shell: bash
+        run: |
+          set -e
+          # Older workflow runs cached Qt trees; remove them so NO_QT=1 cannot resume qt.
+          find depends/work/build -type d -name qt -prune -exec rm -rf {} + 2>/dev/null || true
+          rm -rf depends/work/staging/*/qt* depends/work/download/qt-* 2>/dev/null || true
+          find depends/built -maxdepth 1 -name '*qt*' -exec rm -rf {} + 2>/dev/null || true
+          echo "depends packages with NO_QT=1:"
+          make -C depends HOST=${{ matrix.host }} NO_QT=1 -pn 2>/dev/null | grep '^packages :=' || true
+          if make -C depends HOST=${{ matrix.host }} NO_QT=1 -pn 2>/dev/null | grep '^packages :=' | grep -qw qt; then
+            echo "ERROR: qt is still in the depends package list (NO_QT=1 not applied)"
+            exit 1
+          fi
 
       - name: MinGW source shim (gmtime_r)
         if: matrix.kind == 'mingw'
@@ -133,7 +162,13 @@ jobs:
           if [ "${{ matrix.kind }}" = "mingw" ]; then
             EXTRA="RC=${{ matrix.host }}-windres WINDRES=${{ matrix.host }}-windres CC_FOR_BUILD=gcc CXX_FOR_BUILD=g++"
           fi
-          make -C depends HOST=${{ matrix.host }} -j"$JOBS" $EXTRA
+          # Daemon-only sidecar: skip Qt/X11 (old qt 5.9 + gcc 11 / python 3.12 break in CI).
+          make -C depends HOST=${{ matrix.host }} NO_QT=1 -j"$JOBS" $EXTRA
+          if find depends/work/build -type d -name qt 2>/dev/null | grep -q .; then
+            echo "ERROR: Qt was built despite NO_QT=1"
+            find depends/work/build -type d -name qt
+            exit 1
+          fi
 
       - name: Configure + build veriumd
         shell: bash
@@ -182,27 +217,32 @@ jobs:
       - name: Upload sidecar artifact
         uses: actions/upload-artifact@v4
         with:
-          name: veriumd-sidecar-${{ matrix.target }}
+          name: vericonomy-sidecar-${{ matrix.target }}
           path: out/veriumd-${{ matrix.target }}*
           if-no-files-found: error
 
   build:
-    name: ${{ matrix.os }} (${{ matrix.target }})
-    needs: veriumd
+    name: Vericonomy Wallet (${{ matrix.label }})
+    needs: vericonomy-sidecar
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            label: Linux x64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            label: Linux ARM64
           - os: macos-15-intel
             target: x86_64-apple-darwin
+            label: macOS Intel
           - os: macos-14
             target: aarch64-apple-darwin
+            label: macOS Apple Silicon
           - os: windows-2022
             target: x86_64-pc-windows-msvc
+            label: Windows x64
 
     runs-on: ${{ matrix.os }}
 
@@ -267,10 +307,10 @@ jobs:
       - name: Frontend build
         run: npm run build
 
-      - name: Download rebranded veriumd sidecar
+      - name: Download Vericonomy daemon sidecar
         uses: actions/download-artifact@v4
         with:
-          name: veriumd-sidecar-${{ matrix.target }}
+          name: vericonomy-sidecar-${{ matrix.target }}
           path: desktop/verium-app/src-tauri/binaries
 
       - name: Mark veriumd sidecar executable
@@ -444,7 +484,7 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          name: Vericonomy Wallet ${{ steps.notes.outputs.version }}
+          name: Vericonomy Wallet (Alpha) ${{ steps.notes.outputs.version }}
           body_path: release_notes.md
           draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
