@@ -36,7 +36,7 @@ concurrency:
 jobs:
   # Build the rebranded veriumd daemon from source so the bundled sidecar
   # advertises /Vericonomy:1.0.0(alpha1)/ on the network instead of the stock
-  # CDN /Verium:1.3.5.2/ binary. Reuses the proven per-platform recipes
+  # CDN /Verium:1.3.5.2/ binary. Reuses the per-platform recipes
   # (native Linux/macOS via depends; Windows cross-compiled with MinGW).
   vericonomy-sidecar:
     # Bundled daemon (veriumd) built from source — "Vericonomy" branding in P2P subversion.
