@@ -1,5 +1,5 @@
 [package]
-name = "verium-app"
+name = "Vericonomy Wallet"
 version = "1.0.0-alpha.1"
 description = "Vericonomy Wallet — dual-chain desktop UI for Verium and Vericoin."
 authors = ["Verium developers"]

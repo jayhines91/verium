@@ -51,7 +51,9 @@ void scrypt_selftest_clear_forced_throughput()
 #if defined(ENABLE_SHANI)
 #include <immintrin.h>
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-#if !defined(_MSC_VER)
+#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__)
+#include <intrin.h>
+#else
 #include <cpuid.h>
 #endif
 #endif
@@ -59,7 +61,7 @@ static bool scrypt_sha256_use_shani()
 {
 #if defined(__x86_64__) || defined(_M_X64)
     unsigned int eax, ebx, ecx, edx;
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__)
     int info[4];
     __cpuid(info, 0);
     if (info[0] < 7) return false;
@@ -265,7 +267,7 @@ static inline uint32_t be32dec(const void *pp)
 static inline void scrypt_sha256_transform(uint32_t* state, const uint32_t* block, int swap)
 {
 #if defined(ENABLE_SHANI)
-    extern void scrypt_sha256_transform_shani(uint32_t* state, const uint32_t* block, int swap);
+    extern "C" void scrypt_sha256_transform_shani(uint32_t* state, const uint32_t* block, int swap);
     if (scrypt_sha256_use_shani()) {
         scrypt_sha256_transform_shani(state, block, swap);
         return;

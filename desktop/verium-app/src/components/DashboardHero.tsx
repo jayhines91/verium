@@ -24,7 +24,6 @@ import {
 import {
   networkCoinsStakingPercent,
   mergeStakingNetworkKpis,
-  walletStakeSharePercent,
 } from "@/lib/staking-stats";
 import {
   blocksBehindNetwork,
@@ -397,10 +396,7 @@ function VericoinSummaryCard() {
 
   const vrcNetwork = mergeStakingNetworkKpis(vrcMining.data, explorer.data);
   const networkStakePct = networkCoinsStakingPercent(vrcNetwork.netStakeWeight);
-  const stakeShare = walletStakeSharePercent(
-    wallet.data?.stake,
-    vrcNetwork.netStakeWeight,
-  );
+
   const connections = status?.connections ?? 0;
   const connectionLabel =
     connections === 1

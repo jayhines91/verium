@@ -57,12 +57,17 @@ $(package)_config_opts_powerpc_linux=linux-generic32
 $(package)_config_opts_riscv32_linux=linux-generic32
 $(package)_config_opts_riscv64_linux=linux-generic64
 $(package)_config_opts_x86_64_darwin=darwin64-x86_64-cc
+$(package)_config_opts_aarch64_darwin=darwin64-arm64-cc no-asm
 $(package)_config_opts_x86_64_mingw32=mingw64
 $(package)_config_opts_i686_mingw32=mingw
 endef
 
 define $(package)_preprocess_cmds
   patch -p1 < $($(package)_patch_dir)/0001-Add-OpenSSL-termios-fix-for-musl-libc.patch && \
+  if ! grep -q darwin64-arm64-cc Configure; then \
+    sed -i.old '/"darwin64-x86_64-cc"/a\
+"darwin64-arm64-cc","cc:-arch arm64 -O3 -DL_ENDIAN -Wall::-D_REENTRANT:MACOSX:-Wl,-search_paths_first%:SIXTY_FOUR_BIT_LONG RC4_CHUNK DES_INT DES_UNROLL:$${no_asm}:dlfcn:darwin-shared:-fPIC -fno-common:-arch arm64 -dynamiclib:.$$(SHLIB_MAJOR).$$(SHLIB_MINOR).dylib",' Configure; \
+  fi && \
   sed -i.old "/define DATE/d" util/mkbuildinf.pl && \
   sed -i.old "s|engines apps test|engines|" Makefile.org
 endef
