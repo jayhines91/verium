@@ -346,7 +346,8 @@ pub async fn fetch_explorer_peers(coin: CoinId) -> AppResult<Vec<ExplorerPeerEnt
         .as_array()
         .ok_or_else(|| AppError::other("peer versions response is not an array"))?;
 
-    let mut by_address: HashMap<String, ExplorerPeerEntry> = HashMap::new();
+    let mut by_ip: HashMap<String, ExplorerPeerEntry> = HashMap::new();
+    let p2p_port = coin.default_p2p_port();
 
     for version in versions {
         let version_id = match version.get("version_id").and_then(parse_u64) {
@@ -377,16 +378,15 @@ pub async fn fetch_explorer_peers(coin: CoinId) -> AppResult<Vec<ExplorerPeerEnt
             if ip.is_empty() {
                 continue;
             }
-            let port = peer
-                .get("port")
-                .and_then(parse_u64)
-                .unwrap_or(36988) as u16;
-            let address = format!("{ip}:{port}");
+            // Explorer REST stores the ephemeral source port from inbound connections,
+            // not the peer's P2P listen port. Always use the chain default for addnode.
+            let ip_key = ip.to_lowercase();
+            let address = format!("{ip}:{p2p_port}");
             let entry = ExplorerPeerEntry {
                 id: peer.get("id").and_then(parse_u64).unwrap_or(0),
                 address: address.clone(),
                 ip,
-                port,
+                port: p2p_port,
                 subversion: subversion.clone(),
                 protocol_version,
                 connected_on_explorer: peer
@@ -398,11 +398,20 @@ pub async fn fetch_explorer_peers(coin: CoinId) -> AppResult<Vec<ExplorerPeerEnt
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
             };
-            by_address.insert(address, entry);
+            by_ip
+                .entry(ip_key)
+                .and_modify(|existing| {
+                    if entry.connected_on_explorer && !existing.connected_on_explorer {
+                        *existing = entry.clone();
+                    } else if entry.last_seen.as_deref() > existing.last_seen.as_deref() {
+                        *existing = entry.clone();
+                    }
+                })
+                .or_insert(entry);
         }
     }
 
-    let mut peers: Vec<ExplorerPeerEntry> = by_address.into_values().collect();
+    let mut peers: Vec<ExplorerPeerEntry> = by_ip.into_values().collect();
     peers.sort_by(|a, b| {
         b.connected_on_explorer
             .cmp(&a.connected_on_explorer)

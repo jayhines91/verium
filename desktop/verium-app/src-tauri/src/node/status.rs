@@ -24,6 +24,8 @@ pub struct NodeStatus {
     pub daemon_phase: Option<String>,
     pub sync_stalled: bool,
     pub sync_stall_detail: Option<String>,
+    /// Block hash blocking sync because it is flagged invalid in the local index.
+    pub invalid_block_hash: Option<String>,
     /// Authoritative lifecycle state (snake_case string).
     pub state: Option<String>,
     pub recovery_hint: Option<String>,
@@ -88,6 +90,7 @@ fn empty_base() -> NodeStatus {
         daemon_phase: None,
         sync_stalled: false,
         sync_stall_detail: None,
+        invalid_block_hash: None,
         state: None,
         recovery_hint: None,
         needs_bootstrap: false,

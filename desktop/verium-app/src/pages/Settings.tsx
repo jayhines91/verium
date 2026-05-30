@@ -30,7 +30,7 @@ import {
   getCoinProfile,
   type CoinId,
 } from "@/lib/coin/profile";
-import { useEnabledCoins } from "@/lib/coin/context";
+import { useActiveCoin, useEnabledCoins } from "@/lib/coin/context";
 import { clearStakingStoppedByUser } from "@/hooks/useAutoStake";
 import { clearMiningStoppedByUser } from "@/lib/mining-session";
 import type { ThemeMode } from "@/lib/theme";
@@ -70,6 +70,7 @@ import { ADVANCED_SETTINGS_ENABLED } from "@/lib/features";
 
 export function Settings() {
   const enabledCoins = useEnabledCoins();
+  const activeCoin = useActiveCoin();
   const [daemonCoin, setDaemonCoin] = useState<CoinId>("verium");
   const config = useQuery({
     queryKey: coinQueryKey(daemonCoin, "daemon-config"),
@@ -122,8 +123,8 @@ export function Settings() {
             Security center
           </CardTitle>
           <CardDescription>
-            Two-factor authentication, recovery phrase, hardware wallets,
-            and spending controls. Wallet backups and scheduled copies live in
+            Two-factor authentication, recovery phrase, hardware wallets, and
+            spending controls. Wallet backups and scheduled copies live in
             Settings.
           </CardDescription>
         </CardHeader>
@@ -208,7 +209,7 @@ export function Settings() {
               }}
               className="h-4 w-4 rounded border-border accent-accent"
             />
-            <span>Notify when VRM is received (toast + sound)</span>
+            <span>Notify when VRM is received</span>
           </label>
           <label className="flex cursor-pointer items-center gap-3 text-sm">
             <input
@@ -283,7 +284,10 @@ export function Settings() {
           />
           <MiningRewardAddressControls
             compact
-            mode={(prefs.mining_reward_address_mode ?? "dynamic") as MiningRewardAddressMode}
+            mode={
+              (prefs.mining_reward_address_mode ??
+                "dynamic") as MiningRewardAddressMode
+            }
             address={prefs.mining_reward_address ?? ""}
             onModeChange={(mode) =>
               void updatePrefs({ mining_reward_address_mode: mode })
@@ -389,162 +393,164 @@ export function Settings() {
         </CardContent>
       </Card>
 
-      <VeriumConfEditorCard coin={daemonCoin} />
+      <VeriumConfEditorCard coin={activeCoin} />
 
       {ADVANCED_SETTINGS_ENABLED && (
-      <Card>
-        <CardHeader
-          className="cursor-pointer select-none"
-          onClick={() => setAdvancedOpen((v) => !v)}
-        >
-          <CardTitle className="flex items-center gap-2">
-            {advancedOpen ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
-            Advanced
-          </CardTitle>
-          <CardDescription>
-            Daemon lifecycle, RPC endpoint, data directory, explorer URLs. Most
-            users should never need these.
-          </CardDescription>
-        </CardHeader>
-        {advancedOpen && (
-          <CardContent className="flex flex-col gap-6">
-            <section className="flex flex-col gap-2">
-              <h3 className="text-sm font-semibold">Daemon lifecycle</h3>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => start.mutate()}
-                  disabled={start.isPending}
-                >
-                  Start
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => restart.mutate()}
-                  disabled={restart.isPending}
-                >
-                  Restart
-                </Button>
-                <Button
-                  size="sm"
-                  variant="danger"
-                  onClick={() => stop.mutate()}
-                  disabled={stop.isPending}
-                >
-                  Stop
-                </Button>
-              </div>
-            </section>
-
-            <section className="flex flex-col gap-2">
-              <h3 className="text-sm font-semibold">Daemon connection</h3>
-              <div className="flex flex-wrap gap-2">
-                {ALL_COINS.filter((c) => enabledCoins.includes(c)).map((c) => (
+        <Card>
+          <CardHeader
+            className="cursor-pointer select-none"
+            onClick={() => setAdvancedOpen((v) => !v)}
+          >
+            <CardTitle className="flex items-center gap-2">
+              {advancedOpen ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+              Advanced
+            </CardTitle>
+            <CardDescription>
+              Daemon lifecycle, RPC endpoint, data directory, explorer URLs.
+              Most users should never need these.
+            </CardDescription>
+          </CardHeader>
+          {advancedOpen && (
+            <CardContent className="flex flex-col gap-6">
+              <section className="flex flex-col gap-2">
+                <h3 className="text-sm font-semibold">Daemon lifecycle</h3>
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
-                    key={c}
                     size="sm"
-                    variant={daemonCoin === c ? "primary" : "secondary"}
-                    onClick={() => setDaemonCoin(c)}
+                    onClick={() => start.mutate()}
+                    disabled={start.isPending}
                   >
-                    {getCoinProfile(c).symbol}
+                    Start
                   </Button>
-                ))}
-              </div>
-              <p className="text-xs text-fg-muted">
-                Configure RPC and data directory for{" "}
-                {getCoinProfile(daemonCoin).displayName}.
-              </p>
-              <DaemonConnectionPanel
-                coin={daemonCoin}
-                config={config.data}
-                mode="settings"
-              />
-            </section>
-
-            <section className="flex flex-col gap-3">
-              <h3 className="text-sm font-semibold">
-                {getCoinProfile(daemonCoin).displayName} core binary
-              </h3>
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-fg-muted">Status:</span>
-                {binary.data?.manageable ? (
-                  <Badge tone="success">
-                    {binary.data.source === "sidecar"
-                      ? "Bundled sidecar"
-                      : `Found (${binary.data.source})`}
-                  </Badge>
-                ) : (
-                  <Badge tone="warning">Not detected</Badge>
-                )}
-              </div>
-              {binary.data?.path && (
-                <div className="truncate rounded-md border border-border bg-bg-subtle px-3 py-2 text-xs">
-                  {binary.data.path}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => restart.mutate()}
+                    disabled={restart.isPending}
+                  >
+                    Restart
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    onClick={() => stop.mutate()}
+                    disabled={stop.isPending}
+                  >
+                    Stop
+                  </Button>
                 </div>
-              )}
-              {!binary.data?.manageable && (
-                <ExternalLinkButton href={DOCS_DOWNLOADS}>
-                  Download Verium core
-                </ExternalLinkButton>
-              )}
-              <p className="text-xs text-fg-subtle">
-                Override with the{" "}
-                <span className="font-mono">VERIUMD_PATH</span> environment
-                variable, place the binary next to this app, or install via the
-                official downloads page.
-              </p>
-            </section>
+              </section>
 
-            <section className="flex flex-col gap-2">
-              <h3 className="text-sm font-semibold">Explorer integration</h3>
-              <p className="text-xs text-fg-muted">
-                URL templates used when opening transactions, blocks, and
-                addresses on the official explorer. Defaults follow the active
-                chain (VRM → explorer-vrm, VRC → explorer-vrc). Use{" "}
-                <span className="font-mono">%s</span> as the placeholder.
-              </p>
-              <Field
-                label="Transaction URL"
-                value={prefs.explorer_tx_url_template}
-                onChange={(v) =>
-                  void updatePrefs({ explorer_tx_url_template: v })
-                }
-                placeholder={DEFAULT_TX_EXPLORER_TEMPLATE}
-                mono
-              />
-              <Field
-                label="Block URL"
-                value={
-                  prefs.explorer_block_url_template ??
-                  DEFAULT_BLOCK_EXPLORER_TEMPLATE
-                }
-                onChange={(v) =>
-                  void updatePrefs({ explorer_block_url_template: v })
-                }
-                placeholder={DEFAULT_BLOCK_EXPLORER_TEMPLATE}
-                mono
-              />
-              <Field
-                label="Address URL"
-                value={
-                  prefs.explorer_address_url_template ??
-                  DEFAULT_ADDRESS_EXPLORER_TEMPLATE
-                }
-                onChange={(v) =>
-                  void updatePrefs({ explorer_address_url_template: v })
-                }
-                placeholder={DEFAULT_ADDRESS_EXPLORER_TEMPLATE}
-                mono
-              />
-            </section>
-          </CardContent>
-        )}
-      </Card>
+              <section className="flex flex-col gap-2">
+                <h3 className="text-sm font-semibold">Daemon connection</h3>
+                <div className="flex flex-wrap gap-2">
+                  {ALL_COINS.filter((c) => enabledCoins.includes(c)).map(
+                    (c) => (
+                      <Button
+                        key={c}
+                        size="sm"
+                        variant={daemonCoin === c ? "primary" : "secondary"}
+                        onClick={() => setDaemonCoin(c)}
+                      >
+                        {getCoinProfile(c).symbol}
+                      </Button>
+                    ),
+                  )}
+                </div>
+                <p className="text-xs text-fg-muted">
+                  Configure RPC and data directory for{" "}
+                  {getCoinProfile(daemonCoin).displayName}.
+                </p>
+                <DaemonConnectionPanel
+                  coin={daemonCoin}
+                  config={config.data}
+                  mode="settings"
+                />
+              </section>
+
+              <section className="flex flex-col gap-3">
+                <h3 className="text-sm font-semibold">
+                  {getCoinProfile(daemonCoin).displayName} core binary
+                </h3>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-fg-muted">Status:</span>
+                  {binary.data?.manageable ? (
+                    <Badge tone="success">
+                      {binary.data.source === "sidecar"
+                        ? "Bundled sidecar"
+                        : `Found (${binary.data.source})`}
+                    </Badge>
+                  ) : (
+                    <Badge tone="warning">Not detected</Badge>
+                  )}
+                </div>
+                {binary.data?.path && (
+                  <div className="truncate rounded-md border border-border bg-bg-subtle px-3 py-2 text-xs">
+                    {binary.data.path}
+                  </div>
+                )}
+                {!binary.data?.manageable && (
+                  <ExternalLinkButton href={DOCS_DOWNLOADS}>
+                    Download Verium core
+                  </ExternalLinkButton>
+                )}
+                <p className="text-xs text-fg-subtle">
+                  Override with the{" "}
+                  <span className="font-mono">VERIUMD_PATH</span> environment
+                  variable, place the binary next to this app, or install via
+                  the official downloads page.
+                </p>
+              </section>
+
+              <section className="flex flex-col gap-2">
+                <h3 className="text-sm font-semibold">Explorer integration</h3>
+                <p className="text-xs text-fg-muted">
+                  URL templates used when opening transactions, blocks, and
+                  addresses on the official explorer. Defaults follow the active
+                  chain (VRM → explorer-vrm, VRC → explorer-vrc). Use{" "}
+                  <span className="font-mono">%s</span> as the placeholder.
+                </p>
+                <Field
+                  label="Transaction URL"
+                  value={prefs.explorer_tx_url_template}
+                  onChange={(v) =>
+                    void updatePrefs({ explorer_tx_url_template: v })
+                  }
+                  placeholder={DEFAULT_TX_EXPLORER_TEMPLATE}
+                  mono
+                />
+                <Field
+                  label="Block URL"
+                  value={
+                    prefs.explorer_block_url_template ??
+                    DEFAULT_BLOCK_EXPLORER_TEMPLATE
+                  }
+                  onChange={(v) =>
+                    void updatePrefs({ explorer_block_url_template: v })
+                  }
+                  placeholder={DEFAULT_BLOCK_EXPLORER_TEMPLATE}
+                  mono
+                />
+                <Field
+                  label="Address URL"
+                  value={
+                    prefs.explorer_address_url_template ??
+                    DEFAULT_ADDRESS_EXPLORER_TEMPLATE
+                  }
+                  onChange={(v) =>
+                    void updatePrefs({ explorer_address_url_template: v })
+                  }
+                  placeholder={DEFAULT_ADDRESS_EXPLORER_TEMPLATE}
+                  mono
+                />
+              </section>
+            </CardContent>
+          )}
+        </Card>
       )}
     </div>
   );

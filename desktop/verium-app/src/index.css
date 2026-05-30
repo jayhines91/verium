@@ -1,56 +1,79 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@source "../index.html";
+@source "./**/*.{ts,tsx}";
 
 /*
  * Verium desktop theme tokens
  * Palettes aligned with the Qt UI (src/qt/themetokens.cpp, src/qt/res/theme-*.qss)
- * and the vericonomy.com brand. Tokens store space-separated RGB triplets so
- * Tailwind can compose alpha via `rgb(var(--token) / <alpha-value>)`.
+ * and the vericonomy.com brand. Store full rgb() values so Tailwind v4 @theme
+ * and opacity modifiers (bg-accent/10) resolve correctly.
  *
  * Dark = default (:root). Light = `.light` on <html> (set by theme-boot.js).
  */
 
 :root {
-  --bg: 7 10 15;
-  --bg-subtle: 11 16 24;
-  --bg-panel: 26 34 48;
-  --fg: 226 232 240;
-  --fg-muted: 148 163 184;
-  --fg-subtle: 100 116 139;
-  --border: 30 41 59;
-  --border-strong: 51 65 85;
-  --accent: 65 139 202;
-  --accent-fg: 240 249 255;
-  --success: 53 155 55;
-  --warning: 245 158 11;
-  --danger: 233 58 93;
+  --bg: rgb(7 10 15);
+  --bg-subtle: rgb(11 16 24);
+  --bg-panel: rgb(26 34 48);
+  --fg: rgb(226 232 240);
+  --fg-muted: rgb(148 163 184);
+  --fg-subtle: rgb(100 116 139);
+  --border: rgb(30 41 59);
+  --border-strong: rgb(51 65 85);
+  --accent: rgb(65 139 202);
+  --accent-fg: rgb(240 249 255);
+  --success: rgb(53 155 55);
+  --warning: rgb(245 158 11);
+  --danger: rgb(233 58 93);
 }
 
 .light {
-  --bg: 238 241 246;
-  --bg-subtle: 248 250 252;
-  --bg-panel: 255 255 255;
-  --fg: 15 23 42;
-  --fg-muted: 71 85 105;
-  --fg-subtle: 100 116 139;
-  --border: 226 232 240;
-  --border-strong: 203 213 225;
-  --accent: 65 139 202;
-  --accent-fg: 255 255 255;
-  --success: 22 132 41;
-  --warning: 217 119 6;
-  --danger: 220 38 76;
+  --bg: rgb(238 241 246);
+  --bg-subtle: rgb(248 250 252);
+  --bg-panel: rgb(255 255 255);
+  --fg: rgb(15 23 42);
+  --fg-muted: rgb(71 85 105);
+  --fg-subtle: rgb(100 116 139);
+  --border: rgb(226 232 240);
+  --border-strong: rgb(203 213 225);
+  --accent: rgb(65 139 202);
+  --accent-fg: rgb(255 255 255);
+  --success: rgb(22 132 41);
+  --warning: rgb(217 119 6);
+  --danger: rgb(220 38 76);
 }
 
-html,
-body,
-#root {
-  height: 100%;
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-bg-panel: var(--bg-panel);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-body {
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+@layer base {
+  html,
+  body,
+  #root {
+    @apply h-full bg-bg text-fg antialiased;
+  }
+
+  body {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
 }
 
 ::-webkit-scrollbar {
@@ -58,7 +81,7 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background-color: rgb(var(--border-strong));
+  background-color: var(--border-strong);
   border-radius: 6px;
 }
 ::-webkit-scrollbar-track {
@@ -78,10 +101,12 @@ body {
 @keyframes you-mined-glow {
   0%,
   100% {
-    box-shadow: inset 3px 0 0 rgb(var(--accent)), 0 0 0 rgb(var(--accent) / 0);
+    box-shadow: inset 3px 0 0 var(--accent), 0 0 0 transparent;
   }
   50% {
-    box-shadow: inset 3px 0 0 rgb(var(--accent)), 0 0 18px rgb(var(--accent) / 0.14);
+    box-shadow:
+      inset 3px 0 0 var(--accent),
+      0 0 18px color-mix(in srgb, var(--accent) 14%, transparent);
   }
 }
 
@@ -144,7 +169,7 @@ body {
   background: linear-gradient(
     105deg,
     transparent 40%,
-    rgb(var(--accent) / 0.1) 50%,
+    color-mix(in srgb, var(--accent) 10%, transparent) 50%,
     transparent 60%
   );
   background-size: 200% 100%;
@@ -176,14 +201,14 @@ body {
 .you-mined-confetti::before {
   top: 12px;
   left: 18%;
-  background: rgb(var(--accent));
+  background: var(--accent);
   animation: you-mined-confetti-fall 2.2s ease-out infinite;
 }
 
 .you-mined-confetti::after {
   top: 8px;
   right: 22%;
-  background: rgb(var(--border-strong));
+  background: var(--border-strong);
   animation: you-mined-confetti-fall 2.6s ease-out 0.4s infinite;
 }
 

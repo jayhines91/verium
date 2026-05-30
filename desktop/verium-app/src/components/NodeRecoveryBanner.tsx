@@ -18,6 +18,7 @@ import {
 } from "@/lib/node/status";
 import {
   tauriCancelBootstrap,
+  tauriNodeClearInvalidBlock,
   tauriNodeRetry,
   tauriRepairChain,
   tauriRestartDaemon,
@@ -56,6 +57,18 @@ export function NodeRecoveryBanner() {
 
   const restart = useMutation({
     mutationFn: () => tauriRestartDaemon(coin),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "daemon-status"),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "getblockchaininfo"),
+      });
+    },
+  });
+
+  const clearInvalidBlock = useMutation({
+    mutationFn: () => tauriNodeClearInvalidBlock(coin),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: coinQueryKey(coin, "daemon-status"),
@@ -136,7 +149,9 @@ export function NodeRecoveryBanner() {
   if (!showBanner) return null;
 
   const action =
-    recoveryHint === "repair_chain"
+    recoveryHint === "clear_invalid_block"
+      ? () => clearInvalidBlock.mutate()
+      : recoveryHint === "repair_chain"
       ? () => reindex.mutate()
       : recoveryHint === "bootstrap_chain"
         ? () => repair.mutate()
@@ -149,7 +164,11 @@ export function NodeRecoveryBanner() {
     : "Restart node";
 
   const pending =
-    restart.isPending || reindex.isPending || repair.isPending || retry.isPending;
+    restart.isPending ||
+    reindex.isPending ||
+    repair.isPending ||
+    retry.isPending ||
+    clearInvalidBlock.isPending;
 
   return (
     <div className="rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
@@ -162,9 +181,14 @@ export function NodeRecoveryBanner() {
       {data?.sync_stall_detail && (
         <p className="mt-1 text-xs text-fg-muted">{data.sync_stall_detail}</p>
       )}
-      {(reindex.error || repair.error || restart.error) && (
+      {(reindex.error || repair.error || restart.error || clearInvalidBlock.error) && (
         <p className="mt-1 text-xs text-danger">
-          {String(reindex.error ?? repair.error ?? restart.error)}
+          {String(
+            reindex.error ??
+              repair.error ??
+              restart.error ??
+              clearInvalidBlock.error,
+          )}
         </p>
       )}
       <div className="mt-3 flex flex-wrap gap-2">

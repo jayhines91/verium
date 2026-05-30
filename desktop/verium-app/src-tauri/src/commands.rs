@@ -38,7 +38,9 @@ use crate::logs::{
     current_log_session, detect_chain_corruption_session,
     detect_datadir_lock_conflict, detect_node_starting, detect_reindex_active_session,
     detect_reindex_file_rebuild_session,
-    detect_reindex_progress, detect_sync_stall, is_timestamp_rule_failure, log_recently_modified,
+    detect_reindex_progress, detect_sync_stall, detect_invalid_block_stall,
+    rpc_reports_synced,
+    is_timestamp_rule_failure, log_recently_modified,
     tail_debug_log,
 };
 use crate::node::orchestrator::maybe_emit_state;
@@ -370,7 +372,9 @@ pub(crate) async fn daemon_boot_in_progress(
             let lines = tail_debug_log(&datadir, 40)
                 .await
                 .unwrap_or_default();
-            if detect_reindex_active_session(&lines) || detect_node_starting(&lines) {
+            if detect_reindex_active_session(&lines, state.pending_reindex_active(coin))
+                || detect_node_starting(&lines)
+            {
                 return true;
             }
         }
@@ -388,7 +392,7 @@ pub(crate) async fn daemon_log_suggests_loading(coin: CoinId, cfg: &DaemonConfig
     let lines = tail_debug_log(&datadir, 40)
         .await
         .unwrap_or_default();
-    detect_reindex_active_session(&lines) || detect_node_starting(&lines)
+    detect_reindex_active_session(&lines, false) || detect_node_starting(&lines)
 }
 
 async fn suppress_competing_auto_start(
@@ -470,14 +474,14 @@ pub(crate) async fn reindex_running_live(
         return false;
     }
     let lines = tail_debug_log(&datadir, 120).await.unwrap_or_default();
-    // Early `-reindex` markers scroll out of the log tail long before header
-    // validation finishes; keep treating header progress as live reindex work.
-    if !detect_reindex_file_rebuild_session(&lines) && !detect_reindex_active_session(&lines) {
-        return false;
+    let session = current_log_session(&lines);
+    if detect_reindex_file_rebuild_session(&session) {
+        return process_up;
     }
-    // RPC may be unavailable during reindex (port conflict or slow bind) — still
-    // treat an active reindex log plus a live process as "do not restart".
-    process_up
+    if state.pending_reindex_active(coin) && detect_reindex_progress(&session).is_some() {
+        return process_up;
+    }
+    false
 }
 
 async fn stop_daemon_fully_for_repair(state: &AppState, coin: CoinId, cfg: &DaemonConfig) {
@@ -520,7 +524,8 @@ pub(crate) async fn start_inner_impl(state: &AppState, coin: CoinId, force: bool
         if rpc_auth_failed(coin, &cfg).await {
             let datadir = chain_datadir(coin, &cfg);
             let lines = tail_debug_log(&datadir, 80).await.unwrap_or_default();
-            if (detect_reindex_active_session(&lines) || state.pending_reindex_active(coin))
+            if (detect_reindex_active_session(&lines, state.pending_reindex_active(coin))
+                || state.pending_reindex_active(coin))
                 && native_daemon_image_running(coin)
             {
                 tracing::info!(
@@ -779,10 +784,21 @@ async fn enrich_status_from_log(
     let log_path = datadir.join("debug.log");
     let log_live = log_recently_modified(&log_path, Duration::from_secs(45));
 
+    if rpc_reports_synced(
+        status.connected,
+        status.initial_block_download,
+        status.blocks,
+        status.headers,
+    ) {
+        return status;
+    }
+
     if let Some(progress) = detect_reindex_progress(&session) {
         let process_up = daemon_process_live(state, coin, cfg).await;
-        status.reindex_header = Some(progress.header);
-        if process_up && log_live {
+        let pending = state.pending_reindex_active(coin);
+        let rebuilding = detect_reindex_file_rebuild_session(&session);
+        if (rebuilding || pending) && process_up && log_live {
+            status.reindex_header = Some(progress.header);
             status.reindex_in_progress = true;
             status.warming_up = true;
             status.connected = true;
@@ -832,17 +848,58 @@ async fn enrich_status_from_log(
         return status;
     }
 
-    let lag = status
-        .headers
-        .unwrap_or(0)
-        .saturating_sub(status.blocks.unwrap_or(0));
-    if lag > 0 {
-        if let Some(detail) = detect_sync_stall(&lines) {
+    if status.connected {
+        if let Some(hash) = detect_invalid_block_stall(&lines) {
             status.sync_stalled = true;
-            status.sync_stall_detail = Some(detail);
+            status.invalid_block_hash = Some(hash.clone());
+            if !state.repair_backoff_active(coin) {
+                match clear_invalid_block_via_rpc(state, coin, &hash).await {
+                    Ok(detail) => {
+                        state.mark_repair_attempt(coin);
+                        status.sync_stall_detail = Some(detail);
+                        status.user_message = Some("Recovering sync…".into());
+                    }
+                    Err(err) => {
+                        status.sync_stall_detail = Some(format!(
+                            "Block {hash} is marked invalid in the local index, so peers disconnect during sync. {err}"
+                        ));
+                    }
+                }
+            } else {
+                status.sync_stall_detail = Some(format!(
+                    "Block {hash} is marked invalid in the local index. \
+                     The wallet is retrying recovery automatically."
+                ));
+            }
+        } else {
+            let lag = status
+                .headers
+                .unwrap_or(0)
+                .saturating_sub(status.blocks.unwrap_or(0));
+            if lag > 0 {
+                if let Some(detail) = detect_sync_stall(&lines) {
+                    status.sync_stalled = true;
+                    status.sync_stall_detail = Some(detail);
+                }
+            }
         }
     }
     status
+}
+
+async fn clear_invalid_block_via_rpc(
+    state: &AppState,
+    coin: CoinId,
+    hash: &str,
+) -> AppResult<String> {
+    state
+        .rpc_client(coin)
+        .await?
+        .call_no_result("reconsiderblock", json!([hash]))
+        .await?;
+    Ok(format!(
+        "Cleared invalid flag on block {hash}. Sync should resume shortly."
+    ))
 }
 
 #[tauri::command]
@@ -851,8 +908,30 @@ pub async fn node_retry(
     coin: String,
 ) -> AppResult<()> {
     let coin = parse_coin_id(&coin)?;
+    let cfg = state.config_fresh(coin).await?;
+    let datadir = chain_datadir(coin, &cfg);
+    let lines = tail_debug_log(&datadir, 120).await.unwrap_or_default();
+    if let Some(hash) = detect_invalid_block_stall(&lines) {
+        clear_invalid_block_via_rpc(state.inner(), coin, &hash).await?;
+        return Ok(());
+    }
     restart_daemon_full_cycle(state.inner(), coin).await?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn node_clear_invalid_block(
+    state: State<'_, AppState>,
+    coin: String,
+) -> AppResult<String> {
+    let coin = parse_coin_id(&coin)?;
+    let cfg = state.config_fresh(coin).await?;
+    let datadir = chain_datadir(coin, &cfg);
+    let lines = tail_debug_log(&datadir, 120).await.unwrap_or_default();
+    let hash = detect_invalid_block_stall(&lines).ok_or_else(|| {
+        AppError::other("No invalid-block sync stall detected in debug.log")
+    })?;
+    clear_invalid_block_via_rpc(state.inner(), coin, &hash).await
 }
 
 #[tauri::command]

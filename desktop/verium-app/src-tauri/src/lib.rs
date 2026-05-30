@@ -144,6 +144,7 @@ pub fn run() {
             commands::ensure_daemon_connected,
             commands::repair_chain,
             commands::node_retry,
+            commands::node_clear_invalid_block,
             commands::node_reset_credentials,
             commands::address_book_list,
             commands::address_book_upsert,

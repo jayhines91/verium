@@ -27,6 +27,7 @@ export interface NodeStatus {
   daemon_phase?: string;
   sync_stalled?: boolean;
   sync_stall_detail?: string;
+  invalid_block_hash?: string;
   state?: string;
   recovery_hint?: string;
   needs_bootstrap?: boolean;
@@ -640,6 +641,10 @@ export async function tauriRepairChain(
 
 export async function tauriNodeRetry(coin: CoinId): Promise<void> {
   return invoke<void>("node_retry", { coin });
+}
+
+export async function tauriNodeClearInvalidBlock(coin: CoinId): Promise<string> {
+  return invoke<string>("node_clear_invalid_block", { coin });
 }
 
 export async function tauriNodeResetCredentials(coin: CoinId): Promise<void> {

@@ -58,6 +58,14 @@ impl CoinId {
         }
     }
 
+    /// Default P2P listen port for outbound `addnode` targets on mainnet.
+    pub fn default_p2p_port(self) -> u16 {
+        match self {
+            CoinId::Verium => 36988,
+            CoinId::Vericoin => 58684,
+        }
+    }
+
     pub fn default_network_chain(self) -> &'static str {
         match self {
             CoinId::Verium => "main",

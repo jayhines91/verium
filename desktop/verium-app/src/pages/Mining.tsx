@@ -720,22 +720,22 @@ export function Mining() {
               <LineChart data={samples}>
                 <CartesianGrid
                   strokeDasharray="3 3"
-                  stroke="rgb(var(--border))"
+                  stroke="var(--border)"
                 />
                 <XAxis
                   dataKey="t"
                   tickFormatter={(t) => new Date(t).toLocaleTimeString()}
-                  stroke="rgb(var(--fg-subtle))"
+                  stroke="var(--fg-subtle)"
                   fontSize={11}
                 />
-                <YAxis stroke="rgb(var(--fg-subtle))" fontSize={11} />
+                <YAxis stroke="var(--fg-subtle)" fontSize={11} />
                 <Tooltip
                   labelFormatter={(t) =>
                     new Date(t as number).toLocaleTimeString()
                   }
                   contentStyle={{
-                    backgroundColor: "rgb(var(--bg-panel))",
-                    border: "1px solid rgb(var(--border))",
+                    backgroundColor: "var(--bg-panel)",
+                    border: "1px solid var(--border)",
                     borderRadius: 6,
                     fontSize: 12,
                   }}
@@ -743,7 +743,7 @@ export function Mining() {
                 {sessionAvg != null && sessionAvg > 0 && (
                   <ReferenceLine
                     y={sessionAvg}
-                    stroke="rgb(var(--fg-subtle))"
+                    stroke="var(--fg-subtle)"
                     strokeDasharray="4 4"
                     label={{
                       value: "avg",
@@ -755,7 +755,7 @@ export function Mining() {
                 <Line
                   type="monotone"
                   dataKey="hashrate"
-                  stroke="rgb(var(--accent))"
+                  stroke="var(--accent)"
                   strokeWidth={2}
                   dot={false}
                   isAnimationActive={false}

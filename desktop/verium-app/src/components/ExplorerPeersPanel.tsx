@@ -89,6 +89,21 @@ export function ExplorerPeersPanel() {
     );
   }, [addedNodes.data]);
 
+  const addedConnected = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const n of addedNodes.data ?? []) {
+      map.set(n.addednode.toLowerCase(), n.connected);
+    }
+    return map;
+  }, [addedNodes.data]);
+
+  const staleAddedNodes = useMemo(() => {
+    return (addedNodes.data ?? []).filter((n) => {
+      const match = n.addednode.match(/:(\d+)$/);
+      return match != null && Number(match[1]) !== profile.defaultP2pPort;
+    });
+  }, [addedNodes.data, profile.defaultP2pPort]);
+
   const invalidatePeerQueries = () => {
     void queryClient.invalidateQueries({
       queryKey: coinQueryKey(coin, "getpeerinfo"),
@@ -162,11 +177,14 @@ export function ExplorerPeersPanel() {
           <CardDescription>
             Peers seen by the official explorer in the last 24 hours.{" "}
             <span className="font-medium text-fg-muted">Try once</span> and{" "}
-            <span className="font-medium text-fg-muted">Add</span> call your
-            local <span className="font-mono">{profile.binaryName}</span>{" "}
-            <span className="font-mono">addnode</span> RPC (runtime only — not
+            <span className="font-medium text-fg-muted">Add</span> dial{" "}
+            <span className="font-mono">IP:{profile.defaultP2pPort}</span> on your
+            local <span className="font-mono">{profile.binaryName}</span> (
+            <span className="font-mono">addnode</span> RPC, runtime only — not
             written to <span className="font-mono">{profile.confFilename}</span>
-            ). Use the copy icon for a conf line. Same list as{" "}
+            ). Explorer reports ephemeral ports that cannot be dialed; the wallet
+            uses the chain P2P port instead. Use the copy icon for a conf line.
+            Same list as{" "}
             <ExplorerLink
               coin={coin}
               target={{ kind: "raw", url: explorerPeersHash(coin) }}
@@ -243,6 +261,17 @@ export function ExplorerPeersPanel() {
           </div>
         )}
 
+        {daemonConnected && staleAddedNodes.length > 0 && (
+          <div className="mx-4 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            {staleAddedNodes.length} addnode target
+            {staleAddedNodes.length === 1 ? " uses" : "s use"} a non-P2P port
+            (for example <span className="font-mono">:46816</span> instead of{" "}
+            <span className="font-mono">:{profile.defaultP2pPort}</span>). Restart{" "}
+            {profile.displayName} to clear them, then Add peers again from this
+            list.
+          </div>
+        )}
+
         {!explorerPeers.isError && (
           <div className="max-h-[420px] overflow-auto">
             <table className="w-full border-collapse text-sm">
@@ -260,6 +289,8 @@ export function ExplorerPeersPanel() {
                 {filtered.map((p) => {
                   const connected = connectedAddrs.has(p.address.toLowerCase());
                   const added = addedSet.has(p.address.toLowerCase());
+                  const addedIsConnected =
+                    addedConnected.get(p.address.toLowerCase()) === true;
                   const pending =
                     (addNode.isPending && addNode.variables?.node === p.address) ||
                     (addAllNodes.isPending &&
@@ -302,8 +333,11 @@ export function ExplorerPeersPanel() {
                       <td className="px-4 py-2">
                         <div className="flex flex-wrap gap-1">
                           {connected && <Badge tone="success">Connected</Badge>}
-                          {added && !connected && (
+                          {added && !connected && addedIsConnected && (
                             <Badge tone="accent">Added</Badge>
+                          )}
+                          {added && !connected && !addedIsConnected && (
+                            <Badge tone="warning">Retrying</Badge>
                           )}
                           {p.connected_on_explorer && !connected && (
                             <Badge tone="neutral">Live on network</Badge>

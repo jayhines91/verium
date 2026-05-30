@@ -34,6 +34,7 @@ pub enum RecoveryHint {
     ResetCredentials,
     ChangeDatadir,
     QuitOtherInstance,
+    ClearInvalidBlock,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +140,7 @@ impl RecoveryHint {
             RecoveryHint::ResetCredentials => "reset_credentials",
             RecoveryHint::ChangeDatadir => "change_datadir",
             RecoveryHint::QuitOtherInstance => "quit_other_instance",
+            RecoveryHint::ClearInvalidBlock => "clear_invalid_block",
         }
     }
 }

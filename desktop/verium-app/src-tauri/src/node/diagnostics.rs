@@ -49,6 +49,8 @@ const SYNC_STALL_MARKERS: &[&str] = &[
     "ProcessNewBlock: AcceptBlock FAILED (bad-tx-timestamp",
 ];
 
+const INVALID_BLOCK_STALL_MARKER: &str = "is marked invalid";
+
 const CORRUPTION_MAX_AGE_SECS: i64 = 20 * 60;
 const NODE_STARTING_MAX_AGE_SECS: i64 = 180;
 
@@ -78,6 +80,42 @@ pub fn detect_sync_stall(lines: &[String]) -> Option<String> {
         return Some(line.trim().to_string());
     }
     None
+}
+
+fn extract_block_hash_from_invalid_line(line: &str) -> Option<String> {
+    let needle = "block ";
+    let start = line.find(needle)? + needle.len();
+    let hash = line[start..].split_whitespace().next()?;
+    if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(hash.to_string())
+    } else {
+        None
+    }
+}
+
+/// Detect sync stuck because a main-chain block was incorrectly marked invalid in
+/// the local block index (peers disconnect when relaying that header).
+pub fn detect_invalid_block_stall(lines: &[String]) -> Option<String> {
+    let now = Utc::now();
+    let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    for line in lines.iter().rev().take(80) {
+        if !line.contains(INVALID_BLOCK_STALL_MARKER) {
+            continue;
+        }
+        if let Some(ts) = parse_log_timestamp(line) {
+            let age = now.signed_duration_since(ts).num_seconds();
+            if age > CORRUPTION_MAX_AGE_SECS {
+                continue;
+            }
+        }
+        if let Some(hash) = extract_block_hash_from_invalid_line(line) {
+            *counts.entry(hash).or_insert(0) += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(hash, _)| hash)
 }
 
 pub fn detect_chain_corruption(lines: &[String]) -> Option<String> {
@@ -159,6 +197,27 @@ pub struct ReindexProgress {
 
 const REINDEX_PROGRESS_MAX_AGE_SECS: i64 = 600;
 
+/// Matches frontend `SYNCED_BLOCK_LAG_THRESHOLD`.
+const RPC_SYNCED_BLOCK_LAG: u64 = 2;
+
+/// True when getblockchaininfo indicates the node is caught up (not IBD, blocks ≈ headers).
+pub fn rpc_reports_synced(
+    connected: bool,
+    initial_block_download: Option<bool>,
+    blocks: Option<u64>,
+    headers: Option<u64>,
+) -> bool {
+    if !connected {
+        return false;
+    }
+    if initial_block_download.unwrap_or(false) {
+        return false;
+    }
+    let blocks = blocks.unwrap_or(0);
+    let headers = headers.unwrap_or(blocks);
+    blocks.saturating_add(RPC_SYNCED_BLOCK_LAG) >= headers
+}
+
 pub fn detect_reindex_progress(session: &[String]) -> Option<ReindexProgress> {
     let now = Utc::now();
     let mut peer_height: Option<u64> = None;
@@ -207,8 +266,14 @@ pub fn detect_reindex_progress(session: &[String]) -> Option<ReindexProgress> {
     })
 }
 
-pub fn detect_reindex_active_session(lines: &[String]) -> bool {
-    detect_reindex_progress(&current_log_session(lines)).is_some()
+/// True when the current session shows an active `-reindex` rebuild. Header validation
+/// (`Checking block header #…`) also runs during normal sync and must not count alone.
+pub fn detect_reindex_active_session(lines: &[String], pending_reindex: bool) -> bool {
+    let session = current_log_session(lines);
+    if detect_reindex_file_rebuild_session(&session) {
+        return true;
+    }
+    pending_reindex && detect_reindex_progress(&session).is_some()
 }
 
 /// True when the current log session shows an actual `-reindex` rebuild (not
@@ -266,6 +331,16 @@ mod tests {
     }
 
     #[test]
+    fn detects_invalid_block_stall_hash() {
+        let hash = "8241e46975881e16cfaf0c8d380427b501852985a76e98f4e6eb79f9287db89f";
+        let lines = vec![format!(
+            "{} ERROR: AcceptBlockHeader: block {hash} is marked invalid",
+            recent_ts()
+        )];
+        assert_eq!(detect_invalid_block_stall(&lines).as_deref(), Some(hash));
+    }
+
+    #[test]
     fn detects_datadir_lock_message() {
         let lines = vec![format!(
             "{} Cannot obtain a lock on data directory",
@@ -296,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn reindex_active_session_detects_late_header_progress() {
+    fn reindex_active_session_detects_late_header_progress_with_pending_flag() {
         let late_headers = vec![
             format!("{} Checking block header #23998 (PoW) work", recent_ts()),
             format!("{} Checking block header #23999 (PoW) work", recent_ts()),
@@ -307,6 +382,21 @@ mod tests {
             ),
         ];
         assert!(!detect_reindex_file_rebuild_session(&late_headers));
-        assert!(detect_reindex_active_session(&late_headers));
+        assert!(!detect_reindex_active_session(&late_headers, false));
+        assert!(detect_reindex_active_session(&late_headers, true));
+    }
+
+    #[test]
+    fn header_validation_alone_is_not_reindex() {
+        let synced_session = vec![
+            format!("{} Vericoin version v2.0.1", recent_ts()),
+            format!(
+                "{} Checking block header #6977398 (PoW) work",
+                recent_ts()
+            ),
+        ];
+        assert!(!detect_reindex_file_rebuild_session(&synced_session));
+        assert!(!detect_reindex_active_session(&synced_session, false));
+        assert!(rpc_reports_synced(true, Some(false), Some(6_977_398), Some(6_977_398)));
     }
 }

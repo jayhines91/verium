@@ -24,7 +24,8 @@ export type RecoveryHint =
   | "install_binary"
   | "reset_credentials"
   | "change_datadir"
-  | "quit_other_instance";
+  | "quit_other_instance"
+  | "clear_invalid_block";
 
 const STATE_LABELS: Record<NodeState, string> = {
   initializing: "Initializing",
@@ -87,6 +88,8 @@ export function recoveryActionLabel(hint: RecoveryHint): string {
       return "Change data folder";
     case "quit_other_instance":
       return "Quit other instance";
+    case "clear_invalid_block":
+      return "Clear invalid block";
     default:
       return "Retry";
   }

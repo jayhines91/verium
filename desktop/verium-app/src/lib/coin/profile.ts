@@ -9,6 +9,7 @@ export interface CoinProfile {
   confFilename: string;
   chainArg?: string;
   defaultRpcPort: number;
+  defaultP2pPort: number;
   earnMode: "mining" | "staking";
   confirmationsMatured: number;
   /** Production explorer host used for REST/API fetches (see Rust `explorer_api_base`). */
@@ -26,6 +27,7 @@ export const COIN_PROFILES: Record<CoinId, CoinProfile> = {
     binaryName: "veriumd",
     confFilename: "vericonomy.conf",
     defaultRpcPort: 33987,
+    defaultP2pPort: 36988,
     earnMode: "mining",
     confirmationsMatured: 100,
     explorerApiBase: "https://explorer-vrm.vericonomy.com",
@@ -41,6 +43,7 @@ export const COIN_PROFILES: Record<CoinId, CoinProfile> = {
     confFilename: "vericonomy.conf",
     chainArg: "-chain=vericoin",
     defaultRpcPort: 58683,
+    defaultP2pPort: 58684,
     earnMode: "staking",
     confirmationsMatured: 500,
     explorerApiBase: "https://explorer-vrc.vericonomy.com",
@@ -66,4 +69,15 @@ export function isValidCoinId(value: string): value is CoinId {
 
 export function coinQueryKey(coin: CoinId, ...parts: unknown[]): unknown[] {
   return [coin, ...parts];
+}
+
+/** INI section in `vericonomy.conf` for the given coin and network mode. */
+export function getNodeConfSection(
+  coin: CoinId,
+  networkMode: "mainnet" | "binarytest" = "mainnet",
+): string {
+  if (networkMode === "binarytest") {
+    return coin === "verium" ? "binarytest-verium" : "binarytest-vericoin";
+  }
+  return coin === "verium" ? "verium" : "vericoin";
 }

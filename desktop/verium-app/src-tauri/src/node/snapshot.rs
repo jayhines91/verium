@@ -133,10 +133,20 @@ fn classify_status(
     }
 
     if status.sync_stalled {
+        let hint = if status.invalid_block_hash.is_some() {
+            RecoveryHint::ClearInvalidBlock
+        } else {
+            RecoveryHint::RestartNode
+        };
         return (
             NodeState::SyncStalled,
-            Some(RecoveryHint::RestartNode),
-            "Node sync appears stalled. Try restarting the node.".into(),
+            Some(hint),
+            if status.invalid_block_hash.is_some() {
+                "Sync is blocked by a block incorrectly marked invalid in the local index."
+                    .into()
+            } else {
+                "Node sync appears stalled. Try restarting the node.".into()
+            },
         );
     }
 

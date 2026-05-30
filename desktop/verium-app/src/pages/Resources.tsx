@@ -5,7 +5,7 @@ import {
   HardDriveDownload,
   PackageOpen,
   ScanSearch,
-  Twitter,
+  X,
 } from "lucide-react";
 import {
   Card,
@@ -128,7 +128,7 @@ export function Resources() {
           cta="Open website"
         />
         <ResourceCard
-          icon={Twitter}
+          icon={X}
           title="Twitter / X"
           description="Announcements and community updates from @vericonomy."
           href={COMMUNITY_TWITTER}

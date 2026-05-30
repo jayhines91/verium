@@ -266,25 +266,25 @@ export function ExplorerRecentBlocks({
                 <tr>
                   <th className="px-4 py-2 text-left font-medium">Height</th>
 
-                  <th className="px-4 py-2 text-right font-medium bg-white dark:bg-slate-900 ">
+                  <th className="px-4 py-2 text-right font-medium  ">
                     Time
                   </th>
 
-                  <th className="px-4 py-2 text-right font-medium bg-white dark:bg-slate-900 ">
+                  <th className="px-4 py-2 text-right font-medium ">
                     Txs
                   </th>
 
-                  <th className="px-4 py-2 text-right font-medium bg-white dark:bg-slate-900 ">
+                  <th className="px-4 py-2 text-right font-medium ">
                     Out
                   </th>
 
                   {isDashboard && (
                     <>
-                      <th className="hidden px-4 py-2 text-right font-medium bg-white dark:bg-slate-900  sm:table-cell">
+                      <th className="hidden px-4 py-2 text-right font-medium  sm:table-cell">
                         Size
                       </th>
 
-                      <th className="hidden px-4 py-2 text-right font-medium bg-white dark:bg-slate-900  md:table-cell">
+                      <th className="hidden px-4 py-2 text-right font-medium   md:table-cell">
                         Difficulty
                       </th>
                     </>
