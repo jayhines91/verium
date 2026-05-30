@@ -241,8 +241,16 @@ export async function rpcListAddressGroupings(coin: CoinId): Promise<string[]> {
   return invoke<string[]>("list_address_groupings", { coin });
 }
 
-export async function rpcMinerStart(coin: CoinId, threads: number): Promise<MinerLocalState> {
-  return invoke<MinerLocalState>("miner_start", { coin, threads });
+export async function rpcMinerStart(
+  coin: CoinId,
+  threads: number,
+  rewardAddress?: string,
+): Promise<MinerLocalState> {
+  return invoke<MinerLocalState>("miner_start", {
+    coin,
+    threads,
+    rewardAddress: rewardAddress?.trim() || null,
+  });
 }
 
 export async function rpcMinerStop(coin: CoinId): Promise<MinerLocalState> {

@@ -11,6 +11,7 @@ import {
   isOnAcPower,
   resolveMiningThreads,
 } from "@/lib/mining-opt";
+import { miningRewardAddressForStart } from "@/lib/mining-reward-address";
 import {
   rpcGetBlockchainInfo,
   rpcGetMinerState,
@@ -106,7 +107,7 @@ export function useAutoMine() {
         prefs.auto_mine_threads ?? 2,
       );
       try {
-        await rpcMinerStart(VERIUM, threads);
+        await rpcMinerStart(VERIUM, threads, miningRewardAddressForStart(prefs));
         lastErrorRef.current = null;
         void queryClient.invalidateQueries({
           queryKey: coinQueryKey(VERIUM, "get_miner_state"),
@@ -128,6 +129,8 @@ export function useAutoMine() {
     prefs.verium_enabled,
     prefs.auto_adjust_mine_threads,
     prefs.auto_mine_threads,
+    prefs.mining_reward_address_mode,
+    prefs.mining_reward_address,
     topology.data,
     status?.connected,
     status?.warming_up,

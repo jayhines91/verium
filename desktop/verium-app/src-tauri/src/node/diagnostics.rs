@@ -157,6 +157,8 @@ pub struct ReindexProgress {
     pub message: String,
 }
 
+const REINDEX_PROGRESS_MAX_AGE_SECS: i64 = 600;
+
 pub fn detect_reindex_progress(session: &[String]) -> Option<ReindexProgress> {
     let now = Utc::now();
     let mut peer_height: Option<u64> = None;
@@ -165,7 +167,7 @@ pub fn detect_reindex_progress(session: &[String]) -> Option<ReindexProgress> {
     for line in session.iter().rev().take(40) {
         if let Some(ts) = parse_log_timestamp(line) {
             let age = now.signed_duration_since(ts).num_seconds();
-            if age > 120 {
+            if age > REINDEX_PROGRESS_MAX_AGE_SECS {
                 continue;
             }
         } else {

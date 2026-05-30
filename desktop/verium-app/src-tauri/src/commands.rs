@@ -15,10 +15,10 @@ use crate::coin_profile::{
     all_profile_summaries, assert_vericoin, assert_verium, parse_coin_id, CoinId,
 };
 use crate::config::{
-    apply_partial_to_config, chain_datadir, ensure_daemon_conf_complete, ensure_first_run_config, generate_rpc_password, generate_rpc_user,
-    migrate_legacy_root_chain_data, prepare_chain_for_reindex, legacy_subdir_chain_ahead,
-    promote_subdir_chain_data_for_legacy,
-    recover_split_chain_layout, should_migrate_root_chain_data,
+    apply_partial_to_config, chain_datadir, chain_index_needs_rebuild, chain_snapshot_needs_reindex,
+    ensure_daemon_conf_complete, ensure_first_run_config, generate_rpc_password, generate_rpc_user,
+    promote_subdir_chain_data_for_legacy, verium_uses_legacy_flat,
+    prepare_chain_for_reindex, legacy_subdir_chain_ahead,
     node_conf_dir, refresh_config_paths,
     rpc_auth_diagnostics, save_app_daemon_config, is_live_wallet_destination,
     path_for_veriumd_rpc, resolve_wallet_dat_path, suggested_wallet_backup_path,
@@ -44,7 +44,7 @@ use crate::logs::{
 use crate::node::orchestrator::maybe_emit_state;
 use crate::node::snapshot::{detect_binary_for_coin, snapshot_from_status};
 use crate::node::status::{apply_snapshot, disconnected, warming_up, NodeStatus};
-use crate::node::constants::REPAIR_BACKOFF;
+use crate::node::constants::{REINDEX_LOG_MAX_AGE, REPAIR_BACKOFF};
 use crate::prefs::{self, PartialUserPreferences, UserPreferences};
 use crate::rpc::RpcClient;
 use crate::state::{AppState, EarnLocalState, MinerLocalState};
@@ -324,6 +324,17 @@ async fn suppress_competing_auto_start(
                 return true;
             }
         }
+        if reindex_running_live(state, coin, cfg).await {
+            return true;
+        }
+    }
+    if state.pending_reindex_active(coin) {
+        if reindex_running_live(state, coin, cfg).await
+            || native_daemon_image_running(coin)
+            || daemon_process_live(state, coin, cfg).await
+        {
+            return true;
+        }
     }
     if state.spawn_recent(coin) && !pids_listening_on_port(cfg.rpc_port).is_empty() {
         if !rpc_auth_failed(coin, cfg).await {
@@ -331,6 +342,16 @@ async fn suppress_competing_auto_start(
         }
     }
     daemon_boot_in_progress(state, coin, cfg).await
+}
+
+fn daemon_needs_reindex_start(state: &AppState, coin: CoinId, cfg: &DaemonConfig) -> bool {
+    if coin == CoinId::Verium && verium_uses_legacy_flat(cfg) {
+        return false;
+    }
+    if state.pending_reindex_active(coin) {
+        return true;
+    }
+    chain_index_needs_rebuild(&chain_datadir(coin, cfg))
 }
 
 pub(crate) async fn bootstrap_suppresses_auto_start(
@@ -357,7 +378,14 @@ pub(crate) async fn reindex_running_live(
 ) -> bool {
     let datadir = chain_datadir(coin, cfg);
     let log_path = datadir.join("debug.log");
-    if !log_recently_modified(&log_path, Duration::from_secs(120)) {
+    let process_up =
+        daemon_process_live(state, coin, cfg).await || native_daemon_image_running(coin);
+
+    if state.pending_reindex_active(coin) && process_up {
+        return true;
+    }
+
+    if !log_recently_modified(&log_path, REINDEX_LOG_MAX_AGE) {
         return false;
     }
     let lines = tail_debug_log(&datadir, 120).await.unwrap_or_default();
@@ -368,7 +396,7 @@ pub(crate) async fn reindex_running_live(
     }
     // RPC may be unavailable during reindex (port conflict or slow bind) — still
     // treat an active reindex log plus a live process as "do not restart".
-    daemon_process_live(state, coin, cfg).await || native_daemon_image_running(coin)
+    process_up
 }
 
 async fn stop_daemon_fully_for_repair(state: &AppState, coin: CoinId, cfg: &DaemonConfig) {
@@ -411,7 +439,9 @@ pub(crate) async fn start_inner_impl(state: &AppState, coin: CoinId, force: bool
         if rpc_auth_failed(coin, &cfg).await {
             let datadir = chain_datadir(coin, &cfg);
             let lines = tail_debug_log(&datadir, 80).await.unwrap_or_default();
-            if detect_reindex_active_session(&lines) && native_daemon_image_running(coin) {
+            if (detect_reindex_active_session(&lines) || state.pending_reindex_active(coin))
+                && native_daemon_image_running(coin)
+            {
                 tracing::info!(
                     "start: port {} in use during active reindex — waiting for RPC",
                     cfg.rpc_port
@@ -461,9 +491,13 @@ pub(crate) async fn start_inner_impl(state: &AppState, coin: CoinId, force: bool
     }
     if let Some(detail) = detect_chain_corruption_session(&lines) {
         if !is_timestamp_rule_failure(&detail) {
-            if crate::config::chain_snapshot_needs_reindex(&chain_datadir(coin, &cfg)) {
+            if chain_snapshot_needs_reindex(&chain_datadir(coin, &cfg)) {
                 tracing::info!(
                     "start: {binary} has block files but no chainstate — use Download snapshot, not auto-reindex"
+                );
+            } else if coin == CoinId::Verium && verium_uses_legacy_flat(&cfg) {
+                tracing::info!(
+                    "start: {binary} chain DB error — use Download snapshot (mainnet does not auto-reindex)"
                 );
             } else {
                 tracing::info!(
@@ -473,6 +507,13 @@ pub(crate) async fn start_inner_impl(state: &AppState, coin: CoinId, force: bool
             }
         }
     }
+    if daemon_needs_reindex_start(state, coin, &cfg) {
+        tracing::info!(
+            "start: {binary} block index needs rebuild — launching with -reindex"
+        );
+        state.mark_pending_reindex(coin);
+        return start_with_chain_repair(state, coin, &cfg).await;
+    }
     let _pid = state.daemon(coin)?.start(&cfg, &[]).await?;
     state.mark_spawn(coin);
     Ok(())
@@ -480,6 +521,11 @@ pub(crate) async fn start_inner_impl(state: &AppState, coin: CoinId, force: bool
 
 pub(crate) async fn start_with_chain_repair(state: &AppState, coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {
     let binary = coin.binary_base();
+    if coin == CoinId::Verium && verium_uses_legacy_flat(cfg) {
+        return Err(AppError::other(format!(
+            "{binary} mainnet never uses -reindex. Download the blockchain snapshot instead."
+        )));
+    }
     if reindex_running_live(state, coin, cfg).await {
         tracing::info!("repair: {binary} reindex already running — not interrupting");
         if let Ok(d) = state.daemon(coin) {
@@ -509,6 +555,7 @@ pub(crate) async fn start_with_chain_repair(state: &AppState, coin: CoinId, cfg:
     }
 
     prepare_chain_for_reindex(coin, cfg)?;
+    state.mark_pending_reindex(coin);
     state.daemon(coin)?.start(cfg, &["-reindex"]).await?;
     state.mark_spawn(coin);
     state.mark_repair_attempt(coin);
@@ -627,6 +674,10 @@ pub async fn get_node_status(
     if status.connected {
         state.inner().clear_auto_reindex_attempt(coin);
         state.inner().clear_bootstrap_loading(coin);
+        if status.blocks.unwrap_or(0) > 10_000 {
+            state.inner().clear_pending_reindex(coin);
+        }
+        state.inner().clear_auth_restart_attempts(coin);
     }
     let binary = detect_binary_for_coin(coin);
     let snap = snapshot_from_status(coin, &status, &binary);
@@ -642,17 +693,6 @@ async fn enrich_status_from_log(
     cfg: &DaemonConfig,
     datadir: &std::path::Path,
 ) -> NodeStatus {
-    if crate::config::chain_snapshot_needs_reindex(datadir) {
-        status.chain_corrupt = true;
-        status.needs_bootstrap = true;
-        status.reindex_in_progress = reindex_running_live(state, coin, cfg).await;
-        status.error = Some(
-            "Blockchain snapshot is incomplete (chainstate missing). \
-             Download blockchain snapshot to sync quickly — do not use Repair unless bootstrap fails."
-                .into(),
-        );
-    }
-
     let lines = tail_debug_log(datadir, 120).await.unwrap_or_default();
     let session = current_log_session(&lines);
     let log_path = datadir.join("debug.log");
@@ -666,10 +706,26 @@ async fn enrich_status_from_log(
             status.warming_up = true;
             status.connected = true;
             status.chain_corrupt = false;
+            status.needs_bootstrap = false;
             status.daemon_phase = Some("reindexing".into());
             status.error = Some(progress.message);
             return status;
         }
+    }
+
+    if crate::config::chain_snapshot_needs_reindex(datadir) {
+        status.chain_corrupt = true;
+        status.needs_bootstrap = true;
+        status.reindex_in_progress = if coin == CoinId::Verium && verium_uses_legacy_flat(cfg) {
+            false
+        } else {
+            reindex_running_live(state, coin, cfg).await
+        };
+        status.error = Some(
+            "Blockchain snapshot is incomplete (chainstate missing). \
+             Download blockchain snapshot to sync quickly — do not use Repair unless bootstrap fails."
+                .into(),
+        );
     }
 
     if !status.connected || status.warming_up {
@@ -979,13 +1035,25 @@ pub async fn miner_start(
     state: State<'_, AppState>,
     coin: String,
     threads: u32,
+    reward_address: Option<String>,
 ) -> AppResult<MinerLocalState> {
     let coin = parse_coin_id(&coin)?;
     assert_verium(coin)?;
+    let mut params = vec![json!(threads)];
+    if let Some(addr) = reward_address.and_then(|a| {
+        let trimmed = a.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }) {
+        params.push(json!(addr));
+    }
     let _: Value = state
         .rpc_client(coin)
         .await?
-        .call("minerstart", json!([threads]))
+        .call("minerstart", json!(params))
         .await?;
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -1922,11 +1990,12 @@ pub(crate) async fn restart_daemon_full_cycle(state: &AppState, coin: CoinId) ->
     let lines = tail_debug_log(&chain_datadir(coin, &cfg), 80)
         .await
         .unwrap_or_default();
-    let needs_reindex = detect_chain_corruption_session(&lines).is_some();
+    let needs_reindex = detect_chain_corruption_session(&lines).is_some()
+        || daemon_needs_reindex_start(state, coin, &cfg);
     stop_daemon_fully_for_repair(state, coin, &cfg).await;
     if needs_reindex {
         tracing::info!(
-            "restart ({}): chain DB error in debug.log — repairing with -reindex",
+            "restart ({}): chain index rebuild required — repairing with -reindex",
             coin.as_str()
         );
         start_with_chain_repair(state, coin, &cfg).await
@@ -2342,6 +2411,20 @@ pub(crate) async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &
         );
         return;
     }
+    if state.bootstrap_loading_active(coin) {
+        let child_up = match state.daemon(coin) {
+            Ok(d) => d.child_running().await,
+            Err(_) => false,
+        };
+        if reindex_running_live(state, coin, cfg).await || rpc_reachable(coin, cfg).await || child_up
+        {
+            tracing::debug!(
+                "ensure ({}): skipped while post-bootstrap chain is loading",
+                coin.as_str()
+            );
+            return;
+        }
+    }
     if bootstrap_suppresses_auto_start(state, coin, cfg).await {
         tracing::debug!(
             "ensure ({}): skipped while post-bootstrap node is already starting",
@@ -2365,6 +2448,15 @@ pub(crate) async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &
     }
 
     if native_daemon_image_running(coin) && pids_listening_on_port(cfg.rpc_port).is_empty() {
+        if reindex_running_live(state, coin, cfg).await || state.pending_reindex_active(coin) {
+            state.set_daemon_phase(coin, "reindexing");
+            tracing::debug!(
+                "ensure ({}): native {} reindex in progress without RPC — not interrupting",
+                coin.as_str(),
+                coin.binary_base()
+            );
+            return;
+        }
         let ours = match state.daemon(coin) {
             Ok(d) => d.child_running().await,
             Err(_) => false,
@@ -2416,9 +2508,16 @@ pub(crate) async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &
             );
             return;
         }
-        if crate::config::chain_snapshot_needs_reindex(&datadir) {
+        if chain_snapshot_needs_reindex(&datadir) {
             tracing::info!(
                 "ensure ({}): incomplete snapshot — use Download snapshot, not auto-reindex",
+                coin.as_str()
+            );
+            return;
+        }
+        if coin == CoinId::Verium && verium_uses_legacy_flat(cfg) {
+            tracing::info!(
+                "ensure ({}): chain DB error — use Download snapshot (mainnet does not auto-reindex)",
                 coin.as_str()
             );
             return;
@@ -2430,6 +2529,25 @@ pub(crate) async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &
         state.mark_repair_attempt(coin);
         if let Err(e) = start_with_chain_repair(state, coin, cfg).await {
             tracing::warn!("ensure ({}): chain repair start failed: {e}", coin.as_str());
+        }
+        return;
+    }
+
+    if daemon_needs_reindex_start(state, coin, cfg) {
+        if state.repair_backoff_active(coin) {
+            tracing::debug!(
+                "ensure ({}): index rebuild backoff active ({REPAIR_BACKOFF:?})",
+                coin.as_str()
+            );
+            return;
+        }
+        tracing::info!(
+            "ensure ({}): block index needs rebuild — launching with -reindex",
+            coin.as_str()
+        );
+        state.mark_repair_attempt(coin);
+        if let Err(e) = start_with_chain_repair(state, coin, cfg).await {
+            tracing::warn!("ensure ({}): index rebuild start failed: {e}", coin.as_str());
         }
         return;
     }
@@ -2617,23 +2735,12 @@ pub async fn ensure_daemon_connected(
 
 pub(crate) async fn startup_prepare_chain_data(state: &AppState, coin: CoinId) -> AppResult<()> {
     let mut cfg = state.config_fresh(coin).await?;
-    let unified = detect_binary(coin)
-        .path
-        .as_ref()
-        .map(|p| binary_supports_unified_chain_selector(std::path::Path::new(p), coin))
-        .unwrap_or(false);
 
-    let needs_layout_fix = if unified {
-        should_migrate_root_chain_data(coin, &cfg)
-    } else {
-        legacy_subdir_chain_ahead(coin, &cfg)
-    };
-
-    if needs_layout_fix {
+    if coin == CoinId::Verium && verium_uses_legacy_flat(&cfg) && legacy_subdir_chain_ahead(coin, &cfg)
+    {
         tracing::info!(
-            "startup ({}): preparing chain layout for {} veriumd",
-            coin.as_str(),
-            if unified { "unified" } else { "legacy" }
+            "startup ({}): promoting unified subdir chain data to legacy flat layout",
+            coin.as_str()
         );
         if let Ok(daemon) = state.daemon(coin) {
             if let Ok(client) = RpcClient::from_config_for_coin(coin, &cfg) {
@@ -2646,25 +2753,7 @@ pub(crate) async fn startup_prepare_chain_data(state: &AppState, coin: CoinId) -
         kill_port_listeners(cfg.rpc_port);
         force_stop_native_daemon(coin);
         tokio::time::sleep(Duration::from_millis(2000)).await;
-
-        if unified {
-            if recover_split_chain_layout(coin, &cfg)? {
-                tracing::info!(
-                    "startup ({}): recovered split chain data into unified datadir",
-                    coin.as_str()
-                );
-            } else if migrate_legacy_root_chain_data(coin, &cfg)? {
-                tracing::info!(
-                    "startup ({}): migrated legacy blocks/chainstate into chain datadir",
-                    coin.as_str()
-                );
-            }
-        } else if promote_subdir_chain_data_for_legacy(coin, &cfg)? {
-            tracing::info!(
-                "startup ({}): promoted bootstrap chain data from verium/ subdir to datadir root",
-                coin.as_str()
-            );
-        }
+        let _ = promote_subdir_chain_data_for_legacy(coin, &cfg)?;
     }
 
     ensure_daemon_conf_complete(coin, &mut cfg)?;
@@ -2718,6 +2807,16 @@ pub async fn repair_chain(
             message: result.message,
             mode: "bootstrap".into(),
         });
+    }
+
+    if coin == CoinId::Verium {
+        let cfg = state.config_fresh(coin).await?;
+        if verium_uses_legacy_flat(&cfg) {
+            return Err(AppError::other(format!(
+                "{binary} mainnet does not support -reindex or -reindex-chainstate. \
+                 Use mode=bootstrap to install the official snapshot."
+            )));
+        }
     }
 
     let start_mode = match mode_lower.as_str() {

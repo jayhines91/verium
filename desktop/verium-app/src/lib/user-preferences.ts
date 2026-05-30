@@ -21,6 +21,10 @@ export interface UserPreferences {
   notify_on_vrc_received?: boolean;
   /** When true, thread count follows CPU topology; when false, uses auto_mine_threads. */
   auto_adjust_mine_threads?: boolean;
+  /** "dynamic" (default) or "static" — how block rewards choose a payout address. */
+  mining_reward_address_mode?: "dynamic" | "static";
+  /** Wallet address for block rewards when mining_reward_address_mode is "static". */
+  mining_reward_address?: string;
   auto_mine_threads?: number;
   mining_power_watts?: number;
   mining_cost_per_kwh?: number;
@@ -51,6 +55,8 @@ const DEFAULT_PREFS: UserPreferences = {
   notify_on_vrm_received: true,
   notify_on_vrc_received: true,
   auto_adjust_mine_threads: true,
+  mining_reward_address_mode: "dynamic",
+  mining_reward_address: "",
   auto_mine_threads: 2,
   theme_mode: "system",
   wallet_unlock_duration_seconds: DEFAULT_WALLET_UNLOCK_SECONDS,

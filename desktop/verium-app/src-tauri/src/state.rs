@@ -28,10 +28,16 @@ struct Inner {
     last_spawn_at: Mutex<HashMap<CoinId, Instant>>,
     /// Throttle automatic chain repair retries per coin.
     last_repair_at: Mutex<HashMap<CoinId, Instant>>,
+    /// Unified bootstrap / stripped index: only start with `-reindex` until RPC syncs.
+    pending_reindex: Mutex<HashSet<CoinId>>,
+    auth_restart_attempts: Mutex<HashMap<CoinId, u32>>,
     daemon_phase: Mutex<HashMap<CoinId, String>>,
 }
 
-pub use crate::node::constants::{BOOTSTRAP_LOADING_GRACE, REPAIR_BACKOFF, SPAWN_COOLDOWN};
+pub use crate::node::constants::{
+    AUTH_RETRY_MAX, BOOTSTRAP_LOADING_GRACE, POST_BOOTSTRAP_REINDEX_GRACE, REPAIR_BACKOFF,
+    SPAWN_COOLDOWN,
+};
 
 pub struct CoinRuntime {
     pub coin: CoinId,
@@ -80,6 +86,8 @@ impl AppState {
                 auto_reindex_attempted: Mutex::new(HashSet::new()),
                 last_spawn_at: Mutex::new(HashMap::new()),
                 last_repair_at: Mutex::new(HashMap::new()),
+                pending_reindex: Mutex::new(HashSet::new()),
+                auth_restart_attempts: Mutex::new(HashMap::new()),
                 daemon_phase: Mutex::new(HashMap::new()),
             }),
         })
@@ -168,6 +176,52 @@ impl AppState {
             .auto_reindex_attempted
             .lock()
             .map(|set| set.contains(&coin))
+            .unwrap_or(false)
+    }
+
+    pub fn mark_pending_reindex(&self, coin: CoinId) {
+        if let Ok(mut set) = self.inner.pending_reindex.lock() {
+            set.insert(coin);
+        }
+    }
+
+    pub fn clear_pending_reindex(&self, coin: CoinId) {
+        if let Ok(mut set) = self.inner.pending_reindex.lock() {
+            set.remove(&coin);
+        }
+    }
+
+    pub fn pending_reindex_active(&self, coin: CoinId) -> bool {
+        self.inner
+            .pending_reindex
+            .lock()
+            .map(|set| set.contains(&coin))
+            .unwrap_or(false)
+    }
+
+    pub fn increment_auth_restart(&self, coin: CoinId) -> u32 {
+        self.inner
+            .auth_restart_attempts
+            .lock()
+            .map(|mut map| {
+                let next = map.get(&coin).copied().unwrap_or(0) + 1;
+                map.insert(coin, next);
+                next
+            })
+            .unwrap_or(0)
+    }
+
+    pub fn clear_auth_restart_attempts(&self, coin: CoinId) {
+        if let Ok(mut map) = self.inner.auth_restart_attempts.lock() {
+            map.remove(&coin);
+        }
+    }
+
+    pub fn auth_restart_exhausted(&self, coin: CoinId) -> bool {
+        self.inner
+            .auth_restart_attempts
+            .lock()
+            .map(|map| map.get(&coin).copied().unwrap_or(0) >= AUTH_RETRY_MAX)
             .unwrap_or(false)
     }
 

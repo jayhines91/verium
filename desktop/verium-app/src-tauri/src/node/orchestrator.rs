@@ -105,6 +105,7 @@ async fn supervise_coin(_app: &AppHandle, state: &AppState, coin: CoinId) {
         bootstrap_suppresses_auto_start, daemon_boot_in_progress, reindex_running_live,
         restart_daemon_full_cycle, rpc_auth_failed, rpc_reachable,
     };
+    use crate::config::{ensure_daemon_conf_complete, sync_cfg_rpc_credentials_from_conf};
 
     let prefs = prefs::load().await.unwrap_or_default();
     if !prefs::coin_enabled(&prefs, coin) {
@@ -125,6 +126,7 @@ async fn supervise_coin(_app: &AppHandle, state: &AppState, coin: CoinId) {
     }
 
     if rpc_reachable(coin, &cfg).await {
+        state.clear_auth_restart_attempts(coin);
         state.set_daemon_phase(coin, "connected");
         return;
     }
@@ -142,10 +144,28 @@ async fn supervise_coin(_app: &AppHandle, state: &AppState, coin: CoinId) {
     if !crate::daemon::pids_listening_on_port(cfg.rpc_port).is_empty()
         && rpc_auth_failed(coin, &cfg).await
     {
+        if state.pending_reindex_active(coin) || state.bootstrap_loading_active(coin) {
+            state.set_daemon_phase(coin, "reindexing");
+            return;
+        }
+        if state.auth_restart_exhausted(coin) {
+            tracing::warn!(
+                "supervisor ({}): RPC auth rejected — auto-restart budget exhausted; fix credentials in Settings",
+                coin.as_str()
+            );
+            state.set_daemon_phase(coin, "auth_mismatch");
+            return;
+        }
         tracing::warn!(
-            "supervisor ({}): RPC port open but credentials rejected — restarting node",
+            "supervisor ({}): RPC port open but credentials rejected — syncing conf and restarting node",
             coin.as_str()
         );
+        state.increment_auth_restart(coin);
+        if let Ok(mut fresh) = state.config_fresh(coin).await {
+            let _ = sync_cfg_rpc_credentials_from_conf(coin, &mut fresh);
+            let _ = ensure_daemon_conf_complete(coin, &mut fresh);
+            let _ = state.replace_config(coin, fresh).await;
+        }
         if restart_daemon_full_cycle(state, coin).await.is_ok() {
             state.set_daemon_phase(coin, "starting");
         }

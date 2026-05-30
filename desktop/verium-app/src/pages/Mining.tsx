@@ -49,6 +49,12 @@ import {
   resolveMiningThreads,
 } from "@/lib/mining-opt";
 import { MiningThreadControls } from "@/components/MiningThreadControls";
+import { MiningRewardAddressControls } from "@/components/MiningRewardAddressControls";
+import {
+  miningRewardAddressForStart,
+  staticMiningAddressConfigured,
+  type MiningRewardAddressMode,
+} from "@/lib/mining-reward-address";
 import {
   rpcGetBlockchainInfo,
   rpcGetMinerState,
@@ -174,7 +180,21 @@ export function Mining() {
   };
 
   const start = useMutation({
-    mutationFn: () => rpcMinerStart(coin, miningThreads),
+    mutationFn: () => {
+      if (
+        prefs.mining_reward_address_mode === "static" &&
+        !staticMiningAddressConfigured(prefs)
+      ) {
+        throw new Error(
+          "Choose a wallet address for mining rewards before starting in static mode.",
+        );
+      }
+      return rpcMinerStart(
+        coin,
+        miningThreads,
+        miningRewardAddressForStart(prefs),
+      );
+    },
     onSuccess: (state) => {
       clearMiningStoppedByUser();
       queryClient.setQueryData(coinQueryKey(coin, "get_miner_state"), state);
@@ -248,6 +268,8 @@ export function Mining() {
   }, [samples, minerState.data?.started_at, localHashrate]);
 
   const immature = wallet.data?.immature_balance ?? 0;
+  const staticMode = prefs.mining_reward_address_mode === "static";
+  const staticAddressMissing = staticMode && !staticMiningAddressConfigured(prefs);
 
   return (
     <WalletUnlockGate
@@ -349,6 +371,17 @@ export function Mining() {
                 void updatePrefs({ auto_mine_threads: threads })
               }
             />
+            <MiningRewardAddressControls
+              mode={(prefs.mining_reward_address_mode ?? "dynamic") as MiningRewardAddressMode}
+              address={prefs.mining_reward_address ?? ""}
+              disabled={active || start.isPending || stop.isPending}
+              onModeChange={(mode) =>
+                void updatePrefs({ mining_reward_address_mode: mode })
+              }
+              onAddressChange={(address) =>
+                void updatePrefs({ mining_reward_address: address })
+              }
+            />
             {(start.error || stop.error) && (
               <div className="max-w-[calc(100%-12rem)] text-xs text-danger">
                 {String(start.error ?? stop.error)}
@@ -377,7 +410,12 @@ export function Mining() {
               <Button
                 size="lg"
                 onClick={() => start.mutate()}
-                disabled={start.isPending || !chainSynced || syncStalled}
+                disabled={
+                  start.isPending ||
+                  !chainSynced ||
+                  syncStalled ||
+                  staticAddressMissing
+                }
                 className="h-12 min-w-[11.5rem] px-8 text-base font-semibold shadow-md"
               >
                 {start.isPending ? (

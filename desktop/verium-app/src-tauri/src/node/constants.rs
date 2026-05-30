@@ -9,6 +9,12 @@ pub const SPAWN_COOLDOWN: Duration = Duration::from_secs(60);
 /// How long to avoid auto-starting a second daemon after bootstrap restart.
 pub const BOOTSTRAP_LOADING_GRACE: Duration = Duration::from_secs(300);
 
+/// Unified bootstrap runs `-reindex` for hours; keep supervisor from competing that long.
+pub const POST_BOOTSTRAP_REINDEX_GRACE: Duration = Duration::from_secs(24 * 3600);
+
+/// Slow header verification can go minutes between log lines during `-reindex`.
+pub const REINDEX_LOG_MAX_AGE: Duration = Duration::from_secs(600);
+
 /// Minimum interval between automatic chain repair attempts for one coin.
 pub const REPAIR_BACKOFF: Duration = Duration::from_secs(60);
 

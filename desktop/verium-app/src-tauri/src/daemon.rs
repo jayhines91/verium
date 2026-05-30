@@ -8,7 +8,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
 use crate::coin_profile::CoinId;
-use crate::config::{app_config_base, sync_cfg_rpc_credentials_from_conf, sync_performance_overrides, DaemonConfig};
+use crate::config::{app_config_base, sync_cfg_rpc_credentials_from_conf, sync_performance_overrides, verium_uses_legacy_flat, DaemonConfig};
 use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,7 +69,16 @@ impl DaemonManager {
         let bin = resolve_daemon_binary(self.coin)
             .ok_or_else(|| AppError::other(format!("could not locate {} binary", self.coin.binary_base())))?;
         let bin = stage_sidecar_for_spawn(&bin)?;
-        let unified_chain = binary_supports_unified_chain_selector(&bin, self.coin);
+        let legacy_flat = self.coin == CoinId::Verium && verium_uses_legacy_flat(&cfg);
+        if legacy_flat && binary_supports_unified_chain_selector(&bin, self.coin) {
+            return Err(AppError::other(format!(
+                "Refusing to start unified vericoin/veriumd for Verium mainnet ({}) — \
+                 install the legacy verium-only v1.x sidecar (npm run fetch:veriumd).",
+                bin.display()
+            )));
+        }
+        let unified_chain =
+            !legacy_flat && binary_supports_unified_chain_selector(&bin, self.coin);
 
         let mut spawn_cfg = cfg.clone();
         sync_cfg_rpc_credentials_from_conf(self.coin, &mut spawn_cfg)?;
@@ -423,6 +432,17 @@ fn pick_preferred_sidecar(coin: CoinId, mut candidates: Vec<PathBuf>) -> Option<
     if candidates.is_empty() {
         return None;
     }
+    // Verium mainnet: legacy flat verium-only binary (no `-verium` selector). Unified
+    // vericoin/veriumd builds use a `verium/` subdir and incompatible bootstrap index.
+    if coin == CoinId::Verium {
+        if let Some(path) = candidates
+            .iter()
+            .find(|p| !binary_supports_unified_chain_selector(p, coin))
+        {
+            return Some(path.clone());
+        }
+        return None;
+    }
     if let Some(path) = candidates
         .iter()
         .find(|p| binary_supports_unified_chain_selector(p, coin))
@@ -622,6 +642,13 @@ pub fn binary_missing_hint(coin: CoinId) -> Option<String> {
         return None;
     }
     let name = coin.binary_base();
+    if coin == CoinId::Verium {
+        return Some(format!(
+            "{name} was not found. Verium mainnet requires the legacy flat-layout {name} \
+             (verium-only v1.x — not the unified vericoin/veriumd build). Set VERIUMD_LOCAL \
+             to a verium-only binary or build from verium-legacy/."
+        ));
+    }
     if sidecar_stub_present(coin) {
         let env_hint = match coin {
             CoinId::Verium => "VERIUMD_LOCAL or VERIUMD_PATH",

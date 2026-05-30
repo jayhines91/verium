@@ -50,6 +50,8 @@ import {
   optimizedMiningThreads,
 } from "@/lib/mining-opt";
 import { MiningThreadControls } from "@/components/MiningThreadControls";
+import { MiningRewardAddressControls } from "@/components/MiningRewardAddressControls";
+import type { MiningRewardAddressMode } from "@/lib/mining-reward-address";
 import {
   playBlockMinedSound,
   unlockBlockMinedAudio,
@@ -275,6 +277,17 @@ export function Settings() {
             onAutoAdjustChange={handleAutoAdjustChange}
             onManualThreadsChange={(threads) =>
               void updatePrefs({ auto_mine_threads: threads })
+            }
+          />
+          <MiningRewardAddressControls
+            compact
+            mode={(prefs.mining_reward_address_mode ?? "dynamic") as MiningRewardAddressMode}
+            address={prefs.mining_reward_address ?? ""}
+            onModeChange={(mode) =>
+              void updatePrefs({ mining_reward_address_mode: mode })
+            }
+            onAddressChange={(address) =>
+              void updatePrefs({ mining_reward_address: address })
             }
           />
           {prefs.auto_mine_on_open && (

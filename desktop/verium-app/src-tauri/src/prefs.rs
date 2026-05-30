@@ -46,6 +46,12 @@ pub struct UserPreferences {
     /// When true, thread count follows CPU topology; when false, uses auto_mine_threads.
     #[serde(default = "default_auto_adjust_mine_threads")]
     pub auto_adjust_mine_threads: bool,
+    /// "dynamic" (default) or "static" — how block rewards choose a payout address.
+    #[serde(default = "default_mining_reward_address_mode")]
+    pub mining_reward_address_mode: String,
+    /// Wallet address for block rewards when mining_reward_address_mode is "static".
+    #[serde(default)]
+    pub mining_reward_address: Option<String>,
     #[serde(default)]
     pub pause_mine_on_battery: bool,
     #[serde(default = "default_mine_core_affinity")]
@@ -93,6 +99,10 @@ fn default_auto_adjust_mine_threads() -> bool {
     true
 }
 
+fn default_mining_reward_address_mode() -> String {
+    "dynamic".to_string()
+}
+
 fn default_mine_core_affinity() -> String {
     "performance".to_string()
 }
@@ -135,6 +145,8 @@ impl Default for UserPreferences {
             notify_on_vrc_received: default_notify_on_vrc_received(),
             auto_mine_threads: default_auto_mine_threads(),
             auto_adjust_mine_threads: default_auto_adjust_mine_threads(),
+            mining_reward_address_mode: default_mining_reward_address_mode(),
+            mining_reward_address: None,
             pause_mine_on_battery: false,
             mine_core_affinity: default_mine_core_affinity(),
             mining_power_watts: None,
@@ -166,6 +178,8 @@ pub struct PartialUserPreferences {
     pub notify_on_vrc_received: Option<bool>,
     pub auto_mine_threads: Option<u32>,
     pub auto_adjust_mine_threads: Option<bool>,
+    pub mining_reward_address_mode: Option<String>,
+    pub mining_reward_address: Option<String>,
     pub pause_mine_on_battery: Option<bool>,
     pub mine_core_affinity: Option<String>,
     pub mining_power_watts: Option<f64>,
@@ -302,6 +316,12 @@ pub fn merge(current: UserPreferences, partial: PartialUserPreferences) -> UserP
         auto_adjust_mine_threads: partial
             .auto_adjust_mine_threads
             .unwrap_or(current.auto_adjust_mine_threads),
+        mining_reward_address_mode: partial
+            .mining_reward_address_mode
+            .unwrap_or(current.mining_reward_address_mode),
+        mining_reward_address: partial
+            .mining_reward_address
+            .or(current.mining_reward_address),
         pause_mine_on_battery: partial
             .pause_mine_on_battery
             .unwrap_or(current.pause_mine_on_battery),

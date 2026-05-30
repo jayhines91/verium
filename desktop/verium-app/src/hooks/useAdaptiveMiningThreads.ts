@@ -12,6 +12,7 @@ import {
   nextAdaptiveMiningThreads,
   type AdaptiveThreadState,
 } from "@/lib/mining-opt";
+import { miningRewardAddressForStart } from "@/lib/mining-reward-address";
 import {
   rpcGetMinerState,
   rpcMinerStart,
@@ -92,7 +93,11 @@ export function useAdaptiveMiningThreads() {
 
       applyingRef.current = true;
       try {
-        const updated = await rpcMinerStart(VERIUM, next);
+        const updated = await rpcMinerStart(
+          VERIUM,
+          next,
+          miningRewardAddressForStart(prefs),
+        );
         queryClient.setQueryData(
           coinQueryKey(VERIUM, "get_miner_state"),
           updated,
@@ -110,5 +115,5 @@ export function useAdaptiveMiningThreads() {
     void tick();
     const id = window.setInterval(() => void tick(), ADAPTIVE_MINING_POLL_MS);
     return () => window.clearInterval(id);
-  }, [enabled, minerState.data?.active, topology.data, queryClient]);
+  }, [enabled, minerState.data?.active, topology.data, queryClient, prefs]);
 }

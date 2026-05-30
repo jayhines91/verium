@@ -221,6 +221,7 @@ function copyLocalBinary(localPath, destPath) {
   }
   fs.copyFileSync(localPath, destPath);
   if (process.platform !== "win32") fs.chmodSync(destPath, 0o755);
+  assertLegacyFlatVeriumd(destPath);
   log(`copied ${localPath} -> ${destPath}`);
   warnIfNotDace("veriumd", destPath);
 }
@@ -256,6 +257,7 @@ function extractZip(zipBuffer, destPath, isWindows) {
   }
   fs.copyFileSync(found, destPath);
   if (!isWindows) fs.chmodSync(destPath, 0o755);
+  assertLegacyFlatVeriumd(destPath);
   try {
     fs.rmSync(tmp, { recursive: true, force: true });
   } catch {
@@ -273,6 +275,7 @@ function extractTarGz(tarBuffer, destPath) {
   if (!found) throw new Error("Could not find veriumd inside extracted archive");
   fs.copyFileSync(found, destPath);
   fs.chmodSync(destPath, 0o755);
+  assertLegacyFlatVeriumd(destPath);
   try {
     fs.rmSync(tmp, { recursive: true, force: true });
   } catch {
@@ -292,6 +295,27 @@ function findBinary(dir, name) {
     }
   }
   return null;
+}
+
+function supportsUnifiedVerium(binaryPath) {
+  if (!fs.existsSync(binaryPath)) return false;
+  try {
+    const r = spawnSync(binaryPath, ["-help"], { encoding: "utf8", timeout: 15000 });
+    const out = `${r.stdout || ""}${r.stderr || ""}`;
+    return out.includes("-verium");
+  } catch {
+    return false;
+  }
+}
+
+function assertLegacyFlatVeriumd(destPath) {
+  if (supportsUnifiedVerium(destPath)) {
+    throw new Error(
+      `Refusing to install unified vericoin/veriumd as the Verium mainnet sidecar (${destPath}). ` +
+        "Verium mainnet requires the legacy flat-layout verium-only binary (no -verium flag). " +
+        "Set VERIUMD_LOCAL to a verium-only build from verium-legacy/ or verium v1.x.",
+    );
+  }
 }
 
 function supportsBinarytest(binaryPath) {
@@ -328,13 +352,18 @@ function isRealBinary(filePath) {
 function discoverMonorepoBinary(isWindows) {
   const name = isWindows ? "veriumd.exe" : "veriumd";
   const candidates = [
+    path.join(ROOT, "..", "..", "..", "verium-legacy", "verium", "src", name),
+    path.join(ROOT, "..", "..", "..", "verium-legacy", "verium", "src", "qt", name),
+    path.join(ROOT, "..", "..", "..", "verium", "src", name),
     path.join(ROOT, "..", "..", "..", "vericoin", "src", name),
     path.join(ROOT, "..", "..", "..", "vericoin", "src", "qt", name),
     path.join(ROOT, "..", "..", "..", "vericoin", "build_msvc", "x64", "Release", name),
     path.join(ROOT, "..", "..", "verium", "src", name),
   ];
   for (const candidate of candidates) {
-    if (isRealBinary(candidate)) return candidate;
+    if (!isRealBinary(candidate)) continue;
+    if (supportsUnifiedVerium(candidate)) continue;
+    return candidate;
   }
   return null;
 }
@@ -408,6 +437,7 @@ async function main() {
         fs.writeFileSync(dest, buf);
         if (!isWindowsTriple(triple)) fs.chmodSync(dest, 0o755);
       }
+      assertLegacyFlatVeriumd(dest);
       log(`Sidecar installed: ${dest}`);
       warnIfNotDace("veriumd", dest);
       return;

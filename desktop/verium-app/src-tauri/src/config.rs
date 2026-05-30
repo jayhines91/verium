@@ -256,9 +256,11 @@ pub fn node_conf_dir(cfg: &DaemonConfig) -> PathBuf {
     cfg.datadir.clone()
 }
 
-/// Network-specific datadir where veriumd writes blocks, debug.log, and .cookie
-/// (matches `GetDataDir(true)` / `BaseParams().DataDir()` in the daemon).
+/// Network-specific datadir where veriumd writes blocks, debug.log, and .cookie.
 pub fn chain_datadir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
+    if verium_uses_legacy_flat(cfg) {
+        return cfg.datadir.clone();
+    }
     let mut p = cfg.datadir.clone();
     match cfg.chain.as_str() {
         "test" => p.push("testnet3"),
@@ -269,6 +271,12 @@ pub fn chain_datadir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
         _ => {}
     }
     p
+}
+
+/// Verium mainnet uses the legacy flat layout (`…/Verium/blocks`), matching
+/// verium-legacy / Verium-Qt and the official bootstrap CDN zips (no `-reindex`).
+pub fn verium_uses_legacy_flat(cfg: &DaemonConfig) -> bool {
+    cfg.chain == "main"
 }
 
 /// Remove corrupt block index LevelDB so veriumd can rebuild from existing blk*.dat via `-reindex`.
@@ -325,14 +333,24 @@ pub fn legacy_root_chain_dir(cfg: &DaemonConfig) -> PathBuf {
 }
 
 /// Where bootstrap must extract `blocks/` and `chainstate/` so the running daemon reads them.
-/// Unified v2 builds use `GetDataDir(true)` (`…/verium/`); legacy v1.x single-chain
-/// binaries use the parent `-datadir` root.
-pub fn bootstrap_chain_datadir(coin: CoinId, cfg: &DaemonConfig, unified_chain: bool) -> PathBuf {
-    if unified_chain {
+pub fn bootstrap_chain_datadir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
+    if coin == CoinId::Verium && verium_uses_legacy_flat(cfg) {
+        legacy_root_chain_dir(cfg)
+    } else if binary_supports_unified_subdir(coin, cfg) {
         chain_datadir(coin, cfg)
     } else {
         legacy_root_chain_dir(cfg)
     }
+}
+
+fn binary_supports_unified_subdir(coin: CoinId, cfg: &DaemonConfig) -> bool {
+    use crate::daemon::{binary_supports_unified_chain_selector, detect_binary};
+    detect_binary(coin)
+        .path
+        .as_ref()
+        .map(|p| binary_supports_unified_chain_selector(std::path::Path::new(p), coin))
+        .unwrap_or(false)
+        && !(coin == CoinId::Verium && verium_uses_legacy_flat(cfg))
 }
 
 /// True when bootstrap/chain data under `…/verium/` is much larger than the legacy root
@@ -353,6 +371,13 @@ pub fn legacy_subdir_chain_ahead(coin: CoinId, cfg: &DaemonConfig) -> bool {
     let sub_bytes = chain_snapshot_bytes(&sub_blocks, &sub_chainstate);
     let root_bytes = chain_snapshot_bytes(&root_blocks, &root_chainstate);
     let sub_cs_bytes = dir_size(&sub_chainstate);
+    let sub_blk_bytes = dir_size(&sub_blocks);
+    if sub_blocks.join("blk00000.dat").is_file()
+        && sub_blk_bytes >= MIN_BOOTSTRAP_BLOCKS_BYTES
+        && root_bytes + 50_000_000 < sub_blk_bytes
+    {
+        return true;
+    }
     sub_bytes + 50_000_000 > root_bytes && sub_cs_bytes >= 1_000_000
 }
 
@@ -377,6 +402,17 @@ pub fn promote_subdir_chain_data_for_legacy(coin: CoinId, cfg: &DaemonConfig) ->
     fs::create_dir_all(&root)?;
     for name in ["blocks", "chainstate"] {
         let src = sub.join(name);
+        if !src.exists() {
+            continue;
+        }
+        if name == "chainstate" && chainstate_bytes(&src) < 1_000_000 {
+            tracing::info!(
+                "legacy chain promote ({}): skipping empty chainstate at {}",
+                coin.as_str(),
+                src.display()
+            );
+            continue;
+        }
         let dst = root.join(name);
         if dst.exists() {
             fs::remove_dir_all(&dst)?;
@@ -494,6 +530,19 @@ pub fn chain_snapshot_needs_reindex(datadir: &Path) -> bool {
         return false;
     }
     blocks_data_bytes(&blocks) > 10_000_000 && chainstate_bytes(&chainstate) < 1_000_000
+}
+
+/// Unified bootstrap strips legacy `blocks/index`; veriumd must run with `-reindex` until the
+/// index is rebuilt. Not used for Verium mainnet (legacy flat bootstrap keeps the index).
+pub fn chain_index_needs_rebuild(datadir: &Path) -> bool {
+    let blocks = datadir.join("blocks");
+    if !blocks.join("blk00000.dat").is_file() {
+        return false;
+    }
+    let blocks_bytes = blocks_data_bytes(&blocks);
+    let cs_bytes = chainstate_bytes(&datadir.join("chainstate"));
+    let index_bytes = chain_index_bytes(&blocks);
+    blocks_bytes > 10_000_000 && cs_bytes > 1_000_000 && index_bytes < 500_000
 }
 
 fn chain_index_bytes(blocks: &Path) -> u64 {
@@ -1360,6 +1409,21 @@ mod config_tests {
         std::fs::write(blocks.join("blk00000.dat"), vec![0u8; 20_000_000]).unwrap();
         std::fs::write(chainstate.join("CURRENT"), b"CURRENT").unwrap();
         assert!(chain_snapshot_needs_reindex(&tmp));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn detects_stripped_block_index_after_unified_bootstrap() {
+        let tmp = std::env::temp_dir().join(format!("chain-idx-{}", uuid::Uuid::new_v4()));
+        let blocks = tmp.join("blocks");
+        let chainstate = tmp.join("chainstate");
+        std::fs::create_dir_all(&blocks).unwrap();
+        std::fs::create_dir_all(&chainstate).unwrap();
+        std::fs::write(blocks.join("blk00000.dat"), vec![0u8; 20_000_000]).unwrap();
+        std::fs::write(chainstate.join("CURRENT"), b"CURRENT").unwrap();
+        std::fs::write(chainstate.join("000003.log"), vec![0u8; 2_000_000]).unwrap();
+        assert!(!chain_snapshot_needs_reindex(&tmp));
+        assert!(chain_index_needs_rebuild(&tmp));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
