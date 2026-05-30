@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   CheckCircle2,
@@ -10,6 +10,7 @@ import {
   HardDriveUpload,
   Loader2,
   ShieldCheck,
+  Smartphone,
   Wallet as WalletIcon,
 } from "lucide-react";
 import {
@@ -21,7 +22,8 @@ import {
 } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useActiveCoin } from "@/lib/coin/context";
-import { coinQueryKey } from "@/lib/coin/profile";
+import { coinQueryKey, COIN_PROFILES } from "@/lib/coin/profile";
+import { coinSetupCompletePatch } from "@/lib/setup";
 import {
   rpcGetConfig,
   rpcGetWalletInfo,
@@ -43,7 +45,12 @@ import { WalletImportForm } from "@/components/WalletImportForm";
 import { WalletUnlockForm } from "@/components/WalletUnlockForm";
 import { RestoreFromPhraseForm } from "@/components/RestoreFromPhraseForm";
 import { RecoveryPhraseWizard } from "@/components/RecoveryPhraseWizard";
-import { recoveryApplyHdSeed } from "@/lib/security/client";
+import { TwoFactorEnrollmentPanel } from "@/components/TwoFactorEnrollmentPanel";
+import {
+  recoveryApplyHdSeed,
+  recoveryWalletIsHd,
+  twoFactorStatus,
+} from "@/lib/security/client";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import { isNodeReady, nodeStatusLabel } from "@/lib/node/status";
 import { useIsTestNetwork } from "@/lib/network-mode";
@@ -53,6 +60,7 @@ type Step =
   | "daemon"
   | "wallet"
   | "recovery"
+  | "twofa"
   | "bootstrap"
   | "done"
   | "advanced";
@@ -62,6 +70,7 @@ const STEPS: { id: Exclude<Step, "advanced">; label: string }[] = [
   { id: "daemon", label: "Start node" },
   { id: "wallet", label: "Wallet" },
   { id: "recovery", label: "Recovery" },
+  { id: "twofa", label: "2FA" },
   { id: "bootstrap", label: "Sync" },
   { id: "done", label: "Finish" },
 ];
@@ -75,14 +84,21 @@ type WalletAction =
 
 export function Setup() {
   const coin = useActiveCoin();
+  const profile = COIN_PROFILES[coin];
   const navigate = useNavigate();
   const isTestNetwork = useIsTestNetwork();
   const [step, setStep] = useState<Step>("welcome");
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
   const [datadirDraft, setDatadirDraft] = useState<string>("");
   const [walletAction, setWalletAction] = useState<WalletAction>("choose");
+  const [pendingPassphrase, setPendingPassphrase] = useState<string | null>(
+    null,
+  );
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const updatePrefs = useUserPreferences((s) => s.update);
+  const prefs = useUserPreferences((s) => s.prefs);
   const config = useQuery({
     queryKey: coinQueryKey(coin, "daemon-config"),
     queryFn: () => rpcGetConfig(coin),
@@ -115,6 +131,7 @@ export function Setup() {
   });
 
   const walletSetupMode = resolveWalletSetupMode(
+    coin,
     connected,
     walletInfo.isLoading,
     walletInfo.data,
@@ -122,15 +139,70 @@ export function Setup() {
   );
 
   useEffect(() => {
+    setStep("welcome");
+    setWalletAction("choose");
+    setBootstrapOpen(false);
+    setPendingPassphrase(null);
+    setRecoveryError(null);
+  }, [coin]);
+
+  useEffect(() => {
     if (config.data && !datadirDraft) {
       setDatadirDraft(config.data.datadir);
     }
   }, [config.data, datadirDraft]);
 
+  const walletIsHd = useQuery({
+    queryKey: coinQueryKey(coin, "wallet-is-hd"),
+    queryFn: () => recoveryWalletIsHd(coin),
+    enabled: connected && (step === "wallet" || step === "recovery"),
+  });
+
+  const twoFa = useQuery({
+    queryKey: ["two-factor"],
+    queryFn: twoFactorStatus,
+    staleTime: 30_000,
+    enabled: step !== "welcome" && step !== "advanced",
+  });
+
+  const advanceAfterChainWalletReady = () => {
+    const twoFaEnabled =
+      queryClient.getQueryData<Awaited<ReturnType<typeof twoFactorStatus>>>([
+        "two-factor",
+      ])?.enabled ?? twoFa.data?.enabled;
+    setStep(twoFaEnabled ? "bootstrap" : "twofa");
+  };
+
+  const applyRecovery = useMutation({
+    mutationFn: ({
+      phrase,
+      unlock,
+    }: {
+      phrase: string;
+      unlock?: string;
+    }) => recoveryApplyHdSeed(coin, phrase, undefined, unlock),
+    onSuccess: async () => {
+      setRecoveryError(null);
+      setPendingPassphrase(null);
+      await queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "wallet-is-hd"),
+      });
+      advanceAfterChainWalletReady();
+    },
+    onError: (err) => setRecoveryError(String(err)),
+  });
+
+  useEffect(() => {
+    if (step === "twofa" && twoFa.data?.enabled) {
+      setStep("bootstrap");
+    }
+  }, [step, twoFa.data?.enabled]);
+
   useEffect(() => {
     if (step !== "wallet") return;
-    if (walletSetupMode === "ready") {
-      setStep("bootstrap");
+    if (walletSetupMode === "ready" && walletIsHd.data === true) {
+      if (twoFa.isLoading) return;
+      advanceAfterChainWalletReady();
       return;
     }
     if (walletSetupMode === "needs_unlock") {
@@ -141,7 +213,14 @@ export function Setup() {
     ) {
       setWalletAction("choose");
     }
-  }, [step, walletSetupMode, walletAction]);
+  }, [
+    step,
+    walletSetupMode,
+    walletAction,
+    walletIsHd.data,
+    twoFa.data?.enabled,
+    twoFa.isLoading,
+  ]);
 
   const saveConfig = useMutation({
     mutationFn: (partial: Parameters<typeof rpcSetConfig>[1]) =>
@@ -164,7 +243,7 @@ export function Setup() {
   }, [step, connected]);
 
   const finish = async () => {
-    await updatePrefs({ setup_completed: true });
+    await updatePrefs(coinSetupCompletePatch(coin, prefs));
     navigate("/dashboard");
   };
 
@@ -173,11 +252,12 @@ export function Setup() {
       <Card className="w-full max-w-2xl">
         <CardHeader>
           <CardTitle className="!normal-case !tracking-normal !text-base">
-            Set up Verium
+            Set up {profile.displayName}
           </CardTitle>
           <CardDescription>
-            Three minutes — start the bundled node, create or import your
-            wallet, optionally seed the chain.
+            Start the bundled {profile.binaryName} node, set up your{" "}
+            {profile.symbol} wallet and recovery phrase, enable app-wide 2FA,
+            then optionally import a chain bootstrap.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
@@ -299,7 +379,9 @@ export function Setup() {
                     {walletFile.data.path}
                   </div>
                 )}
-                <p className="mt-1">{walletSetupModeLabel(walletSetupMode)}</p>
+                <p className="mt-1">
+                  {walletSetupModeLabel(coin, walletSetupMode)}
+                </p>
                 {walletInfo.data && walletSetupMode === "needs_unlock" && (
                   <p className="mt-1 text-fg">
                     Balance: {walletInfo.data.balance.toFixed(8)} VRM
@@ -404,7 +486,10 @@ export function Setup() {
                       Back
                     </Button>
                     <WalletCreateForm
-                      onCreated={() => setStep("recovery")}
+                      onCreated={(_result, passphrase) => {
+                        setPendingPassphrase(passphrase);
+                        setStep("recovery");
+                      }}
                       onAlreadyEncrypted={() => {
                         void walletInfo.refetch();
                       }}
@@ -447,18 +532,66 @@ export function Setup() {
                 Save your recovery phrase
               </div>
               <p className="text-sm text-fg-muted">
-                Write down this 24-word phrase before continuing. It is the only
-                way to recover your wallet if you lose your passphrase or
-                computer.
+                This phrase is separate from your wallet passphrase: it is the
+                HD master key for your addresses. Save it on paper so you can
+                restore on a new device if you lose your passphrase, computer, or{" "}
+                <span className="font-mono text-xs">wallet.dat</span>. Vericonomy
+                cannot look it up for you.
               </p>
               <RecoveryPhraseWizard
                 onComplete={(phrase) => {
-                  void recoveryApplyHdSeed(coin, phrase).then(() =>
-                    setStep("bootstrap"),
-                  );
+                  applyRecovery.mutate({
+                    phrase,
+                    unlock: pendingPassphrase ?? undefined,
+                  });
                 }}
-                onSkip={() => setStep("bootstrap")}
               />
+              {applyRecovery.isPending && (
+                <p className="flex items-center gap-2 text-xs text-fg-muted">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Applying recovery seed to your wallet…
+                </p>
+              )}
+              {recoveryError && (
+                <p className="text-xs text-danger">{recoveryError}</p>
+              )}
+              {applyRecovery.isSuccess && (
+                <p className="text-xs text-success">{applyRecovery.data}</p>
+              )}
+            </div>
+          )}
+
+          {step === "twofa" && (
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-2 text-sm text-fg">
+                <Smartphone className="h-4 w-4 text-accent" />
+                Two-factor authentication (app-wide)
+              </div>
+              <p className="text-sm text-fg-muted">
+                Protect sends, passphrase changes, and sensitive actions with a
+                code from an authenticator app. This applies to{" "}
+                <strong className="font-medium text-fg">both Verium and Vericoin</strong>
+                — your {profile.symbol} passphrase and recovery phrase remain
+                separate per chain.
+              </p>
+              <TwoFactorEnrollmentPanel
+                autoStartEnrollment
+                onEnabled={() => setStep("bootstrap")}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setStep("bootstrap")}
+                >
+                  Skip for now
+                </Button>
+                {twoFa.data?.enabled && (
+                  <Button size="sm" onClick={() => setStep("bootstrap")}>
+                    Continue
+                  </Button>
+                )}
+              </div>
             </div>
           )}
 

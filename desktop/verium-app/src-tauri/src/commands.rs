@@ -16,6 +16,7 @@ use crate::coin_profile::{
 };
 use crate::config::{
     apply_partial_to_config, chain_datadir, chain_index_needs_rebuild, chain_snapshot_needs_reindex,
+    expected_debug_log_path,
     ensure_daemon_conf_complete, ensure_first_run_config, generate_rpc_password, generate_rpc_user,
     promote_subdir_chain_data_for_legacy, verium_uses_legacy_flat,
     prepare_chain_for_reindex, legacy_subdir_chain_ahead,
@@ -41,7 +42,7 @@ use crate::logs::{
     detect_reindex_progress, detect_sync_stall, detect_invalid_block_stall,
     rpc_reports_synced,
     is_timestamp_rule_failure, log_recently_modified,
-    tail_debug_log,
+    tail_coin_debug_log, tail_debug_log,
 };
 use crate::node::orchestrator::maybe_emit_state;
 use crate::node::snapshot::{detect_binary_for_coin, snapshot_from_status};
@@ -562,7 +563,7 @@ pub(crate) async fn start_inner_impl(state: &AppState, coin: CoinId, force: bool
         tracing::warn!("start: {binary} exited after spawn; checking whether repair is needed");
         daemon.clear_tracking().await;
     }
-    let lines = tail_debug_log(&chain_datadir(coin, &cfg), 120).await.unwrap_or_default();
+    let lines = tail_coin_debug_log(coin, &cfg, 120).await.unwrap_or_default();
     if let Some(message) = detect_datadir_lock_conflict(&lines) {
         return Err(AppError::other(message));
     }
@@ -2169,7 +2170,7 @@ pub(crate) async fn restart_daemon_full_cycle(state: &AppState, coin: CoinId) ->
     crate::config::sync_cfg_rpc_credentials_from_conf(coin, &mut cfg)?;
     ensure_daemon_conf_complete(coin, &mut cfg)?;
     state.replace_config(coin, cfg.clone()).await?;
-    let lines = tail_debug_log(&chain_datadir(coin, &cfg), 80)
+    let lines = tail_coin_debug_log(coin, &cfg, 80)
         .await
         .unwrap_or_default();
     let needs_reindex = detect_chain_corruption_session(&lines).is_some()
@@ -2261,6 +2262,26 @@ pub async fn restart_daemon(
     restart_daemon_full_cycle(state.inner(), coin).await
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugLogStatus {
+    pub path: String,
+    pub exists: bool,
+}
+
+#[tauri::command]
+pub async fn debug_log_status(
+    state: State<'_, AppState>,
+    coin: String,
+) -> AppResult<DebugLogStatus> {
+    let coin = parse_coin_id(&coin)?;
+    let cfg = state.config(coin).await?;
+    let path = expected_debug_log_path(coin, &cfg);
+    Ok(DebugLogStatus {
+        path: path.display().to_string(),
+        exists: path.is_file(),
+    })
+}
+
 #[tauri::command]
 pub async fn tail_logs(
     state: State<'_, AppState>,
@@ -2270,7 +2291,7 @@ pub async fn tail_logs(
     let coin = parse_coin_id(&coin)?;
     let cfg = state.config(coin).await?;
     let max = lines.unwrap_or(200) as usize;
-    tail_debug_log(&chain_datadir(coin, &cfg), max).await
+    tail_coin_debug_log(coin, &cfg, max).await
 }
 
 #[tauri::command]
@@ -2813,7 +2834,7 @@ pub async fn detect_veriumd_runtime(
         });
     }
 
-    let lines = tail_debug_log(&chain_datadir(coin, &cfg), 40).await.unwrap_or_default();
+    let lines = tail_coin_debug_log(coin, &cfg, 40).await.unwrap_or_default();
     if let Some(message) = detect_datadir_lock_conflict(&lines) {
         return Ok(VeriumdRuntimeStatus {
             rpc_connected: false,
@@ -2897,7 +2918,7 @@ pub async fn ensure_daemon_connected(
         });
     }
 
-    let lines = tail_debug_log(&chain_datadir(coin, &cfg), 40).await.unwrap_or_default();
+    let lines = tail_coin_debug_log(coin, &cfg, 40).await.unwrap_or_default();
     let datadir_locked = detect_datadir_lock_conflict(&lines).is_some();
     let message = if datadir_locked {
         detect_datadir_lock_conflict(&lines).unwrap_or_default()
@@ -3093,7 +3114,7 @@ pub async fn diagnostic_bundle(
     let coin = parse_coin_id(&coin)?;
     let cfg = state.config_fresh(coin).await.unwrap_or_default();
     let bin = detect_binary(coin);
-    let log_tail = tail_debug_log(&chain_datadir(coin, &cfg), 200).await.unwrap_or_default();
+    let log_tail = tail_coin_debug_log(coin, &cfg, 200).await.unwrap_or_default();
     Ok(DiagnosticBundle {
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),

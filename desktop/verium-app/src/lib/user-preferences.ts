@@ -6,7 +6,10 @@ import type { ThemeMode } from "@/lib/theme";
 import { DEFAULT_WALLET_UNLOCK_SECONDS } from "@/lib/wallet-unlock";
 
 export interface UserPreferences {
+  /** @deprecated use setup_completed_by_coin; kept for legacy prefs migration */
   setup_completed: boolean;
+  /** First-run wizard completed per chain (daemon + wallet + optional bootstrap). */
+  setup_completed_by_coin?: Partial<Record<CoinId, boolean>>;
   bootstrap_dismissed_at?: number;
   explorer_tx_url_template: string;
   explorer_block_url_template?: string;
@@ -74,8 +77,19 @@ export const useUserPreferences = create<PrefsState>((set, get) => ({
   load: async () => {
     try {
       const next = await invoke<UserPreferences>("get_user_preferences");
+      const merged = { ...DEFAULT_PREFS, ...next };
+      if (
+        merged.setup_completed &&
+        !merged.setup_completed_by_coin?.verium &&
+        !merged.setup_completed_by_coin?.vericoin
+      ) {
+        merged.setup_completed_by_coin = {
+          ...merged.setup_completed_by_coin,
+          verium: true,
+        };
+      }
       set({
-        prefs: { ...DEFAULT_PREFS, ...next },
+        prefs: merged,
         loaded: true,
       });
     } catch {
@@ -99,6 +113,12 @@ export const useUserPreferences = create<PrefsState>((set, get) => ({
             ...partial.bootstrap_imported_at_by_coin,
           }
         : current.bootstrap_imported_at_by_coin,
+      setup_completed_by_coin: partial.setup_completed_by_coin
+        ? {
+            ...current.setup_completed_by_coin,
+            ...partial.setup_completed_by_coin,
+          }
+        : current.setup_completed_by_coin,
     };
     set({ prefs: next });
     await invoke<UserPreferences>("set_user_preferences", { partial });

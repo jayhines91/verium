@@ -193,6 +193,7 @@ UniValue minerstart(const JSONRPCRequest& request)
         "\nStart mining Verium.",
         {
             {"nthreads", RPCArg::Type::NUM, RPCArg::Optional::NO, "Number of thread to allocate to mining."},
+            {"address", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Optional payout address for block rewards (static reward mode). When omitted, the wallet reserves a new address per mining session."},
         },
         RPCResult{
     "{                           (json object)\n"
@@ -201,17 +202,25 @@ UniValue minerstart(const JSONRPCRequest& request)
     "}\n"
         },
         RPCExamples{
-            HelpExampleCli("minerstart", "")
-    + HelpExampleRpc("minerstart", "")
+            HelpExampleCli("minerstart", "4")
+    + HelpExampleCli("minerstart", "4 \"vrm1q...\"")
+    + HelpExampleRpc("minerstart", "4, \"vrm1q...\"")
         },
     }.Check(request);
 
     int nThreads = request.params[0].get_int();
-
+    std::string payout_address;
+    if (request.params.size() > 1 && !request.params[1].isNull()) {
+        payout_address = request.params[1].get_str();
+        CTxDestination dest = DecodeDestination(payout_address);
+        if (!IsValidDestination(dest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+        }
+    }
 
     LOCK(cs_main);
 
-    GenerateVerium(true, pwallet, nThreads);
+    GenerateVerium(true, pwallet, nThreads, payout_address);
 
     UniValue obj(UniValue::VOBJ);
     obj.pushKV("status",   "active");
@@ -717,7 +726,7 @@ static const CRPCCommand commands[] =
     { "mining",             "submitheader",           &submitheader,           {"hexdata"} },
 
     { "miner",              "minerstop",              &minerstop,              {} },
-    { "miner",              "minerstart",             &minerstart,             {"nthreads"} },
+    { "miner",              "minerstart",             &minerstart,             {"nthreads", "address"} },
 
     { "generating",         "generatetoaddress",      &generatetoaddress,      {"nblocks","address","maxtries"} },
 };

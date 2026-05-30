@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Check, ChevronDown } from "lucide-react";
 import { ALL_COINS, COIN_LOGO_URLS, COIN_PROFILES } from "@/lib/coin/profile";
 import {
@@ -7,11 +8,15 @@ import {
   useSetActiveCoin,
 } from "@/lib/coin/context";
 import { cn } from "@/lib/utils";
+import { useUserPreferences } from "@/lib/user-preferences";
+import { isCoinSetupComplete } from "@/lib/setup";
 
 export function CoinSwitcher() {
+  const navigate = useNavigate();
   const activeCoin = useActiveCoin();
   const setActiveCoin = useSetActiveCoin();
   const enabledCoins = useEnabledCoins();
+  const prefs = useUserPreferences((s) => s.prefs);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -101,6 +106,9 @@ export function CoinSwitcher() {
                 onClick={() => {
                   setActiveCoin(coin);
                   setOpen(false);
+                  if (!isCoinSetupComplete(coin, prefs)) {
+                    navigate("/setup");
+                  }
                 }}
                 className={cn(
                   "flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors",

@@ -435,6 +435,30 @@ pub fn binary_supports_unified_chain_selector(path: &Path, coin: CoinId) -> bool
     }
 }
 
+fn staged_sidecar_path(coin: CoinId) -> PathBuf {
+    app_config_base()
+        .join("run")
+        .join(binary_name(coin))
+}
+
+fn is_staged_sidecar_path(path: &Path, coin: CoinId) -> bool {
+    path == staged_sidecar_path(coin)
+}
+
+/// Prefer the app-bundled binary over a stale copy in `desktop-app/run/`.
+fn rank_sidecar_candidate(path: &Path, coin: CoinId) -> (bool, u64, u64) {
+    let staged = is_staged_sidecar_path(path, coin);
+    let mtime = path
+        .metadata()
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+    (!staged, mtime, size)
+}
+
 fn pick_preferred_sidecar(coin: CoinId, mut candidates: Vec<PathBuf>) -> Option<PathBuf> {
     candidates.retain(|p| is_real_sidecar(p));
     if candidates.is_empty() {
@@ -443,13 +467,15 @@ fn pick_preferred_sidecar(coin: CoinId, mut candidates: Vec<PathBuf>) -> Option<
     // Verium mainnet: legacy flat verium-only binary (no `-verium` selector). Unified
     // vericoin/veriumd builds use a `verium/` subdir and incompatible bootstrap index.
     if coin == CoinId::Verium {
-        if let Some(path) = candidates
-            .iter()
-            .find(|p| !binary_supports_unified_chain_selector(p, coin))
-        {
-            return Some(path.clone());
+        let mut legacy: Vec<PathBuf> = candidates
+            .into_iter()
+            .filter(|p| !binary_supports_unified_chain_selector(p, coin))
+            .collect();
+        if legacy.is_empty() {
+            return None;
         }
-        return None;
+        legacy.sort_by(|a, b| rank_sidecar_candidate(b, coin).cmp(&rank_sidecar_candidate(a, coin)));
+        return legacy.into_iter().next();
     }
     if let Some(path) = candidates
         .iter()
@@ -539,7 +565,9 @@ fn stage_sidecar_for_spawn(source: &Path) -> AppResult<PathBuf> {
     let dest = run_dir.join(name);
     if dest.is_file() {
         if let (Ok(src_meta), Ok(dst_meta)) = (source.metadata(), dest.metadata()) {
-            if src_meta.len() == dst_meta.len() && dst_meta.modified().ok() >= src_meta.modified().ok() {
+            let same_bytes = src_meta.len() == dst_meta.len();
+            let dest_not_older = dst_meta.modified().ok() >= src_meta.modified().ok();
+            if same_bytes && dest_not_older {
                 return Ok(dest);
             }
         }
@@ -579,10 +607,11 @@ fn detect_sidecar_binary(coin: CoinId) -> Option<PathBuf> {
     let parent = exe.parent()?;
     let mut candidates: Vec<PathBuf> = Vec::new();
 
-    let staged = app_config_base().join("run").join(&name);
-    candidates.push(staged);
-
+    // Bundled binary first — `desktop-app/run/` may hold an older staged copy from a prior install.
     candidates.push(parent.join(&name));
+
+    let staged = staged_sidecar_path(coin);
+    candidates.push(staged);
 
     if let Ok(entries) = std::fs::read_dir(parent) {
         for entry in entries.flatten() {

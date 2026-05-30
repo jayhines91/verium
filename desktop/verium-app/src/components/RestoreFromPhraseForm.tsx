@@ -19,13 +19,19 @@ export function RestoreFromPhraseForm({
   const coin = useActiveCoin();
   const twoFa = useTwoFactorGate(coin);
   const [phrase, setPhrase] = useState("");
+  const [walletPassphrase, setWalletPassphrase] = useState("");
   const [bip39Pass, setBip39Pass] = useState("");
 
   const restore = useMutation({
     mutationFn: async () => {
       const valid = await recoveryValidateMnemonic(phrase);
       if (!valid) throw new Error("Invalid recovery phrase checksum");
-      return recoveryApplyHdSeed(coin, phrase, bip39Pass || undefined);
+      return recoveryApplyHdSeed(
+        coin,
+        phrase,
+        bip39Pass || undefined,
+        walletPassphrase || undefined,
+      );
     },
     onSuccess: () => onRestored?.(),
   });
@@ -48,9 +54,17 @@ export function RestoreFromPhraseForm({
         }}
       >
         <p className="text-sm text-fg-muted">
-          Restore from your 24-word BIP39 recovery phrase. This applies the HD
-          seed to your wallet via sethdseed and triggers a rescan.
+          Restore from your 24-word BIP39 recovery phrase. Your wallet must be
+          unlocked first — enter the wallet passphrase you use day to day (not
+          the optional BIP39 passphrase below).
         </p>
+        <input
+          type="password"
+          value={walletPassphrase}
+          onChange={(e) => setWalletPassphrase(e.target.value)}
+          placeholder="Wallet passphrase (required if encrypted)"
+          className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-sm outline-none focus:border-accent"
+        />
         <textarea
           rows={3}
           value={phrase}

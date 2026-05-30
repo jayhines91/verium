@@ -1,3 +1,5 @@
+import type { CoinId } from "@/lib/coin/profile";
+import { COIN_PROFILES } from "@/lib/coin/profile";
 import type { WalletInfo } from "@/lib/rpc/client";
 import {
   isWalletEncrypted,
@@ -12,6 +14,7 @@ export type WalletSetupMode =
   | "ready";
 
 export function resolveWalletSetupMode(
+  _coin: CoinId,
   connected: boolean,
   walletLoading: boolean,
   wallet: WalletInfo | null | undefined,
@@ -31,16 +34,21 @@ export function resolveWalletSetupMode(
   return "needs_encrypt";
 }
 
-export function walletSetupModeLabel(mode: WalletSetupMode): string {
+export function walletSetupModeLabel(
+  coin: CoinId,
+  mode: WalletSetupMode,
+): string {
+  const name = COIN_PROFILES[coin].displayName;
+  const daemon = COIN_PROFILES[coin].binaryName;
   switch (mode) {
     case "loading":
       return "Checking wallet status…";
     case "offline":
-      return "Connect to veriumd on the previous step before setting up your wallet.";
+      return `Connect to ${daemon} on the previous step before setting up your wallet.`;
     case "needs_encrypt":
-      return "Set a passphrase to encrypt your wallet. Your coins stay in the same wallet.dat file.";
+      return `Set a passphrase to encrypt your ${name} wallet. Your coins stay in the same wallet.dat file.`;
     case "needs_unlock":
-      return "An existing Verium wallet was found. Enter the same passphrase you used before to unlock it — your balance and history are preserved.";
+      return `An existing ${name} wallet was found. Enter the passphrase you used before to unlock it — your balance and history are preserved.`;
     case "ready":
       return "Wallet is unlocked and ready.";
   }

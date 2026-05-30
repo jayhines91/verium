@@ -32,7 +32,7 @@ import { useBlockMinedWatcher } from "@/hooks/useBlockMinedWatcher";
 import { useIncomingVrmNotifications } from "@/hooks/useIncomingVrmNotifications";
 import { useIncomingVrmWatcher } from "@/hooks/useIncomingVrmWatcher";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
-import { isNodeReady } from "@/lib/node/status";
+import { isCoinSetupComplete } from "@/lib/setup";
 import { useTheme } from "@/hooks/useTheme";
 import { useDeepLinkHandler } from "@/hooks/useDeepLinkHandler";
 import { ToastHost } from "@/components/ToastHost";
@@ -43,14 +43,14 @@ function SetupRedirect() {
   const coin = useActiveCoin();
   const prefs = useUserPreferences((s) => s.prefs);
   const loaded = useUserPreferences((s) => s.loaded);
-  const { data: status, isLoading } = useDaemonStatus(coin);
+  const { isLoading } = useDaemonStatus(coin);
 
   useEffect(() => {
     if (!loaded || isLoading) return;
-    if (prefs.setup_completed || isNodeReady(status)) return;
+    if (isCoinSetupComplete(coin, prefs)) return;
     if (location.pathname === "/setup") return;
     navigate("/setup", { replace: true });
-  }, [loaded, isLoading, prefs.setup_completed, status?.connected, location.pathname, navigate]);
+  }, [loaded, isLoading, coin, prefs, location.pathname, navigate]);
 
   return null;
 }
@@ -77,20 +77,11 @@ function AppHooks() {
 
 function AppRoutes() {
   const load = useUserPreferences((s) => s.load);
-  const updatePrefs = useUserPreferences((s) => s.update);
-  const coin = useActiveCoin();
-  const { data: status } = useDaemonStatus(coin);
   useDeepLinkHandler();
 
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    if (status?.connected) {
-      void updatePrefs({ setup_completed: true });
-    }
-  }, [status?.connected, updatePrefs]);
 
   return (
     <>

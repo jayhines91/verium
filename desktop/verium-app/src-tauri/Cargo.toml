@@ -38,6 +38,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 aes-gcm = "0.10"
 argon2 = "0.5"
 bip39 = "2"
+bs58 = { version = "0.5", features = ["check"] }
 bitcoin = { version = "0.32", default-features = false, features = ["std", "secp-recovery"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 hex = "0.4"

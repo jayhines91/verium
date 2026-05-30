@@ -583,6 +583,15 @@ export async function tauriOpenVeriumConf(coin: CoinId = "verium"): Promise<stri
   return tauriOpenNodeConf(coin);
 }
 
+export interface DebugLogStatus {
+  path: string;
+  exists: boolean;
+}
+
+export async function tauriDebugLogStatus(coin: CoinId): Promise<DebugLogStatus> {
+  return invoke<DebugLogStatus>("debug_log_status", { coin });
+}
+
 export async function tauriTailLogs(coin: CoinId, lines = 200): Promise<string[]> {
   return invoke<string[]>("tail_logs", { coin, lines });
 }

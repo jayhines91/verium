@@ -32,11 +32,13 @@ export async function recoveryApplyHdSeed(
   coin: CoinId,
   phrase: string,
   bip39Passphrase?: string,
+  unlockPassphrase?: string,
 ): Promise<string> {
   return invoke("recovery_apply_hd_seed", {
     coin,
     phrase,
     bip39Passphrase: bip39Passphrase ?? null,
+    unlockPassphrase: unlockPassphrase ?? null,
   });
 }
 

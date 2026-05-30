@@ -8,11 +8,13 @@ import {
   type WalletCreateResult,
 } from "@/lib/rpc/client";
 import { useActiveCoin } from "@/lib/coin/context";
+import { COIN_PROFILES } from "@/lib/coin/profile";
 import { scorePassphrase } from "@/lib/passphrase-strength";
 import { cn } from "@/lib/utils";
 
 interface WalletCreateFormProps {
-  onCreated?: (result: WalletCreateResult) => void;
+  /** Called with the passphrase used to encrypt (before fields are cleared). */
+  onCreated?: (result: WalletCreateResult, passphrase: string) => void;
   onAlreadyEncrypted?: () => void;
   className?: string;
 }
@@ -31,6 +33,7 @@ export function WalletCreateForm({
   className,
 }: WalletCreateFormProps) {
   const coin = useActiveCoin();
+  const symbol = COIN_PROFILES[coin].symbol;
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
@@ -44,16 +47,17 @@ export function WalletCreateForm({
       setPhase("Encrypting wallet…");
       const result = await rpcWalletCreateEncrypted(coin, passphrase);
       if (result.daemon_stopped) {
-        setPhase("Restarting daemon…");
+        setPhase("Restarting daemon… (this may take a few minutes)");
         await tauriRestartAfterEncrypt(coin);
       }
       return result;
     },
     onSuccess: (result) => {
       setPhase("");
+      const usedPassphrase = passphrase;
       setPassphrase("");
       setConfirm("");
-      onCreated?.(result);
+      onCreated?.(result, usedPassphrase);
     },
     onError: (err) => {
       setPhase("");
@@ -82,11 +86,12 @@ export function WalletCreateForm({
         <div>
           <h2 className="text-lg font-semibold">Create your wallet</h2>
           <p className="mt-1 text-sm text-fg-muted">
-            Choose a passphrase. The wallet file (
-            <span className="text-xs">wallet.dat</span>) is encrypted with this
-            passphrase locally.{" "}
-            <strong>If you lose it, your VRM is gone</strong> — there is no
-            recovery service.
+            Choose a passphrase to encrypt{" "}
+            <span className="font-mono text-xs">wallet.dat</span> and unlock the
+            wallet day to day. Vericonomy cannot reset a lost passphrase. On the
+            next step you can save a 24-word recovery phrase to restore access if
+            you lose this passphrase or your computer — or skip that and rely on a{" "}
+            <span className="font-mono text-xs">wallet.dat</span> backup instead.
           </p>
         </div>
       </div>
@@ -148,9 +153,10 @@ export function WalletCreateForm({
           className="mt-0.5 h-3.5 w-3.5 accent-accent"
         />
         <span>
-          I understand my passphrase is the only way to spend my coins. If I
-          lose it, no one can recover my wallet. I will back up{" "}
-          <span className="font-mono">wallet.dat</span> after creation.
+          I understand I need this passphrase to unlock and spend. If I skip the
+          recovery phrase later, I must back up{" "}
+          <span className="font-mono">wallet.dat</span> and keep my passphrase —
+          otherwise my {symbol} cannot be recovered.
         </span>
       </label>
 
