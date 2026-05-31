@@ -33,9 +33,10 @@ patch_file() {
   else
     sed -i "s/${from}/${to}/g" "$file"
   fi
-  echo "==> Patched $file for Boost 1.85+"
+  echo "==> Patched $file (Boost.Filesystem compatibility)"
 }
-patch_file "src/wallet/db.cpp" 'fs::copy_option::overwrite_if_exists' 'fs::copy_options::overwrite_existing'
+# fs is boost::filesystem (see src/fs.h); std::filesystem copy_options is invalid here.
+patch_file "src/wallet/db.cpp" 'fs::copy_options::overwrite_existing' 'fs::copy_option::overwrite_if_exists'
 patch_file "src/wallet/walletutil.cpp" 'it.level()' 'it.depth()'
 
 patch_depends_recipes_for_modern_toolchains() {
