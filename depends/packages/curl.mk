@@ -31,10 +31,6 @@ $(package)_cppflags+=-DCURL_STATICLIB
 $(package)_cxxflags=-std=c++11
 endef
 
-define $(package)_preprocess_cmds
-  sed -i.old 's/^[[:space:]]*;;[[:space:]]*$$/  : ;;/g' configure && true
-endef
-
 define $(package)_config_cmds
   $($(package)_autoconf)
 endef
