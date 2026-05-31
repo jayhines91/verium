@@ -121,11 +121,44 @@ def patch_boost() -> bool:
         return True
     return False
 
+def patch_openssl() -> bool:
+    path = root / "depends/packages/openssl.mk"
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    original = text
+
+    # Some trees define darwin arm64 as "arm64", while depends host_arch resolves to "aarch64".
+    # Ensure aarch64-darwin always resolves to a valid OpenSSL Configure target.
+    if "$(package)_config_opts_aarch64_darwin=" not in text:
+        if "$(package)_config_opts_arm64_darwin=" in text:
+            text = text.replace(
+                "$(package)_config_opts_arm64_darwin=",
+                "$(package)_config_opts_aarch64_darwin=darwin64-arm64-cc\n$(package)_config_opts_arm64_darwin=",
+                1,
+            )
+        elif "$(package)_config_opts_x86_64_darwin=" in text:
+            text = text.replace(
+                "$(package)_config_opts_x86_64_darwin=",
+                "$(package)_config_opts_aarch64_darwin=darwin64-arm64-cc\n$(package)_config_opts_x86_64_darwin=",
+                1,
+            )
+        else:
+            # Fallback append if layout is unexpected.
+            text = text.rstrip() + "\n$(package)_config_opts_aarch64_darwin=darwin64-arm64-cc\n"
+
+    if text != original:
+        path.write_text(text, encoding="utf-8")
+        return True
+    return False
+
 changed = []
 if patch_bdb():
     changed.append("depends/packages/bdb.mk")
 if patch_boost():
     changed.append("depends/packages/boost.mk")
+if patch_openssl():
+    changed.append("depends/packages/openssl.mk")
 
 if changed:
     print("==> Patched depends recipes:", ", ".join(changed))

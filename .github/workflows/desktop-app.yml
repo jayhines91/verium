@@ -68,7 +68,7 @@ jobs:
             os: macos-14
             host: aarch64-apple-darwin
             kind: macos
-            configure_extra: "--enable-arm-crypto"
+            configure_extra: ""
           - target: x86_64-pc-windows-msvc
             label: Windows x64
             os: ubuntu-22.04
@@ -197,7 +197,13 @@ jobs:
             --without-gui --disable-tests --disable-bench \
             --enable-reduce-exports --disable-shared --enable-static \
             ${{ matrix.configure_extra }} $MINGW_FLAGS \
-          || { echo "=== config.log (tail) ==="; tail -n 150 config.log || true; exit 1; }
+          || { \
+               echo "=== config.log (errors) ==="; \
+               grep -nE "configure: error|error: " config.log || true; \
+               echo "=== config.log (tail) ==="; \
+               tail -n 200 config.log || true; \
+               exit 1; \
+             }
           # Windows (MinGW) produces veriumd.exe; native targets produce veriumd.
           if [ "${{ matrix.kind }}" = "mingw" ]; then
             make -j"$JOBS" src/veriumd.exe
@@ -259,7 +265,7 @@ jobs:
             os: macos-14
             host: aarch64-apple-darwin
             kind: macos
-            configure_extra: "--enable-arm-crypto"
+            configure_extra: ""
           - target: x86_64-pc-windows-msvc
             label: Windows x64
             os: ubuntu-22.04
