@@ -39,6 +39,18 @@ patch_file() {
 patch_file "src/wallet/db.cpp" 'fs::copy_options::overwrite_existing' 'fs::copy_option::overwrite_if_exists'
 patch_file "src/wallet/walletutil.cpp" 'it.level()' 'it.depth()'
 
+# util/bip32.h uses uint32_t but may omit <cstdint> on some GCC/libstdc++ builds.
+python3 - <<'PY'
+from pathlib import Path
+p = Path("src/util/bip32.h")
+if p.is_file():
+    text = p.read_text(encoding="utf-8")
+    if "#include <cstdint>" not in text:
+        text = text.replace("#include <vector>", "#include <vector>\n#include <cstdint>", 1)
+        p.write_text(text, encoding="utf-8")
+        print("==> Patched src/util/bip32.h (#include <cstdint>)")
+PY
+
 patch_depends_recipes_for_modern_toolchains() {
   export VERIUM_ROOT="$(cd "$APP_ROOT/../.." && pwd)"
   python3 - <<'PY'
@@ -180,12 +192,42 @@ def patch_package_registry() -> bool:
 
 def patch_curl() -> bool:
     """Use verium's curl recipe (8.7.x, no autoreconf/sed on configure)."""
-    src = verium_root / "depends/packages/curl.mk"
     dst = root / "depends/packages/curl.mk"
-    if not src.is_file() or not dst.parent.is_dir():
+    if not dst.parent.is_dir():
+        return False
+    candidates = [
+        verium_root / "depends/packages/curl.mk",
+        Path(os.environ.get("VERIUM_CURL_MK", "")),
+    ]
+    src = next((p for p in candidates if p.is_file()), None)
+    if src is None:
+        print("==> WARN: verium depends/packages/curl.mk not found; using cloned curl.mk")
         return False
     shutil.copy2(src, dst)
     return True
+
+def patch_zlib() -> bool:
+    dst = root / "depends/packages/zlib.mk"
+    if not dst.parent.is_dir():
+        return False
+    src = verium_root / "depends/packages/zlib.mk"
+    if src.is_file():
+        shutil.copy2(src, dst)
+        return True
+    if not dst.exists():
+        return False
+    text = dst.read_text(encoding="utf-8")
+    original = text
+    if "-std=gnu89" not in text and "config_opts_darwin+=CFLAGS" in text:
+        text = text.replace(
+            "-fPIC -Dfdopen=fdopen\"",
+            "-fPIC -Dfdopen=fdopen -std=gnu89\"",
+            1,
+        )
+    if text != original:
+        dst.write_text(text, encoding="utf-8")
+        return True
+    return False
 
 def patch_minizip() -> bool:
     path = root / "depends/packages/minizip.mk"
@@ -219,6 +261,8 @@ if patch_package_registry():
     changed.append("depends/packages/packages.mk")
 if patch_curl():
     changed.append("depends/packages/curl.mk")
+if patch_zlib():
+    changed.append("depends/packages/zlib.mk")
 if patch_minizip():
     changed.append("depends/packages/minizip.mk")
 

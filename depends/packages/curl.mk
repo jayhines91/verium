@@ -22,11 +22,11 @@ $(package)_config_opts +=--without-libpsl --without-libidn2 --without-nghttp2 --
 $(package)_config_opts +=--without-brotli --without-zstd --without-gsasl
 $(package)_config_opts +=--disable-ldap --disable-ldaps --disable-rtsp
 $(package)_config_opts+=--host=$(host) --prefix=$(host_prefix)
-$(package)_config_opts+=--with-ssl=$(host_prefix) --with-zlib=$(host_prefix)
+$(package)_config_opts+=--with-zlib=$(host_prefix)
 
-$(package)_config_opts_mingw32=--enable-sspi --without-ssl --with-schannel
+$(package)_config_opts_mingw32=--enable-sspi --with-schannel
 $(package)_config_opts_darwin=--with-ssl=$(host_prefix)
-$(package)_config_opts_linux=--with-ssl
+$(package)_config_opts_linux=--with-ssl=$(host_prefix)
 $(package)_cppflags+=-DCURL_STATICLIB
 $(package)_cxxflags=-std=c++11
 endef
@@ -45,5 +45,4 @@ endef
 
 # MinGW cross-compile (CI)
 $(package)_config_opts += --disable-debug --disable-curldebug --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp
-$(package)_config_opts_mingw32 += --with-winssl
 $(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes

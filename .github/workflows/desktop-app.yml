@@ -124,8 +124,8 @@ jobs:
           path: |
             depends/built
             depends/sources
-          key: depends-${{ matrix.host }}-noqt-v5-${{ hashFiles('depends/Makefile', 'depends/packages/*.mk', 'depends/hosts/*.mk', 'depends/builders/*.mk') }}
-          restore-keys: depends-${{ matrix.host }}-noqt-v5-
+          key: depends-${{ matrix.host }}-noqt-v6-${{ hashFiles('depends/Makefile', 'depends/packages/*.mk', 'depends/hosts/*.mk', 'depends/builders/*.mk') }}
+          restore-keys: depends-${{ matrix.host }}-noqt-v6-
 
       - name: Prepare daemon-only depends (strip Qt from cache)
         shell: bash
@@ -278,11 +278,13 @@ jobs:
       NO_QT: "1"
 
     steps:
-      - name: Checkout wallet repo (scripts only)
+      - name: Checkout wallet repo (scripts + depends recipes)
         uses: actions/checkout@v4
         with:
           sparse-checkout: |
             desktop/verium-app/scripts
+            depends/packages
+            depends/hosts
           fetch-depth: 1
 
       - name: Linux / MinGW build dependencies
