@@ -6,7 +6,9 @@ darwin_CC=clang -target $(host) -mmacosx-version-min=$(OSX_MIN_VERSION) --sysroo
 darwin_CXX=clang++ -target $(host) -mmacosx-version-min=$(OSX_MIN_VERSION) --sysroot $(OSX_SDK) -mlinker-version=$(LD64_VERSION) -stdlib=libc++
 
 darwin_CFLAGS=-pipe
-darwin_CXXFLAGS=$(darwin_CFLAGS)
+# Boost 1.7x headers trigger enum constexpr conversion diagnostics on modern
+# Apple clang during configure feature tests; treat these as non-fatal.
+darwin_CXXFLAGS=$(darwin_CFLAGS) -Wno-enum-constexpr-conversion -Wno-error=enum-constexpr-conversion
 
 darwin_release_CFLAGS=-O2
 darwin_release_CXXFLAGS=$(darwin_release_CFLAGS)

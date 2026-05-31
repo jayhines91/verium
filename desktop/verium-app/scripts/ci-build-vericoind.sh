@@ -152,6 +152,27 @@ def patch_openssl() -> bool:
         return True
     return False
 
+def patch_package_registry() -> bool:
+    path = root / "depends/packages/packages.mk"
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    original = text
+
+    # Some upstream snapshots accidentally omit zlib from the base package graph while
+    # still building curl, which leaves make without a "zlib" target.
+    m = re.search(r"^packages:=([^\n]*)$", text, flags=re.M)
+    if m:
+        rhs = m.group(1).strip()
+        tokens = rhs.split()
+        if "zlib" not in tokens:
+            tokens.append("zlib")
+            text = text[:m.start(1)] + " " + " ".join(tokens) + text[m.end(1):]
+    if text != original:
+        path.write_text(text, encoding="utf-8")
+        return True
+    return False
+
 changed = []
 if patch_bdb():
     changed.append("depends/packages/bdb.mk")
@@ -159,6 +180,8 @@ if patch_boost():
     changed.append("depends/packages/boost.mk")
 if patch_openssl():
     changed.append("depends/packages/openssl.mk")
+if patch_package_registry():
+    changed.append("depends/packages/packages.mk")
 
 if changed:
     print("==> Patched depends recipes:", ", ".join(changed))
@@ -204,6 +227,7 @@ fi
 if [[ "$KIND" == "macos" ]]; then
   ./autogen.sh
   export CONFIG_SITE="$(pwd)/depends/$HOST/share/config.site"
+  export CXXFLAGS="${CXXFLAGS:-} -Wno-enum-constexpr-conversion -Wno-error=enum-constexpr-conversion"
   case "$HOST" in
     aarch64-*) export MACOSX_DEPLOYMENT_TARGET=11.0 ;;
     *) export MACOSX_DEPLOYMENT_TARGET=10.15 ;;
