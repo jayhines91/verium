@@ -2,6 +2,7 @@ import { useActiveCoin, useCoinProfile } from "@/lib/coin/context";
 import { coinQueryKey } from "@/lib/coin/profile";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import {
   Card,
@@ -122,10 +123,11 @@ export function Transactions() {
       label: pending.label ?? undefined,
     });
   }, []);
+  const visible = useWindowVisible();
   const txs = useQuery({
     queryKey: coinQueryKey(coin, "listtransactions"),
     queryFn: () => rpcListTransactions(coin, 50, 0),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
     retry: 0,
   });
 
@@ -141,7 +143,7 @@ export function Transactions() {
     enabled:
       explorerEnabled.data === true &&
       (txs.isError || !txs.data || txs.data.length === 0),
-    refetchInterval: 60_000,
+    refetchInterval: visible ? 60_000 : false,
     retry: 0,
   });
 

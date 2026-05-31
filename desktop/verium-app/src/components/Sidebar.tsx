@@ -24,6 +24,7 @@ import { useIsTestNetwork } from "@/lib/network-mode";
 import { rpcGetWalletInfo } from "@/lib/rpc/client";
 import { cn } from "@/lib/utils";
 import { isWalletLocked } from "@/lib/wallet-unlock";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 
 interface NavItem {
   to: string;
@@ -93,6 +94,7 @@ export function Sidebar() {
   const enabledCoins = useEnabledCoins();
   const profile = getCoinProfile(activeCoin);
   const isTestNetwork = useIsTestNetwork();
+  const visible = useWindowVisible();
 
   // Shared with WalletUnlockGate (same query key) so the indicator stays in
   // sync without an extra fetch. Locked == encrypted AND currently locked;
@@ -100,7 +102,7 @@ export function Sidebar() {
   const wallet = useQuery({
     queryKey: coinQueryKey(activeCoin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(activeCoin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
   });
   const walletLocked = isWalletLocked(wallet.data);
 

@@ -29,6 +29,7 @@ import {
   walletStakeSharePercent,
 } from "@/lib/staking-stats";
 import { cn, formatNumber } from "@/lib/utils";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 
 function formatUsd(value?: number): string {
   if (value === undefined || value === null) return "—";
@@ -49,46 +50,49 @@ function MiniStat({ label, value }: { label: string; value: string }) {
 export function DashboardMiddleRow({ coin }: { coin: CoinId }) {
   const profile = getCoinProfile(coin);
   const explorerEnabled = useExplorerQueriesEnabled();
+  const visible = useWindowVisible();
 
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const mining = useQuery({
     queryKey: coinQueryKey(coin, "getmininginfo"),
     queryFn: () => rpcGetMiningInfo(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
     enabled: coin === "verium",
   });
   const minerState = useQuery({
     queryKey: coinQueryKey(coin, "get_miner_state"),
     queryFn: () => rpcGetMinerState(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
     enabled: coin === "verium",
   });
   const stakingState = useQuery({
     queryKey: coinQueryKey(coin, "get_staking_state"),
     queryFn: () => rpcGetStakingState(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
     enabled: coin === "vericoin",
   });
   const vrcMining = useQuery({
     queryKey: coinQueryKey("vericoin", "getmininginfo"),
     queryFn: () => rpcGetVericoinMiningInfo(),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
     enabled: coin === "vericoin",
   });
+  // Shared key + limit with DashboardStrip so React Query dedupes both
+  // dashboard cards into a single listtransactions poll.
   const txs = useQuery({
-    queryKey: coinQueryKey(coin, "listtransactions", "dashboard-middle"),
+    queryKey: coinQueryKey(coin, "listtransactions", "dashboard"),
     queryFn: () => rpcListTransactions(coin, 50, 0),
-    refetchInterval: 30_000,
+    refetchInterval: visible ? 30_000 : false,
   });
   const stats = useQuery({
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
     enabled: explorerEnabled,
-    refetchInterval: 60_000,
+    refetchInterval: visible ? 60_000 : false,
     retry: 0,
   });
 

@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { useActiveCoin } from "@/lib/coin/context";
 import { coinQueryKey, getCoinProfile } from "@/lib/coin/profile";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { tauriDebugLogStatus, tauriTailLogs } from "@/lib/rpc/client";
 
 const POLL_MS = 2_000;
@@ -20,6 +21,7 @@ export function Logs() {
   const coin = useActiveCoin();
   const profile = getCoinProfile(coin);
   const queryClient = useQueryClient();
+  const visible = useWindowVisible();
   const [lines, setLines] = useState<string[]>([]);
   const [liveMode, setLiveMode] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -29,7 +31,7 @@ export function Logs() {
   const logStatus = useQuery({
     queryKey: coinQueryKey(coin, "debug-log-status"),
     queryFn: () => tauriDebugLogStatus(coin),
-    refetchInterval: liveMode && !paused ? POLL_MS : false,
+    refetchInterval: liveMode && !paused && visible ? POLL_MS : false,
   });
 
   const refreshOnce = useCallback(async () => {
@@ -50,7 +52,7 @@ export function Logs() {
   }, [refreshOnce]);
 
   useEffect(() => {
-    if (!liveMode) return;
+    if (!liveMode || !visible) return;
 
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -81,7 +83,7 @@ export function Logs() {
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [coin, liveMode, paused, queryClient]);
+  }, [coin, liveMode, paused, visible, queryClient]);
 
   useEffect(() => {
     if (!liveMode || paused) return;

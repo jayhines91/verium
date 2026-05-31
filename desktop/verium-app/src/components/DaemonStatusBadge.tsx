@@ -13,17 +13,19 @@ import {
 import { fetchExplorerStats } from "@/lib/explorer-api";
 import { useIsTestNetwork } from "@/lib/network-mode";
 import { formatNumber } from "@/lib/utils";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 
 export function DaemonStatusBadge() {
   const coin = useActiveCoin();
   const isTestNetwork = useIsTestNetwork();
   const { data, isConnecting } = useDaemonStatus(coin);
   const nodeState = nodeStateFromStatus(data);
+  const visible = useWindowVisible();
   const explorer = useQuery({
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
     enabled: data?.connected === true && !isTestNetwork,
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
     retry: 0,
   });
 

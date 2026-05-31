@@ -32,13 +32,15 @@ import {
   rpcListTransactions,
 } from "@/lib/rpc/client";
 import { formatNumber, formatVrm } from "@/lib/utils";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 
 export function YourMiningPanel() {
   const coin = useActiveCoin();
+  const visible = useWindowVisible();
   const minerState = useQuery({
     queryKey: coinQueryKey(coin, "get_miner_state"),
     queryFn: () => rpcGetMinerState(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
   });
   const minerActive = minerState.data?.active ?? false;
   const minerStartedAt = minerState.data?.started_at;
@@ -46,6 +48,7 @@ export function YourMiningPanel() {
     queryKey: coinQueryKey(coin, "getmininginfo"),
     queryFn: () => rpcGetMiningInfo(coin),
     refetchInterval: (query) => {
+      if (!visible) return false;
       const hr = query.state.data?.hashrate ?? 0;
       return miningInfoRefetchMs(minerActive, hr, minerStartedAt, 5_000);
     },
@@ -53,12 +56,12 @@ export function YourMiningPanel() {
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const txs = useQuery({
     queryKey: coinQueryKey(coin, "listtransactions", "mining-panel"),
     queryFn: () => rpcListTransactions(coin, 50, 0),
-    refetchInterval: 30_000,
+    refetchInterval: visible ? 30_000 : false,
   });
   const explorerEnabled = useQuery({
     queryKey: ["explorer-api-enabled"],
@@ -69,7 +72,7 @@ export function YourMiningPanel() {
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
     enabled: explorerEnabled.data === true,
-    refetchInterval: 30_000,
+    refetchInterval: visible ? 30_000 : false,
     retry: 0,
   });
 

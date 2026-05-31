@@ -17,6 +17,7 @@ import { fetchExplorerPeers, isExplorerApiEnabled } from "@/lib/explorer-api";
 import type { ExplorerPeerEntry } from "@/lib/explorer-api";
 import { explorerPeersHash } from "@/lib/explorer-links";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import {
   rpcAddNode,
   rpcGetAddedNodeInfo,
@@ -49,6 +50,7 @@ export function ExplorerPeersPanel() {
   const [filter, setFilter] = useState("");
   const { data: daemonStatus } = useDaemonStatus(coin);
   const daemonConnected = daemonStatus?.connected === true;
+  const visible = useWindowVisible();
   const explorerEnabled = useQuery({
     queryKey: ["explorer-api-enabled"],
     queryFn: isExplorerApiEnabled,
@@ -59,20 +61,20 @@ export function ExplorerPeersPanel() {
     queryKey: coinQueryKey(coin, "explorer-peers"),
     queryFn: () => fetchExplorerPeers(coin),
     enabled: explorerEnabled.data === true,
-    refetchInterval: 300_000,
+    refetchInterval: visible ? 300_000 : false,
     retry: 0,
   });
 
   const localPeers = useQuery({
     queryKey: coinQueryKey(coin, "getpeerinfo"),
     queryFn: () => rpcGetPeerInfo(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
   });
 
   const addedNodes = useQuery({
     queryKey: coinQueryKey(coin, "getaddednodeinfo"),
     queryFn: () => rpcGetAddedNodeInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
 
   const connectedAddrs = useMemo(() => {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { coinQueryKey, type CoinId } from "@/lib/coin/profile";
 import {
@@ -14,6 +14,7 @@ const STARTUP_GRACE_MS = 120_000;
 
 export function useNodeStatus(coin: CoinId) {
   const mountedAt = useRef(Date.now());
+  const queryClient = useQueryClient();
 
   const query = useQuery<NodeStatus>({
     queryKey: coinQueryKey(coin, "daemon-status"),
@@ -29,17 +30,21 @@ export function useNodeStatus(coin: CoinId) {
     retryDelay: 2_000,
   });
 
+  // Subscribe once per coin. Depending on the unstable `query` object would tear
+  // down and re-register this Tauri listener on every render, leaking handlers
+  // over a long session. Refresh via the stable queryClient + query key instead.
   useEffect(() => {
     let cancelled = false;
+    const queryKey = coinQueryKey(coin, "daemon-status");
     const unlistenPromise = listen<{ coin: string }>("node-state-changed", (event) => {
       if (cancelled || event.payload.coin !== coin) return;
-      void query.refetch();
+      void queryClient.invalidateQueries({ queryKey });
     });
     return () => {
       cancelled = true;
       void unlistenPromise.then((unlisten) => unlisten());
     };
-  }, [coin, query]);
+  }, [coin, queryClient]);
 
   const startupGraceActive = Date.now() - mountedAt.current < STARTUP_GRACE_MS;
 

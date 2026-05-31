@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/Badge";
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { useActiveCoin } from "@/lib/coin/context";
 import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
 import { resolveBlockTimeMinutes } from "@/lib/mining-revenue";
 import { formatNumber } from "@/lib/utils";
@@ -29,6 +30,7 @@ export function ExplorerMarketCard({ coin: coinProp }: { coin?: CoinId }) {
   const activeCoin = useActiveCoin();
   const coin = coinProp ?? activeCoin;
   const profile = getCoinProfile(coin);
+  const visible = useWindowVisible();
 
   const enabled = useQuery({
     queryKey: ["explorer-api-enabled"],
@@ -40,7 +42,7 @@ export function ExplorerMarketCard({ coin: coinProp }: { coin?: CoinId }) {
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
     enabled: enabled.data === true,
-    refetchInterval: 60_000,
+    refetchInterval: visible ? 60_000 : false,
     retry: 0,
   });
 

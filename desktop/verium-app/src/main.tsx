@@ -11,6 +11,10 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       retry: 1,
       staleTime: 2_000,
+      // Bound retained response payloads: drop inactive (unmounted) query data
+      // after 5 minutes so a long-running session does not accumulate cached
+      // responses for views the user has navigated away from.
+      gcTime: 5 * 60_000,
     },
   },
 });

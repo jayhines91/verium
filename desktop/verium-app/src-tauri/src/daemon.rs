@@ -7,6 +7,15 @@ use tauri::AppHandle;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
+#[cfg(windows)]
+use std::collections::HashMap;
+#[cfg(windows)]
+use std::sync::Mutex as StdMutex;
+#[cfg(windows)]
+use std::time::Instant;
+#[cfg(windows)]
+use once_cell::sync::Lazy;
+
 use crate::coin_profile::CoinId;
 use crate::config::{app_config_base, sync_cfg_rpc_credentials_from_conf, sync_performance_overrides, verium_uses_legacy_flat, DaemonConfig};
 use crate::error::{AppError, AppResult};
@@ -225,6 +234,8 @@ impl DaemonManager {
         let pid = child.id().unwrap_or(0);
         *self.child.lock().await = Some(child);
         *self.managed.lock().await = true;
+        // A new daemon process now exists — let the next probe observe it immediately.
+        invalidate_process_probe_cache();
         tracing::info!("{}: started managed node (pid {pid})", self.coin.binary_base());
         Ok(pid)
     }
@@ -376,6 +387,8 @@ pub async fn wait_for_rpc_port_free(port: u16, timeout: Duration) {
 
 /// Poll until no native daemon image is running (or timeout).
 pub async fn wait_for_native_daemon_exit(coin: CoinId, timeout: Duration) {
+    // Don't trust a stale cached probe while we are actively waiting for exit.
+    invalidate_process_probe_cache();
     let deadline = tokio::time::Instant::now() + timeout;
     while tokio::time::Instant::now() < deadline {
         if !native_daemon_image_running(coin) {
@@ -393,8 +406,47 @@ pub async fn wait_for_native_daemon_exit(coin: CoinId, timeout: Duration) {
     }
 }
 
+/// Short-lived cache of `tasklist` results keyed by image prefix. Status polling can
+/// probe process state every couple of seconds across both coins; without this cache
+/// each probe spawns an external `tasklist` process, which under a tight warming
+/// cadence floods the Windows message queue (ERROR_NOT_ENOUGH_QUOTA / 0x80070718).
+#[cfg(windows)]
+const PROCESS_PROBE_TTL: Duration = Duration::from_millis(2_000);
+
+#[cfg(windows)]
+static PROCESS_PROBE_CACHE: Lazy<StdMutex<HashMap<String, (Instant, Vec<u32>)>>> =
+    Lazy::new(|| StdMutex::new(HashMap::new()));
+
+/// Drop cached process probes so the next read re-runs `tasklist`. Call after spawning
+/// or killing a daemon so state changes are observed immediately instead of after TTL.
+#[cfg(windows)]
+pub fn invalidate_process_probe_cache() {
+    if let Ok(mut cache) = PROCESS_PROBE_CACHE.lock() {
+        cache.clear();
+    }
+}
+
+#[cfg(not(windows))]
+pub fn invalidate_process_probe_cache() {}
+
 #[cfg(windows)]
 fn windows_pids_with_image_prefix(prefix: &str) -> Vec<u32> {
+    if let Ok(cache) = PROCESS_PROBE_CACHE.lock() {
+        if let Some((at, pids)) = cache.get(prefix) {
+            if at.elapsed() < PROCESS_PROBE_TTL {
+                return pids.clone();
+            }
+        }
+    }
+    let pids = windows_pids_with_image_prefix_uncached(prefix);
+    if let Ok(mut cache) = PROCESS_PROBE_CACHE.lock() {
+        cache.insert(prefix.to_string(), (Instant::now(), pids.clone()));
+    }
+    pids
+}
+
+#[cfg(windows)]
+fn windows_pids_with_image_prefix_uncached(prefix: &str) -> Vec<u32> {
     use std::os::windows::process::CommandExt;
     use std::process::Stdio;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -448,6 +500,8 @@ fn windows_kill_pids(pids: &[u32]) {
             .stderr(Stdio::null())
             .status();
     }
+    // Process table changed — force the next probe to re-read it.
+    invalidate_process_probe_cache();
 }
 
 /// Stop stray veriumd/vericoind processes holding this coin's RPC port.

@@ -10,6 +10,7 @@ import { ExplorerLink } from "@/components/ExplorerLink";
 import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { fetchExplorerStats } from "@/lib/explorer-api";
 import { useExplorerQueriesEnabled } from "@/lib/network-mode";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { networkHashToKhm } from "@/lib/mining-revenue";
 import { formatNumber } from "@/lib/utils";
 
@@ -26,12 +27,13 @@ export function NetworkPulse({
 }: NetworkPulseProps) {
   const profile = getCoinProfile(coin);
   const explorerEnabled = useExplorerQueriesEnabled();
+  const visible = useWindowVisible();
 
   const stats = useQuery({
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
     enabled: explorerEnabled,
-    refetchInterval: 60_000,
+    refetchInterval: visible ? 60_000 : false,
     retry: 0,
   });
 

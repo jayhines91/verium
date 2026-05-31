@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
 
+use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,6 +12,25 @@ use crate::config::DaemonConfig;
 use crate::error::{AppError, AppResult};
 use crate::node::constants::{RPC_TIMEOUT, STATUS_RPC_TIMEOUT};
 use crate::node::rpc_auth::{resolve_managed_auth_methods, RpcAuth};
+
+/// Shared reqwest clients keyed by timeout (in milliseconds). Each `Client` owns a
+/// connection pool and idle-connection reaper; building one per RPC call leaks those
+/// resources over a long session, so we reuse a single client per distinct timeout.
+static HTTP_CLIENTS: Lazy<Mutex<HashMap<u64, Client>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn shared_http_client(timeout: Duration) -> AppResult<Client> {
+    let key = timeout.as_millis() as u64;
+    let mut clients = HTTP_CLIENTS
+        .lock()
+        .map_err(|_| AppError::other("HTTP client cache poisoned"))?;
+    if let Some(client) = clients.get(&key) {
+        return Ok(client.clone());
+    }
+    let client = Client::builder().timeout(timeout).build()?;
+    clients.insert(key, client.clone());
+    Ok(client)
+}
 
 #[derive(Debug, Clone)]
 pub struct RpcClient {
@@ -61,7 +83,7 @@ impl RpcClient {
     ) -> AppResult<Self> {
         let url = format!("http://{}:{}/", cfg.rpc_host, cfg.rpc_port);
         let auth_methods = resolve_managed_auth_methods(coin, cfg)?;
-        let http = Client::builder().timeout(timeout).build()?;
+        let http = shared_http_client(timeout)?;
         Ok(Self {
             http,
             url,

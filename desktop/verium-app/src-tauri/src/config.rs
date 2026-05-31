@@ -257,11 +257,9 @@ pub fn node_conf_dir(cfg: &DaemonConfig) -> PathBuf {
     cfg.datadir.clone()
 }
 
-/// Network-specific datadir where veriumd writes blocks, debug.log, and .cookie.
-pub fn chain_datadir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
-    if verium_uses_legacy_flat(cfg) {
-        return cfg.datadir.clone();
-    }
+/// Unified veriumd network subfolder (`…/Verium/verium/`), even when the running
+/// daemon uses the legacy flat root layout on Verium mainnet.
+fn unified_chain_subdir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
     let mut p = cfg.datadir.clone();
     match cfg.chain.as_str() {
         "test" => p.push("testnet3"),
@@ -272,6 +270,14 @@ pub fn chain_datadir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
         _ => {}
     }
     p
+}
+
+/// Network-specific datadir where veriumd writes blocks, debug.log, and .cookie.
+pub fn chain_datadir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
+    if verium_uses_legacy_flat(cfg) {
+        return cfg.datadir.clone();
+    }
+    unified_chain_subdir(coin, cfg)
 }
 
 /// Verium mainnet uses the legacy flat layout (`…/Verium/blocks`), matching
@@ -483,7 +489,7 @@ fn binary_supports_unified_subdir(coin: CoinId, cfg: &DaemonConfig) -> bool {
 /// layout (`…/Verium/blocks`) and should be promoted before starting legacy veriumd.
 pub fn legacy_subdir_chain_ahead(coin: CoinId, cfg: &DaemonConfig) -> bool {
     let root = legacy_root_chain_dir(cfg);
-    let sub = chain_datadir(coin, cfg);
+    let sub = unified_chain_subdir(coin, cfg);
     if root == sub {
         return false;
     }
@@ -518,7 +524,7 @@ pub fn legacy_subdir_chain_ahead(coin: CoinId, cfg: &DaemonConfig) -> bool {
 /// `…/Verium/verium/blocks`. Move the larger subdir snapshot to the root before apply/restart.
 pub fn promote_subdir_chain_data_for_legacy(coin: CoinId, cfg: &DaemonConfig) -> AppResult<bool> {
     let root = legacy_root_chain_dir(cfg);
-    let sub = chain_datadir(coin, cfg);
+    let sub = unified_chain_subdir(coin, cfg);
     if root == sub {
         return Ok(false);
     }
@@ -1658,7 +1664,9 @@ mod config_tests {
         let chainstate = sub.join("chainstate");
         std::fs::create_dir_all(&blocks).unwrap();
         std::fs::create_dir_all(&chainstate).unwrap();
-        std::fs::write(blocks.join("blk00000.dat"), vec![0u8; 1024]).unwrap();
+        // Must exceed MIN_BOOTSTRAP_BLOCKS_BYTES; use a sparse file so the test is fast.
+        let blk = std::fs::File::create(blocks.join("blk00000.dat")).unwrap();
+        blk.set_len(MIN_BOOTSTRAP_BLOCKS_BYTES + 1_000_000).unwrap();
         std::fs::write(chainstate.join("CURRENT"), b"manifest").unwrap();
 
         let cfg = DaemonConfig {

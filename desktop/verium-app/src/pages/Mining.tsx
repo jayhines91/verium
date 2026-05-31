@@ -28,6 +28,7 @@ import { RevenuePeriodToggle } from "@/components/RevenuePeriodToggle";
 import { WalletUnlockGate } from "@/components/WalletUnlockGate";
 import { EXPLORER_PROFITABILITY } from "@/lib/verium-links";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { fetchExplorerStats } from "@/lib/explorer-api";
 import { useExplorerQueriesEnabled } from "@/lib/network-mode";
@@ -111,10 +112,11 @@ export function Mining() {
   const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>("day");
   const lastSampleRef = useRef<{ t: number; hr: number } | null>(null);
 
+  const visible = useWindowVisible();
   const minerState = useQuery({
     queryKey: coinQueryKey(coin, "get_miner_state"),
     queryFn: () => rpcGetMinerState(coin),
-    refetchInterval: 4_000,
+    refetchInterval: visible ? 4_000 : false,
   });
   const minerActive = minerState.data?.active ?? false;
   const minerStartedAt = minerState.data?.started_at;
@@ -123,6 +125,7 @@ export function Mining() {
     queryKey: coinQueryKey(coin, "getmininginfo"),
     queryFn: () => rpcGetMiningInfo(coin),
     refetchInterval: (query) => {
+      if (!visible) return false;
       const hr = query.state.data?.hashrate ?? 0;
       return miningInfoRefetchMs(minerActive, hr, minerStartedAt, 4_000);
     },
@@ -130,12 +133,12 @@ export function Mining() {
   const blockchain = useQuery({
     queryKey: coinQueryKey(coin, "getblockchaininfo"),
     queryFn: () => rpcGetBlockchainInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const daemonStatus = useDaemonStatus(coin);
   const explorerEnabled = useExplorerQueriesEnabled();
@@ -143,7 +146,7 @@ export function Mining() {
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
     enabled: explorerEnabled,
-    refetchInterval: 30_000,
+    refetchInterval: visible ? 30_000 : false,
     retry: 0,
   });
 

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { coinQueryKey, type CoinId } from "@/lib/coin/profile";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { fetchExplorerStats } from "@/lib/explorer-api";
 import { useExplorerQueriesEnabled } from "@/lib/network-mode";
 import { deriveDashboardActivity } from "@/lib/node/dashboard-activity";
@@ -10,17 +11,18 @@ import { rpcGetBlockchainInfo } from "@/lib/rpc/client";
 export function useDashboardActivity(coin: CoinId) {
   const node = useNodeStatus(coin);
   const explorerEnabled = useExplorerQueriesEnabled();
+  const visible = useWindowVisible();
 
   const blockchain = useQuery({
     queryKey: coinQueryKey(coin, "getblockchaininfo"),
     queryFn: () => rpcGetBlockchainInfo(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
   });
 
   const explorer = useQuery({
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
-    refetchInterval: 30_000,
+    refetchInterval: visible ? 30_000 : false,
     enabled: explorerEnabled && node.data?.connected === true,
     retry: 0,
   });

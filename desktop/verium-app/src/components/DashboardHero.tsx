@@ -4,6 +4,7 @@ import { Coins, Cpu, Loader2, Users, Wallet } from "lucide-react";
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { useDashboardActivity } from "@/hooks/useDashboardActivity";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import {
   heroStatusPillLabel,
   heroStatusPillShowsPulse,
@@ -146,21 +147,22 @@ function VeriumSummaryCard() {
   const { data: status, activity } = useDashboardActivity(coin);
   const connected = status?.connected === true;
   const explorerEnabled = useExplorerQueriesEnabled();
+  const visible = useWindowVisible();
 
   const blockchain = useQuery({
     queryKey: coinQueryKey(coin, "getblockchaininfo"),
     queryFn: () => rpcGetBlockchainInfo(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
   });
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const minerState = useQuery({
     queryKey: coinQueryKey(coin, "get_miner_state"),
     queryFn: () => rpcGetMinerState(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
   });
   const minerActive = minerState.data?.active ?? false;
   const minerStartedAt = minerState.data?.started_at;
@@ -168,6 +170,7 @@ function VeriumSummaryCard() {
     queryKey: coinQueryKey(coin, "getmininginfo"),
     queryFn: () => rpcGetMiningInfo(coin),
     refetchInterval: (query) => {
+      if (!visible) return false;
       const hashrate = query.state.data?.hashrate ?? 0;
       return miningInfoRefetchMs(
         minerActive,
@@ -181,18 +184,19 @@ function VeriumSummaryCard() {
   const explorer = useQuery({
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
-    refetchInterval: 30_000,
+    refetchInterval: visible ? 30_000 : false,
     enabled: explorerEnabled && connected,
     retry: 0,
   });
 
   useEffect(() => {
+    if (!visible) return;
     const id = window.setInterval(
       () => setAgeTick((n) => n + 1),
       BLOCK_AGE_TICK_MS,
     );
     return () => window.clearInterval(id);
-  }, []);
+  }, [visible]);
 
   const networkTip = explorer.data?.height;
   const syncCtx = {
@@ -377,42 +381,44 @@ function VericoinSummaryCard() {
   const { data: status, activity } = useDashboardActivity(coin);
   const connected = status?.connected === true;
   const explorerEnabled = useExplorerQueriesEnabled();
+  const visible = useWindowVisible();
 
   const blockchain = useQuery({
     queryKey: coinQueryKey(coin, "getblockchaininfo"),
     queryFn: () => rpcGetBlockchainInfo(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
   });
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const stakingState = useQuery({
     queryKey: coinQueryKey(coin, "get_staking_state"),
     queryFn: () => rpcGetStakingState(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
   });
   const vrcMining = useQuery({
     queryKey: coinQueryKey("vericoin", "getmininginfo"),
     queryFn: () => rpcGetVericoinMiningInfo(),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const explorer = useQuery({
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
-    refetchInterval: 30_000,
+    refetchInterval: visible ? 30_000 : false,
     enabled: explorerEnabled && connected,
     retry: 0,
   });
 
   useEffect(() => {
+    if (!visible) return;
     const id = window.setInterval(
       () => setAgeTick((n) => n + 1),
       BLOCK_AGE_TICK_MS,
     );
     return () => window.clearInterval(id);
-  }, []);
+  }, [visible]);
 
   const stakingActive = stakingState.data?.active ?? false;
   const networkTip = explorer.data?.height;

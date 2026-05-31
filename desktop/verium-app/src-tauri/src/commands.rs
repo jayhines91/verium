@@ -684,12 +684,24 @@ pub async fn get_node_status(
         && !state.inner().bootstrap_session_active()
         && detect_binary(coin).manageable
     {
-        let rpc_up = rpc_reachable(coin, &cfg).await;
-        let booting = daemon_boot_in_progress(state.inner(), coin, &cfg).await;
-        let reindexing = reindex_running_live(state.inner(), coin, &cfg).await;
-        if !rpc_up && !booting && !reindexing {
-            ensure_daemon_running(state.inner(), coin, &cfg).await;
-            cfg = state.config_fresh(coin).await?;
+        // Observe-only fast path: if this session already manages a live child, status
+        // polling must not spawn or probe the process table — the supervisor loop owns
+        // recovery. This keeps every status refresh from shelling out to tasklist and
+        // flooding the Windows message queue during long-running sessions.
+        let child_up = match state.inner().daemon(coin) {
+            Ok(d) => d.child_running().await,
+            Err(_) => false,
+        };
+        if !child_up {
+            let rpc_up = rpc_reachable(coin, &cfg).await;
+            if !rpc_up {
+                let booting = daemon_boot_in_progress(state.inner(), coin, &cfg).await;
+                let reindexing = reindex_running_live(state.inner(), coin, &cfg).await;
+                if !booting && !reindexing {
+                    ensure_daemon_running(state.inner(), coin, &cfg).await;
+                    cfg = state.config_fresh(coin).await?;
+                }
+            }
         }
     }
     if state.inner().bootstrap_loading_active(coin) {

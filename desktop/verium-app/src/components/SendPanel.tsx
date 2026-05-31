@@ -32,6 +32,7 @@ import {
 import { useActiveCoin, useCoinProfile } from "@/lib/coin/context";
 import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { useUserPreferences } from "@/lib/user-preferences";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { coinSymbol, formatCoinAmount } from "@/lib/units";
 import { cn } from "@/lib/utils";
 import { listAddressBookEntries } from "@/lib/address-book";
@@ -194,10 +195,11 @@ export function SendPanel({
   const queryClient = useQueryClient();
   const prefs = useUserPreferences((s) => s.prefs);
   const updatePrefs = useUserPreferences((s) => s.update);
+  const visible = useWindowVisible();
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
 
   const [recipients, setRecipients] = useState<SendRecipient[]>([

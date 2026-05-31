@@ -15,6 +15,7 @@ import { networkHashToKhm } from "@/lib/mining-revenue";
 import { rpcGetMiningInfo, rpcGetWalletInfo } from "@/lib/rpc/client";
 import { formatCoinAmount } from "@/lib/units";
 import { formatNumber } from "@/lib/utils";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 
 function formatUsd(value?: number): string {
   if (value === undefined || value === null) return "—";
@@ -29,15 +30,16 @@ interface DashboardSidebarProps {
 
 export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
   const coin = useActiveCoin();
+  const visible = useWindowVisible();
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const mining = useQuery({
     queryKey: coinQueryKey(coin, "getmininginfo"),
     queryFn: () => rpcGetMiningInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const explorerEnabled = useQuery({
     queryKey: ["explorer-api-enabled"],
@@ -48,7 +50,7 @@ export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
     enabled: explorerEnabled.data === true,
-    refetchInterval: 60_000,
+    refetchInterval: visible ? 60_000 : false,
     retry: 0,
   });
 

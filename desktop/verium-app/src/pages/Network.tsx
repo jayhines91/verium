@@ -1,6 +1,7 @@
 import { useActiveCoin } from "@/lib/coin/context";
 import { coinQueryKey } from "@/lib/coin/profile";
 import { useQuery } from "@tanstack/react-query";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import {
   Card,
   CardContent,
@@ -51,20 +52,21 @@ function chainTipLabel(status?: string): string {
 
 export function Network() {
   const coin = useActiveCoin();
+  const visible = useWindowVisible();
   const network = useQuery({
     queryKey: coinQueryKey(coin, "getnetworkinfo"),
     queryFn: () => rpcGetNetworkInfo(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
   });
   const peers = useQuery({
     queryKey: coinQueryKey(coin, "getpeerinfo"),
     queryFn: () => rpcGetPeerInfo(coin),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
   });
   const blockchain = useQuery({
     queryKey: coinQueryKey(coin, "getblockchaininfo"),
     queryFn: () => rpcGetBlockchainInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
 
   const explorerEnabled = useQuery({
@@ -76,16 +78,16 @@ export function Network() {
   const extraction = useQuery({
     queryKey: coinQueryKey(coin, "explorer-extraction"),
     queryFn: () => fetchExplorerExtraction(coin, 15),
-    enabled: explorerEnabled.data === true,
-    refetchInterval: 60_000,
+    enabled: explorerEnabled.data === true && visible,
+    refetchInterval: visible ? 60_000 : false,
     retry: 0,
   });
 
   const chainTips = useQuery({
     queryKey: coinQueryKey(coin, "explorer-chain-tips"),
     queryFn: () => fetchExplorerChainTips(coin),
-    enabled: explorerEnabled.data === true,
-    refetchInterval: 60_000,
+    enabled: explorerEnabled.data === true && visible,
+    refetchInterval: visible ? 60_000 : false,
     retry: 0,
   });
 
@@ -93,7 +95,7 @@ export function Network() {
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
     enabled: explorerEnabled.data === true,
-    refetchInterval: 60_000,
+    refetchInterval: visible ? 60_000 : false,
     retry: 0,
   });
 

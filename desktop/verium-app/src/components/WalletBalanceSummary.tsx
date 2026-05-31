@@ -5,6 +5,7 @@ import { coinQueryKey } from "@/lib/coin/profile";
 import { rpcGetWalletInfo, type WalletInfo } from "@/lib/rpc/client";
 import { formatCoinAmount } from "@/lib/units";
 import { coinMaturityConfirmations } from "@/lib/units";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 
 function walletScanProgress(
   scanning: WalletInfo["scanning"],
@@ -14,10 +15,12 @@ function walletScanProgress(
 
 export function WalletBalanceSummary() {
   const coin = useActiveCoin();
+  const visible = useWindowVisible();
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(coin),
     refetchInterval: (query) => {
+      if (!visible) return false;
       return walletScanProgress(query.state.data?.scanning) ? 3_000 : 10_000;
     },
   });

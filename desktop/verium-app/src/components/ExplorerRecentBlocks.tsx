@@ -41,6 +41,7 @@ import { explorerBlocksHash } from "@/lib/explorer-links";
 import type { CoinId } from "@/lib/coin/profile";
 import { formatCoinAmount } from "@/lib/units";
 import { cn, formatBlockAge, formatNumber } from "@/lib/utils";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 
 interface ExplorerRecentBlocksProps {
   coin: import("@/lib/coin/profile").CoinId;
@@ -104,6 +105,8 @@ export function ExplorerRecentBlocks({
 
   const miningCtx = useWalletMiningContext();
 
+  const visible = useWindowVisible();
+
   const [ageTick, setAgeTick] = useState(0);
 
   const [celebration, setCelebration] = useState<CelebrationState | null>(null);
@@ -113,7 +116,7 @@ export function ExplorerRecentBlocks({
   const dismissTimer = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!isDashboard) return;
+    if (!isDashboard || !visible) return;
 
     const id = window.setInterval(
       () => setAgeTick((n) => n + 1),
@@ -122,7 +125,7 @@ export function ExplorerRecentBlocks({
     );
 
     return () => window.clearInterval(id);
-  }, [isDashboard]);
+  }, [isDashboard, visible]);
 
   const enabled = useQuery({
     queryKey: ["explorer-api-enabled"],
@@ -137,11 +140,15 @@ export function ExplorerRecentBlocks({
 
     queryFn: () => fetchExplorerBlocks(coin, isDashboard ? 10 : 10),
 
-    enabled: isDashboard || enabled.data === true,
+    enabled: (isDashboard || enabled.data === true) && visible,
 
     staleTime: isDashboard ? DASHBOARD_BLOCKS_REFETCH_MS : 0,
 
-    refetchInterval: isDashboard ? DASHBOARD_BLOCKS_REFETCH_MS : 5_000,
+    refetchInterval: visible
+      ? isDashboard
+        ? DASHBOARD_BLOCKS_REFETCH_MS
+        : 5_000
+      : false,
 
     refetchOnWindowFocus: !isDashboard,
 

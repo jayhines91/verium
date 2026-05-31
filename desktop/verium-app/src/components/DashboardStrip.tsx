@@ -21,6 +21,7 @@ import {
   mergeStakingNetworkKpis,
 } from "@/lib/staking-stats";
 import { formatNumber } from "@/lib/utils";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 
 function isEarnActivity(tx: TransactionItem, coin: CoinId): boolean {
   if (coin === "verium") {
@@ -62,39 +63,42 @@ export function DashboardStrip({ coin }: { coin: CoinId }) {
   const { data: status } = useDaemonStatus(coin);
   const connected = status?.connected === true;
   const showRpcData = connected;
+  const visible = useWindowVisible();
 
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(coin),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
+  // Shared key + limit with DashboardMiddleRow so React Query dedupes both
+  // dashboard cards into a single listtransactions poll.
   const txs = useQuery({
-    queryKey: coinQueryKey(coin, "listtransactions", "dashboard-strip"),
-    queryFn: () => rpcListTransactions(coin, 30, 0),
-    refetchInterval: 30_000,
+    queryKey: coinQueryKey(coin, "listtransactions", "dashboard"),
+    queryFn: () => rpcListTransactions(coin, 50, 0),
+    refetchInterval: visible ? 30_000 : false,
   });
   const vrmMining = useQuery({
     queryKey: coinQueryKey("verium", "getmininginfo"),
     queryFn: () => rpcGetMiningInfo("verium"),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
     enabled: coin === "verium",
   });
   const vrmMiner = useQuery({
     queryKey: coinQueryKey("verium", "get_miner_state"),
     queryFn: () => rpcGetMinerState("verium"),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
     enabled: coin === "verium",
   });
   const vrcStaking = useQuery({
     queryKey: coinQueryKey("vericoin", "get_staking_state"),
     queryFn: () => rpcGetStakingState("vericoin"),
-    refetchInterval: 5_000,
+    refetchInterval: visible ? 5_000 : false,
     enabled: coin === "vericoin",
   });
   const vrcMining = useQuery({
     queryKey: coinQueryKey("vericoin", "getmininginfo"),
     queryFn: () => rpcGetVericoinMiningInfo(),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
     enabled: coin === "vericoin",
   });
   const explorerEnabled = useExplorerQueriesEnabled();
@@ -102,7 +106,7 @@ export function DashboardStrip({ coin }: { coin: CoinId }) {
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
     enabled: explorerEnabled,
-    refetchInterval: 60_000,
+    refetchInterval: visible ? 60_000 : false,
   });
 
   const vrcNetwork =

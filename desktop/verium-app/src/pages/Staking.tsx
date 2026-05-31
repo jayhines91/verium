@@ -17,6 +17,7 @@ import { coinQueryKey, getCoinProfile } from "@/lib/coin/profile";
 import { fetchExplorerStats } from "@/lib/explorer-api";
 import { useExplorerQueriesEnabled } from "@/lib/network-mode";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { useUserPreferences } from "@/lib/user-preferences";
 import {
   clearStakingStoppedByUser,
@@ -72,25 +73,26 @@ export function Staking() {
   const sessionTick = useRef(0);
   const [, forceTick] = useState(0);
 
+  const visible = useWindowVisible();
   const stakingState = useQuery({
     queryKey: coinQueryKey(VERICOIN, "get_staking_state"),
     queryFn: () => rpcGetStakingState(VERICOIN),
-    refetchInterval: 4_000,
+    refetchInterval: visible ? 4_000 : false,
   });
   const miningInfo = useQuery({
     queryKey: coinQueryKey(VERICOIN, "getmininginfo"),
     queryFn: () => rpcGetVericoinMiningInfo(),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const blockchain = useQuery({
     queryKey: coinQueryKey(VERICOIN, "getblockchaininfo"),
     queryFn: () => rpcGetBlockchainInfo(VERICOIN),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const wallet = useQuery({
     queryKey: coinQueryKey(VERICOIN, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(VERICOIN),
-    refetchInterval: 10_000,
+    refetchInterval: visible ? 10_000 : false,
   });
   const daemonStatus = useDaemonStatus(VERICOIN);
   const explorerEnabled = useExplorerQueriesEnabled();
@@ -98,18 +100,18 @@ export function Staking() {
     queryKey: coinQueryKey(VERICOIN, "explorer-stats"),
     queryFn: () => fetchExplorerStats(VERICOIN),
     enabled: explorerEnabled,
-    refetchInterval: 30_000,
+    refetchInterval: visible ? 30_000 : false,
     retry: 0,
   });
 
   useEffect(() => {
-    if (!stakingState.data?.active) return;
+    if (!stakingState.data?.active || !visible) return;
     const id = window.setInterval(() => {
       sessionTick.current += 1;
       forceTick(sessionTick.current);
     }, 30_000);
     return () => window.clearInterval(id);
-  }, [stakingState.data?.active]);
+  }, [stakingState.data?.active, visible]);
 
   const start = useMutation({
     mutationFn: () => rpcStakingStart(VERICOIN),
