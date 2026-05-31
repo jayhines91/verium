@@ -405,11 +405,16 @@ jobs:
             librsvg2-dev \
             patchelf \
             build-essential \
+            pkg-config \
             curl \
             wget \
             file \
             libssl-dev \
             libgtk-3-dev \
+            libdbus-1-dev \
+            libudev-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
             libfuse2
 
       - name: Install npm dependencies
@@ -452,6 +457,12 @@ jobs:
 
       - name: Assert real daemon sidecars (no build placeholders)
         run: npm run assert:sidecars
+
+      - name: Prepare frontendDist for Cargo tests
+        shell: bash
+        run: |
+          mkdir -p dist
+          printf '<!doctype html><html><body></body></html>\n' > dist/index.html
 
       - name: Backend unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
