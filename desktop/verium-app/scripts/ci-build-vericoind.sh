@@ -194,6 +194,15 @@ def patch_curl() -> bool:
             flags=re.M,
         )
 
+    # Drop any curl preprocess hook from upstream snapshots. Some variants
+    # carry a malformed sed expression that fails in "Preprocessing curl...".
+    text = re.sub(
+        r"^define \$\(package\)_preprocess_cmds\n(?:.*\n)*?endef\n\n",
+        "",
+        text,
+        flags=re.M,
+    )
+
     if text != original:
         path.write_text(text, encoding="utf-8")
         return True
