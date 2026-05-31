@@ -26,7 +26,7 @@ endif
 
 $(package)_config_libraries=filesystem,system,chrono,thread
 
-$(package)_cxxflags=-std=c++17 -fvisibility=hidden -D_GNU_SOURCE 
+$(package)_cxxflags=-std=c++17 -fvisibility=hidden -D_GNU_SOURCE -Wno-error=nonnull
 $(package)_cxxflags_linux=-fPIC
 $(package)_cxxflags_android=-fPIC
 # Boost 1.71 on modern clang/libc++ (Xcode 15+):

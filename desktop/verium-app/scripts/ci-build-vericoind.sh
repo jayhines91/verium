@@ -38,6 +38,104 @@ patch_file() {
 patch_file "src/wallet/db.cpp" 'fs::copy_option::overwrite_if_exists' 'fs::copy_options::overwrite_existing'
 patch_file "src/wallet/walletutil.cpp" 'it.level()' 'it.depth()'
 
+patch_depends_recipes_for_modern_toolchains() {
+  python3 - <<'PY'
+from pathlib import Path
+import re
+
+root = Path(".")
+
+def patch_bdb() -> bool:
+    path = root / "depends/packages/bdb.mk"
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    original = text
+
+    flags = "-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=format-security"
+    if "$(package)_cflags+=" not in text:
+        text = text.replace(
+            "$(package)_cxxflags=-std=c++11",
+            "$(package)_cxxflags=-std=c++11\n$(package)_cflags+=" + flags,
+            1,
+        )
+    elif "-Wno-error=implicit-function-declaration" not in text:
+        text = re.sub(r"^(\$\(package\)_cflags\+=.*)$", r"\1 " + flags, text, count=1, flags=re.M)
+
+    if text != original:
+        path.write_text(text, encoding="utf-8")
+        return True
+    return False
+
+def patch_boost() -> bool:
+    path = root / "depends/packages/boost.mk"
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    original = text
+
+    # GCC 13+ can surface Boost concept-check warnings as errors in some CI envs.
+    if "-Wno-error=nonnull" not in text:
+        text = re.sub(r"^(\$\(package\)_cxxflags=.*)$", r"\1 -Wno-error=nonnull", text, count=1, flags=re.M)
+
+    darwin_flags = (
+        "-Wno-enum-constexpr-conversion -Wno-deprecated-builtins "
+        "-D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION"
+    )
+    if "$(package)_cxxflags_darwin=" not in text and "$(package)_cxxflags_android=-fPIC" in text:
+        text = text.replace(
+            "$(package)_cxxflags_android=-fPIC",
+            "$(package)_cxxflags_android=-fPIC\n$(package)_cxxflags_darwin=" + darwin_flags,
+            1,
+        )
+
+    # Patch legacy Boost pthread stack checks (function-like PTHREAD_STACK_MIN on modern libc).
+    if "PTHREAD_STACK_MIN" not in text and "define $(package)_preprocess_cmds" in text:
+        lines = text.splitlines()
+        start = next((i for i, line in enumerate(lines) if line.strip() == "define $(package)_preprocess_cmds"), None)
+        end = None
+        if start is not None:
+            for i in range(start + 1, len(lines)):
+                if lines[i].strip() == "endef":
+                    end = i
+                    break
+        if start is not None and end is not None:
+            last_cmd = None
+            for i in range(end - 1, start, -1):
+                if lines[i].strip():
+                    last_cmd = i
+                    break
+            if last_cmd is not None and not lines[last_cmd].rstrip().endswith("\\"):
+                lines[last_cmd] = lines[last_cmd].rstrip() + " && \\"
+            patch_lines = [
+                "  [ -f boost/thread/pthread/thread_data.hpp ] && \\",
+                "    sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#ifdef PTHREAD_STACK_MIN/' boost/thread/pthread/thread_data.hpp || true && \\",
+                "  [ -f libs/thread/src/pthread/thread.cpp ] && \\",
+                "    sed -i -E 's/#if[[:space:]]+PTHREAD_STACK_MIN[[:space:]]*>[[:space:]]*0/#ifdef PTHREAD_STACK_MIN/' libs/thread/src/pthread/thread.cpp || true",
+            ]
+            lines[end:end] = patch_lines
+            text = "\n".join(lines) + "\n"
+
+    if text != original:
+        path.write_text(text, encoding="utf-8")
+        return True
+    return False
+
+changed = []
+if patch_bdb():
+    changed.append("depends/packages/bdb.mk")
+if patch_boost():
+    changed.append("depends/packages/boost.mk")
+
+if changed:
+    print("==> Patched depends recipes:", ", ".join(changed))
+else:
+    print("==> Depends recipes already compatible")
+PY
+}
+
+patch_depends_recipes_for_modern_toolchains
+
 if [[ "$KIND" == "macos" ]]; then
   brew install automake libtool pkg-config || true
   python3 -m pip install --user --break-system-packages --upgrade pip setuptools wheel 2>/dev/null || true
