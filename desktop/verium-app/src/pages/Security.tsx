@@ -67,7 +67,10 @@ export function Security() {
   const hw = useQuery({ queryKey: ["hw-wallets"], queryFn: hardwareWalletList });
   const ms = useQuery({ queryKey: ["multisig"], queryFn: multisigList });
   const spending = useQuery({ queryKey: ["spending-controls"], queryFn: spendingControlsGet });
-  const isHd = useQuery({ queryKey: ["wallet-is-hd", coin], queryFn: () => recoveryWalletIsHd(coin) });
+  const isHd = useQuery({
+    queryKey: ["wallet-is-hd", coin],
+    queryFn: () => recoveryWalletIsHd(coin),
+  });
 
   const disable2fa = useMutation({
     mutationFn: (code: string) => twoFactorDisable(code),
@@ -81,6 +84,15 @@ export function Security() {
     onSuccess: async () => {
       setPin("");
       setConfirmPin("");
+      queryClient.setQueryData(
+        ["passkey"],
+        (prev: Awaited<ReturnType<typeof passkeyStatus>> | undefined) => ({
+          ...(prev ?? { use_pin_fallback: true }),
+          enabled: true,
+          use_pin_fallback: true,
+          enrolled_at: Math.floor(Date.now() / 1000),
+        }),
+      );
       await queryClient.invalidateQueries({ queryKey: ["passkey"] });
       await queryClient.invalidateQueries({ queryKey: PASSKEY_GATE_QUERY_KEY });
     },
@@ -102,11 +114,16 @@ export function Security() {
       unlockPassphrase?: string;
     }) =>
       recoveryApplyHdSeed(coin, phrase, undefined, unlockPassphrase),
-    onSuccess: () => {
+    onSuccess: async () => {
       setWalletUnlockPass("");
-      queryClient.invalidateQueries({ queryKey: ["wallet-is-hd", coin] });
+      setShowRecovery(false);
+      queryClient.setQueryData(["wallet-is-hd", coin], true);
+      await queryClient.invalidateQueries({ queryKey: ["wallet-is-hd", coin] });
     },
   });
+
+  const walletIsHd = isHd.data === true || applyHd.isSuccess;
+  const pinEnrolled = passkey.data?.enabled === true;
 
   const saveAutoLock = async (patch: Partial<AutoLockConfig>) => {
     const current = autoLock.data ?? {
@@ -186,39 +203,41 @@ export function Security() {
             <KeyRound className="h-4 w-4 text-accent" /> Recovery phrase (BIP39)
           </CardTitle>
           <CardDescription>
-            {isHd.data
+            {walletIsHd
               ? "Your wallet uses HD derivation with a recovery phrase."
               : "Upgrade to HD to enable mnemonic recovery."}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          {!isHd.data && (
+          {!walletIsHd && (
             <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               Non-HD wallet detected. Generate a phrase and upgrade to enable recovery.
             </div>
           )}
-          {!showRecovery ? (
+          {walletIsHd && !showRecovery && (
+            <p className="text-xs text-success">
+              HD recovery is enabled for this chain wallet.
+            </p>
+          )}
+          {!walletIsHd && !showRecovery && (
             <Button onClick={() => setShowRecovery(true)}>Set up recovery phrase</Button>
-          ) : (
+          )}
+          {showRecovery && !walletIsHd && (
             <div className="flex flex-col gap-3">
-              {!isHd.data && (
-                <input
-                  type="password"
-                  value={walletUnlockPass}
-                  onChange={(e) => setWalletUnlockPass(e.target.value)}
-                  placeholder="Wallet passphrase (required to unlock before upgrade)"
-                  className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-sm outline-none focus:border-accent"
-                />
-              )}
+              <input
+                type="password"
+                value={walletUnlockPass}
+                onChange={(e) => setWalletUnlockPass(e.target.value)}
+                placeholder="Wallet passphrase (required to unlock before upgrade)"
+                className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-sm outline-none focus:border-accent"
+              />
               <RecoveryPhraseWizard
-                onComplete={(phrase) => {
-                  if (!isHd.data) {
-                    applyHd.mutate({
-                      phrase,
-                      unlockPassphrase: walletUnlockPass || undefined,
-                    });
-                  }
+                onComplete={async (phrase) => {
+                  await applyHd.mutateAsync({
+                    phrase,
+                    unlockPassphrase: walletUnlockPass || undefined,
+                  });
                 }}
               />
             </div>
@@ -228,9 +247,6 @@ export function Security() {
           )}
           {applyHd.error && (
             <p className="text-xs text-danger">{String(applyHd.error)}</p>
-          )}
-          {applyHd.isSuccess && (
-            <p className="text-xs text-success">HD seed applied via sethdseed.</p>
           )}
         </CardContent>
       </Card>
@@ -289,10 +305,10 @@ export function Security() {
           <CardDescription>PIN gate before the wallet UI opens.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <Badge tone={passkey.data?.enabled ? "success" : "neutral"}>
-            {passkey.data?.enabled ? "PIN enrolled" : "Not enrolled"}
+          <Badge tone={pinEnrolled ? "success" : "neutral"}>
+            {pinEnrolled ? "PIN enrolled" : "Not enrolled"}
           </Badge>
-          {!passkey.data?.enabled ? (
+          {!pinEnrolled ? (
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap gap-2">
                 <input
@@ -336,11 +352,6 @@ export function Security() {
               )}
               {enrollPin.error && (
                 <p className="text-xs text-danger">{String(enrollPin.error)}</p>
-              )}
-              {enrollPin.isSuccess && (
-                <p className="text-xs text-success">
-                  PIN enrolled. Enter it on the unlock screen to continue using the app.
-                </p>
               )}
             </div>
           ) : (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Terminal as TerminalIcon } from "lucide-react";
+import { AlertTriangle, Loader2, Terminal as TerminalIcon } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -9,11 +10,18 @@ import {
   CardTitle,
 } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { coinQueryKey } from "@/lib/coin/profile";
-import { rpcGetWalletInfo, rpcRaw } from "@/lib/rpc/client";
+import { coinQueryKey, COIN_PROFILES } from "@/lib/coin/profile";
+import {
+  rpcGetConfig,
+  rpcGetWalletInfo,
+  rpcRaw,
+  tauriStartDaemon,
+} from "@/lib/rpc/client";
 import { useActiveCoin } from "@/lib/coin/context";
 import { cn } from "@/lib/utils";
 import { isWalletLocked } from "@/lib/wallet-unlock";
+import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { isNodeReady, nodeStatusLabel } from "@/lib/node/status";
 
 interface ConsoleEntry {
   id: string;
@@ -50,6 +58,19 @@ function saveHistory(history: string[]) {
 
 export function RpcConsole() {
   const coin = useActiveCoin();
+  const profile = COIN_PROFILES[coin];
+  const { data: nodeStatus, isConnecting } = useDaemonStatus(coin);
+  const daemonConfig = useQuery({
+    queryKey: coinQueryKey(coin, "daemon-config"),
+    queryFn: () => rpcGetConfig(coin),
+  });
+  const nodeConnected = isNodeReady(nodeStatus);
+  const startDaemon = useMutation({
+    mutationFn: () => tauriStartDaemon(coin),
+    onSuccess: () => {
+      void daemonConfig.refetch();
+    },
+  });
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
     queryFn: () => rpcGetWalletInfo(coin),
@@ -140,11 +161,50 @@ export function RpcConsole() {
           </CardTitle>
           <CardDescription>
             Send raw JSON-RPC commands to{" "}
-            <span className="font-mono">veriumd</span>. Be careful — these are
-            real commands.
+            <span className="font-mono">{profile.binaryName}</span> at{" "}
+            <span className="font-mono text-[11px]">
+              http://{daemonConfig.data?.rpc_host ?? "127.0.0.1"}:
+              {daemonConfig.data?.rpc_port ?? profile.defaultRpcPort}
+            </span>
+            . Be careful — these are real commands.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {!nodeConnected && (
+            <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+              <div className="flex items-start gap-2">
+                {isConnecting || startDaemon.isPending ? (
+                  <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
+                ) : (
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                )}
+                <span>
+                  {profile.binaryName} is not reachable (
+                  {nodeStatusLabel(nodeStatus) || "offline"}). Commands will try
+                  to start the node automatically; you can also start it below.
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={startDaemon.isPending}
+                  onClick={() => startDaemon.mutate()}
+                >
+                  {startDaemon.isPending ? "Starting…" : `Start ${profile.binaryName}`}
+                </Button>
+                <Link
+                  to="/settings#daemon-connection"
+                  className="inline-flex h-8 items-center rounded-md px-3 text-xs text-fg hover:bg-bg-panel"
+                >
+                  Daemon settings
+                </Link>
+              </div>
+              {startDaemon.error && (
+                <p className="text-danger">{String(startDaemon.error)}</p>
+              )}
+            </div>
+          )}
           {walletLocked && (
             <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />

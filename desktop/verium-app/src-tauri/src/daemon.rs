@@ -72,7 +72,18 @@ impl DaemonManager {
         }
 
         let bin = resolve_daemon_binary(self.coin)
-            .ok_or_else(|| AppError::other(format!("could not locate {} binary", self.coin.binary_base())))?;
+            .ok_or_else(|| AppError::other(binary_missing_hint(self.coin).unwrap_or_else(|| {
+                format!("could not locate {} binary", self.coin.binary_base())
+            })))?;
+        if !is_real_sidecar(&bin) {
+            return Err(AppError::other(binary_missing_hint(self.coin).unwrap_or_else(|| {
+                format!(
+                    "refusing to run build placeholder at {} — install a real {} binary",
+                    bin.display(),
+                    self.coin.binary_base()
+                )
+            })));
+        }
         let bin = stage_sidecar_for_spawn(&bin)?;
         let legacy_flat = self.coin == CoinId::Verium && verium_uses_legacy_flat(&cfg);
         if legacy_flat && binary_supports_unified_chain_selector(&bin, self.coin) {
@@ -392,6 +403,17 @@ pub fn native_daemon_image_running(coin: CoinId) -> bool {
     }
 }
 
+/// When no dedicated `vericoind` sidecar exists, a unified `veriumd` that advertises
+/// `-vericoin` can serve the Vericoin chain on a separate datadir/RPC port.
+fn detect_unified_veriumd_for_vericoin() -> Option<PathBuf> {
+    let path = detect_sidecar_binary(CoinId::Verium)?;
+    if binary_supports_unified_chain_selector(&path, CoinId::Vericoin) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
 fn resolve_daemon_binary(coin: CoinId) -> Option<PathBuf> {
     detect_binary(coin).path.map(PathBuf::from)
 }
@@ -403,18 +425,37 @@ fn binary_help_output(path: &Path) -> Option<String> {
     if !path.is_file() {
         return None;
     }
-    let mut cmd = std::process::Command::new(path);
-    cmd.arg("-help");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    let output = cmd.output().ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Some(format!("{stdout}{stderr}"))
+    let path = path.to_path_buf();
+    let path_display = path.display().to_string();
+    std::thread::scope(|scope| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        scope.spawn(move || {
+            let mut cmd = std::process::Command::new(&path);
+            cmd.arg("-help");
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+            let result = cmd.output().ok().map(|output| {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                format!("{stdout}{stderr}")
+            });
+            let _ = tx.send(result);
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(8)) {
+            Ok(help) => help,
+            Err(_) => {
+                tracing::warn!(
+                    "daemon -help timed out after 8s for {}",
+                    path_display
+                );
+                None
+            }
+        }
+    })
 }
 
 pub fn binary_supports_binarytest(path: &Path) -> bool {
@@ -691,9 +732,18 @@ pub fn binary_missing_hint(coin: CoinId) -> Option<String> {
             CoinId::Verium => "VERIUMD_LOCAL or VERIUMD_PATH",
             CoinId::Vericoin => "VERICOIND_LOCAL or VERICOIND_PATH",
         };
+        let build_hint = if coin == CoinId::Vericoin && cfg!(target_os = "macos") {
+            " On macOS: build with npm run build:vericoind:macos, then rebuild the .app — or launch with \
+             VERICOIND_PATH=/path/to/vericoind, or copy a real binary to \
+             ~/Library/Application Support/Vericonomy/desktop-app/run/vericoind."
+        } else if coin == CoinId::Vericoin {
+            " Build vericoind from the Vericoin repo, then npm run fetch:vericoind."
+        } else {
+            ""
+        };
         Some(format!(
-            "The bundled {name} is a dev placeholder only — install a real {name} binary \
-             (set {env_hint}, then npm run fetch:veriumd / fetch:vericoind)."
+            "The bundled {name} is a build placeholder only — install a real {name} binary \
+             (set {env_hint}, then npm run fetch:vericoind).{build_hint}"
         ))
     } else {
         Some(format!(
@@ -779,6 +829,21 @@ pub fn detect_binary(coin: CoinId) -> DaemonBinaryStatus {
         };
     }
 
+    if coin == CoinId::Vericoin {
+        if let Some(path) = detect_unified_veriumd_for_vericoin() {
+            return DaemonBinaryStatus {
+                found: true,
+                path: Some(path.display().to_string()),
+                source: DaemonBinarySource::Sidecar,
+                manageable: true,
+                runtime: "unified_veriumd".into(),
+                coin: coin.as_str().to_string(),
+                stub_sidecar: false,
+                missing_hint: None,
+            };
+        }
+    }
+
     let native = detect_native_binary(coin);
     if native.found {
         return native;
@@ -796,7 +861,7 @@ fn detect_native_binary(coin: CoinId) -> DaemonBinaryStatus {
 
     if let Ok(p) = std::env::var(env_var) {
         let path = PathBuf::from(p);
-        if path.exists() {
+        if is_real_sidecar(&path) {
             return DaemonBinaryStatus {
                 found: true,
                 path: Some(path.display().to_string()),
@@ -813,7 +878,7 @@ fn detect_native_binary(coin: CoinId) -> DaemonBinaryStatus {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             let candidate = parent.join(&name);
-            if candidate.exists() {
+            if is_real_sidecar(&candidate) {
                 return DaemonBinaryStatus {
                     found: true,
                     path: Some(candidate.display().to_string()),
@@ -829,16 +894,18 @@ fn detect_native_binary(coin: CoinId) -> DaemonBinaryStatus {
     }
 
     if let Ok(p) = which::which(&name) {
-        return DaemonBinaryStatus {
-            found: true,
-            path: Some(p.display().to_string()),
-            source: DaemonBinarySource::Path,
-            manageable: true,
-            runtime: "native".into(),
-            coin: coin.as_str().to_string(),
-            stub_sidecar: false,
-            missing_hint: None,
-        };
+        if is_real_sidecar(&p) {
+            return DaemonBinaryStatus {
+                found: true,
+                path: Some(p.display().to_string()),
+                source: DaemonBinarySource::Path,
+                manageable: true,
+                runtime: "native".into(),
+                coin: coin.as_str().to_string(),
+                stub_sidecar: false,
+                missing_hint: None,
+            };
+        }
     }
 
     #[cfg(target_os = "windows")]

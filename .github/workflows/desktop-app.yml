@@ -230,9 +230,106 @@ jobs:
           path: out/veriumd-${{ matrix.target }}*
           if-no-files-found: error
 
+  vericoind-sidecar:
+    name: vericoind sidecar (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            label: Linux x64
+            os: ubuntu-22.04
+            host: x86_64-linux-gnu
+            kind: linux
+            configure_extra: ""
+          - target: aarch64-unknown-linux-gnu
+            label: Linux ARM64
+            os: ubuntu-24.04-arm
+            host: aarch64-linux-gnu
+            kind: linux
+            configure_extra: "--enable-arm-crypto"
+          - target: x86_64-apple-darwin
+            label: macOS Intel
+            os: macos-15-intel
+            host: x86_64-apple-darwin
+            kind: macos
+            configure_extra: ""
+          - target: aarch64-apple-darwin
+            label: macOS Apple Silicon
+            os: macos-14
+            host: aarch64-apple-darwin
+            kind: macos
+            configure_extra: "--enable-arm-crypto"
+          - target: x86_64-pc-windows-msvc
+            label: Windows x64
+            os: ubuntu-22.04
+            host: x86_64-w64-mingw32
+            kind: mingw
+            configure_extra: ""
+
+    runs-on: ${{ matrix.os }}
+    env:
+      NO_QT: "1"
+
+    steps:
+      - name: Checkout wallet repo (scripts only)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            desktop/verium-app/scripts
+          fetch-depth: 1
+
+      - name: Linux / MinGW build dependencies
+        if: matrix.kind == 'linux' || matrix.kind == 'mingw'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libtool autotools-dev automake pkg-config \
+            bsdmainutils python3 curl ca-certificates git
+          if [ "${{ matrix.host }}" = "aarch64-linux-gnu" ] && [ "$(uname -m)" != "aarch64" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          fi
+
+      - name: MinGW cross toolchain
+        if: matrix.kind == 'mingw'
+        run: |
+          sudo apt-get install -y g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix || true
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix || true
+
+      - name: macOS build dependencies
+        if: matrix.kind == 'macos'
+        run: |
+          brew update
+          brew install automake libtool pkg-config git
+          python3 -m pip install --user --break-system-packages --upgrade pip setuptools wheel
+          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+
+      - name: Build vericoind sidecar
+        working-directory: desktop/verium-app
+        env:
+          VERICOIND_CI_TARGET: ${{ matrix.target }}
+          VERICOIND_CI_KIND: ${{ matrix.kind }}
+          VERICOIND_CI_HOST: ${{ matrix.host }}
+          VERICOIND_CONFIGURE_EXTRA: ${{ matrix.configure_extra }}
+          VERICOIND_OUT_DIR: src-tauri/binaries
+        run: bash scripts/ci-build-vericoind.sh
+
+      - name: Smoke test vericoind
+        if: matrix.kind != 'mingw'
+        working-directory: desktop/verium-app
+        run: src-tauri/binaries/vericoind-${{ matrix.target }} -version | head -n 3
+
+      - name: Upload vericoind sidecar
+        uses: actions/upload-artifact@v4
+        with:
+          name: vericoind-sidecar-${{ matrix.target }}
+          path: desktop/verium-app/src-tauri/binaries/vericoind-${{ matrix.target }}*
+          if-no-files-found: error
+
   build:
     name: Vericonomy Wallet (${{ matrix.label }})
-    needs: vericonomy-sidecar
+    needs: [vericonomy-sidecar, vericoind-sidecar]
     strategy:
       fail-fast: false
       matrix:
@@ -335,11 +432,18 @@ jobs:
           VERIUMD_SKIP_IF_PRESENT: "1"
         run: npm run fetch:veriumd
 
-      - name: Fetch bundled vericoind sidecar
-        env:
-          VERICOIND_TARGET_TRIPLE: ${{ matrix.target }}
-          VERICOIND_REQUIRED: ${{ contains(github.ref, 'refs/tags/desktop-v') && '1' || '0' }}
-        run: npm run fetch:vericoind
+      - name: Download vericoind sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: vericoind-sidecar-${{ matrix.target }}
+          path: src-tauri/binaries
+
+      - name: Mark vericoind sidecar executable
+        if: runner.os != 'Windows'
+        run: chmod +x src-tauri/binaries/vericoind-${{ matrix.target }} || true
+
+      - name: Assert real daemon sidecars (no build placeholders)
+        run: npm run assert:sidecars
 
       - name: Cargo check (Tauri backend)
         run: cargo check --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}

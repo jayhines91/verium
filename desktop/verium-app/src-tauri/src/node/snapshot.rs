@@ -151,15 +151,35 @@ fn classify_status(
     }
 
     if status.connected {
+        let blocks = status.blocks.unwrap_or(0);
+        let headers = status.headers.unwrap_or(0);
         if status.initial_block_download.unwrap_or(false) {
             return (NodeState::ConnectedSyncing, None, "Syncing with the network…".into());
         }
-        let lag = status
-            .headers
-            .unwrap_or(0)
-            .saturating_sub(status.blocks.unwrap_or(0));
+        if blocks == 0 && headers == 0 {
+            return (
+                NodeState::ConnectedSyncing,
+                None,
+                "Loading blockchain index…".into(),
+            );
+        }
+        if blocks < 1_000 && headers < 1_000 {
+            return (
+                NodeState::ConnectedSyncing,
+                None,
+                "Loading blockchain…".into(),
+            );
+        }
+        let lag = headers.saturating_sub(blocks);
         if lag > 2 {
             return (NodeState::ConnectedSyncing, None, "Syncing with the network…".into());
+        }
+        if status.connections.unwrap_or(0) == 0 && blocks < 1_000_000 {
+            return (
+                NodeState::ConnectedSyncing,
+                None,
+                "Node is online but has no peer connections yet. Sync may be slow until peers connect.".into(),
+            );
         }
         return (NodeState::ConnectedReady, None, "Node is ready.".into());
     }
