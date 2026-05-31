@@ -194,6 +194,17 @@ def patch_curl() -> bool:
             flags=re.M,
         )
 
+    # Ensure curl preprocess normalizes stray bare ';;' lines in configure.
+    if "define $(package)_preprocess_cmds" not in text:
+        insert_at = text.find("define $(package)_config_cmds")
+        if insert_at != -1:
+            preprocess = (
+                "define $(package)_preprocess_cmds\n"
+                "  sed -i.old 's/^[[:space:]]*;;[[:space:]]*$$/  : ;;/g' configure\n"
+                "endef\n\n"
+            )
+            text = text[:insert_at] + preprocess + text[insert_at:]
+
     if text != original:
         path.write_text(text, encoding="utf-8")
         return True

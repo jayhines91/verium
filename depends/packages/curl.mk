@@ -31,6 +31,12 @@ $(package)_cppflags+=-DCURL_STATICLIB
 $(package)_cxxflags=-std=c++11
 endef
 
+define $(package)_preprocess_cmds
+  # Some legacy/generated configure scripts can contain a bare ';;' line that
+  # trips POSIX sh parsing on macOS runners. Normalize it before configure.
+  sed -i.old 's/^[[:space:]]*;;[[:space:]]*$$/  : ;;/g' configure
+endef
+
 define $(package)_config_cmds
   $($(package)_autoconf)
 endef
