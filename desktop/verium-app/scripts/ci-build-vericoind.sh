@@ -208,69 +208,40 @@ def sync_depends_patches() -> bool:
             shutil.copy2(item, target)
     return True
 
-def patch_curl() -> bool:
-    """Use verium's curl recipe (8.7.x, no autoreconf/sed on configure)."""
-    dst = root / "depends/packages/curl.mk"
-    if not dst.parent.is_dir():
-        return False
-    candidates = [
-        verium_root / "depends/packages/curl.mk",
-        Path(os.environ.get("VERIUM_CURL_MK", "")),
-    ]
-    src = next((p for p in candidates if p.is_file()), None)
-    if src is None:
-        print("==> WARN: verium depends/packages/curl.mk not found; using cloned curl.mk")
-        return False
-    shutil.copy2(src, dst)
-    return True
+VERIUM_PACKAGE_RECIPES = (
+    "boost.mk",
+    "bdb.mk",
+    "openssl.mk",
+    "curl.mk",
+    "zlib.mk",
+    "minizip.mk",
+    "libevent.mk",
+    "zeromq.mk",
+)
 
-def patch_zlib() -> bool:
-    dst = root / "depends/packages/zlib.mk"
-    if not dst.parent.is_dir():
+def sync_verium_package_recipes() -> bool:
+    """Overlay verium depends recipes (patches + mk must stay in sync)."""
+    src_dir = verium_root / "depends/packages"
+    dst_dir = root / "depends/packages"
+    if not src_dir.is_dir() or not dst_dir.is_dir():
+        print("==> WARN: verium depends/packages not found (sparse checkout?)")
         return False
-    src = verium_root / "depends/packages/zlib.mk"
-    if src.is_file():
-        shutil.copy2(src, dst)
-        return True
-    if not dst.exists():
-        return False
-    text = dst.read_text(encoding="utf-8")
-    original = text
-    if "-std=gnu89" not in text and "config_opts_darwin+=CFLAGS" in text:
-        text = text.replace(
-            "-fPIC -Dfdopen=fdopen\"",
-            "-fPIC -Dfdopen=fdopen -std=gnu89\"",
-            1,
-        )
-    if text != original:
-        dst.write_text(text, encoding="utf-8")
-        return True
-    return False
-
-def patch_minizip() -> bool:
-    path = root / "depends/packages/minizip.mk"
-    if not path.exists():
-        return False
-    text = path.read_text(encoding="utf-8")
-    original = text
-
-    # Minizip 1.1 still contains K&R-style C definitions in ioapi/mztools.
-    # Force an older GNU C dialect so modern clang accepts these sources.
-    if "-std=gnu89" not in text and "define $(package)_set_vars" in text:
-        lines = text.splitlines()
-        end = next((i for i, line in enumerate(lines) if line.strip() == "endef"), None)
-        if end is not None:
-            lines.insert(end, "$(package)_cflags+=-std=gnu89")
-            text = "\n".join(lines) + "\n"
-
-    if text != original:
-        path.write_text(text, encoding="utf-8")
+    copied = []
+    for name in VERIUM_PACKAGE_RECIPES:
+        src = src_dir / name
+        if src.is_file():
+            shutil.copy2(src, dst_dir / name)
+            copied.append(name)
+    if copied:
+        print("==> Synced depends package recipes:", ", ".join(copied))
         return True
     return False
 
 changed = []
 if sync_depends_patches():
     changed.append("depends/patches")
+if sync_verium_package_recipes():
+    changed.append("depends/packages/*.mk")
 if patch_bdb():
     changed.append("depends/packages/bdb.mk")
 if patch_boost():
@@ -279,12 +250,6 @@ if patch_openssl():
     changed.append("depends/packages/openssl.mk")
 if patch_package_registry():
     changed.append("depends/packages/packages.mk")
-if patch_curl():
-    changed.append("depends/packages/curl.mk")
-if patch_zlib():
-    changed.append("depends/packages/zlib.mk")
-if patch_minizip():
-    changed.append("depends/packages/minizip.mk")
 
 if changed:
     print("==> Patched depends recipes:", ", ".join(changed))
