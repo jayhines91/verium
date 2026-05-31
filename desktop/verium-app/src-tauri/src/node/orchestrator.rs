@@ -7,7 +7,7 @@ use tokio::time::sleep;
 
 use crate::coin_profile::CoinId;
 use crate::commands::{
-    ensure_daemon_running, startup_prepare_chain_data, wait_for_rpc,
+    ensure_daemon_running, start_inner_impl, startup_prepare_chain_data, wait_for_rpc,
 };
 use crate::node::constants::{STARTUP_RPC_WAIT, SUPERVISOR_TICK};
 use crate::node::state::NodeSnapshot;
@@ -77,15 +77,43 @@ pub async fn startup(app: AppHandle, state: &AppState) {
     }
 
     sleep(Duration::from_secs(2)).await;
-    for coin in CoinId::all() {
-        if !prefs::coin_enabled(&prefs, *coin) {
-            continue;
-        }
-        if !wait_for_rpc(state, *coin, STARTUP_RPC_WAIT.as_secs() as u32).await {
-            tracing::warn!(
-                "startup ({}): daemon not reachable after waiting",
+    let wait_secs = STARTUP_RPC_WAIT.as_secs() as u32;
+    let enabled: Vec<CoinId> = CoinId::all()
+        .iter()
+        .copied()
+        .filter(|c| prefs::coin_enabled(&prefs, *c))
+        .collect();
+    let mut wait_tasks = Vec::new();
+    for coin in &enabled {
+        if !crate::daemon::detect_binary(*coin).manageable {
+            tracing::info!(
+                "startup ({}): skipping RPC wait — node binary not available",
                 coin.as_str()
             );
+            continue;
+        }
+        let state = state.clone();
+        let coin = *coin;
+        wait_tasks.push(tokio::spawn(async move {
+            (coin, wait_for_rpc(&state, coin, wait_secs).await)
+        }));
+    }
+    for task in wait_tasks {
+        if let Ok((coin, ok)) = task.await {
+            if !ok {
+                tracing::warn!(
+                    "startup ({}): daemon not reachable after {wait_secs}s — retrying spawn",
+                    coin.as_str()
+                );
+                if state.config_fresh(coin).await.is_ok() {
+                    if let Err(e) = start_inner_impl(state, coin, true).await {
+                        tracing::warn!(
+                            "startup ({}): forced restart failed: {e}",
+                            coin.as_str()
+                        );
+                    }
+                }
+            }
         }
     }
 

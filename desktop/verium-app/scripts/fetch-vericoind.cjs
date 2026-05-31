@@ -249,6 +249,7 @@ function discoverMonorepoBinary(isWindows) {
   const name = isWindows ? "vericoind.exe" : "vericoind";
   const candidates = [
     path.join(ROOT, "..", "..", "..", "vericoin", "src", name),
+    path.join(ROOT, "..", "..", "..", ".ci-vericoin-src", "src", name),
     path.join(ROOT, "..", "..", "..", "vericoin", "src", "qt", name),
     path.join(ROOT, "..", "..", "..", "vericoin", "build_msvc", "x64", "Release", name),
   ];
@@ -289,25 +290,26 @@ async function main() {
   fs.mkdirSync(BINARIES_DIR, { recursive: true });
 
   if (fs.existsSync(dest) && process.env.VERICOIND_FORCE !== "1") {
-    if (process.env.VERICOIND_SKIP_IF_PRESENT === "1" || args["skip-if-present"]) {
-      if (isStubSidecar(dest)) {
-        const upgrade = discoverLocalBinary(isWindowsTriple(triple));
-        if (upgrade) {
-          log(`Replacing build placeholder with local binary at ${upgrade}`);
-          copyLocalBinary(upgrade, dest);
-          return;
-        }
-        log(
-          `Build placeholder present (${dest}); skipping. ` +
-            "Vericoin stays offline until CDN packages ship, a legacy Vericoin install is found, or you set VERICOIND_LOCAL.",
-        );
-      } else {
+    if (!isStubSidecar(dest)) {
+      if (process.env.VERICOIND_SKIP_IF_PRESENT === "1" || args["skip-if-present"]) {
         log(`Sidecar already present (${dest}); skipping.`);
+        return;
       }
+      log(`Sidecar already present (${dest}); skipping.`);
       return;
     }
-    if (!isStubSidecar(dest)) {
-      log(`Sidecar already present (${dest}); skipping.`);
+    // Placeholder present — always try local discovery / CDN before keeping the stub.
+    const upgrade = discoverLocalBinary(isWindowsTriple(triple));
+    if (upgrade) {
+      log(`Replacing build placeholder with local binary at ${upgrade}`);
+      copyLocalBinary(upgrade, dest);
+      return;
+    }
+    if (process.env.VERICOIND_SKIP_IF_PRESENT === "1" || args["skip-if-present"]) {
+      log(
+        `Build placeholder still at ${dest}; no local vericoind found. ` +
+          "Run scripts/build-vericoind-macos.sh or set VERICOIND_LOCAL, then npm run fetch:vericoind.",
+      );
       return;
     }
     log(`Replacing build placeholder at ${dest} — retrying download.`);
@@ -350,6 +352,12 @@ async function main() {
 
   const version = defaultVersion();
   const urls = archiveUrlsFor(triple, version);
+  // Apple Silicon: CDN may only ship x86_64 macOS builds — try Rosetta-compatible binary last.
+  if (isMacTriple(triple) && triple.includes("aarch64")) {
+    for (const url of archiveUrlsFor("x86_64-apple-darwin", version)) {
+      if (!urls.includes(url)) urls.push(url);
+    }
+  }
   let lastErr;
   for (const url of urls) {
     try {
@@ -374,7 +382,8 @@ async function main() {
 
   log(
     "No CDN vericoind available yet — writing a build placeholder so Tauri can compile. " +
-      "Set VERICOIND_LOCAL to a built vericoind, or disable Vericoin in Settings until CDN packages ship.",
+      "Run npm run build:vericoind:macos (clone https://github.com/VeriConomy/vericoin.git first), " +
+      "or set VERICOIND_LOCAL to a built vericoind.",
   );
   writeStubSidecar(dest, triple);
 }

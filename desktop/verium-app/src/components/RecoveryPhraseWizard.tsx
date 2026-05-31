@@ -12,7 +12,8 @@ import { useActiveCoin } from "@/lib/coin/context";
 import { useTwoFactorGate } from "@/hooks/useTwoFactorGate";
 
 interface RecoveryPhraseWizardProps {
-  onComplete: (phrase: string) => void;
+  /** Called after phrase verification; may apply HD seed (await before showing success). */
+  onComplete: (phrase: string) => void | Promise<void>;
   onSkip?: () => void;
 }
 
@@ -182,11 +183,16 @@ export function RecoveryPhraseWizard({
           <Button
             onClick={async () => {
               const ok = await recoveryVerifyWords(phrase, indices, answers);
-              if (ok) {
-                setStep("done");
-                onComplete(phrase);
-              } else {
+              if (!ok) {
                 setVerifyError("Words do not match. Check your written copy.");
+                return;
+              }
+              setVerifyError(null);
+              try {
+                await onComplete(phrase);
+                setStep("done");
+              } catch (err) {
+                setVerifyError(String(err));
               }
             }}
           >
@@ -200,7 +206,7 @@ export function RecoveryPhraseWizard({
   return (
     <div className="flex items-center gap-2 text-sm text-success">
       <CheckCircle2 className="h-4 w-4" />
-      Recovery phrase verified and saved for HD wallet setup.
+      Recovery phrase verified.
     </div>
   );
 }

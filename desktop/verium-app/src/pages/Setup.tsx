@@ -287,18 +287,27 @@ export function Setup() {
             <div className="flex flex-col gap-4 text-sm text-fg-muted">
               <p>
                 Welcome. This wallet ships with a bundled{" "}
-                <span className="font-mono">veriumd</span> node — there is
-                nothing else to install. If you already use Verium-Qt, your
-                existing wallet and chain data in the same data folder will
-                carry over — just unlock with your existing passphrase. You can
-                also import a <span className="font-mono">wallet.dat</span>{" "}
-                backup from another machine during setup.
+                <span className="font-mono">{profile.binaryName}</span> node —
+                there is nothing else to install for {profile.displayName}. If
+                you already use {profile.displayName}-Qt or an older{" "}
+                {profile.symbol} wallet, your existing wallet and chain data in
+                the same data folder will carry over — unlock with your existing
+                passphrase. You can also import a{" "}
+                <span className="font-mono">wallet.dat</span> backup from another
+                machine during setup.
               </p>
+              {coin === "vericoin" && (
+                <p>
+                  New to Vericoin? Choose <strong>Create new wallet</strong> on
+                  the next steps. We only reuse an older wallet when one is
+                  already on this computer.
+                </p>
+              )}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <FeatureTile
                   icon={<Cog className="h-4 w-4" />}
                   title="Auto-start node"
-                  body="The wallet starts and stops veriumd when you open and close it."
+                  body={`The wallet starts and stops ${profile.binaryName} when you open and close it.`}
                 />
                 <FeatureTile
                   icon={<ShieldCheck className="h-4 w-4" />}
@@ -308,7 +317,7 @@ export function Setup() {
                 <FeatureTile
                   icon={<HardDriveUpload className="h-4 w-4" />}
                   title="Import backup"
-                  body="Restore wallet.dat from Verium-Qt or a saved backup."
+                  body={`Restore wallet.dat from ${profile.displayName}-Qt or a saved backup.`}
                 />
                 <FeatureTile
                   icon={<HardDriveDownload className="h-4 w-4" />}
@@ -384,10 +393,28 @@ export function Setup() {
                 </p>
                 {walletInfo.data && walletSetupMode === "needs_unlock" && (
                   <p className="mt-1 text-fg">
-                    Balance: {walletInfo.data.balance.toFixed(8)} VRM
+                    Balance: {walletInfo.data.balance.toFixed(8)} {profile.symbol}
                     {walletInfo.data.txcount > 0
                       ? ` · ${walletInfo.data.txcount} transactions`
                       : ""}
+                  </p>
+                )}
+                {walletFile.data?.legacy_wallet_detected &&
+                  walletFile.data.legacy_wallet_path && (
+                    <p className="mt-2 rounded-md border border-accent/30 bg-accent/5 px-2 py-1.5 text-xs text-fg-muted">
+                      Existing wallet found at{" "}
+                      <span className="break-all font-mono text-fg">
+                        {walletFile.data.legacy_wallet_path}
+                      </span>
+                      . Import it, or in Advanced setup set your data directory
+                      to that folder. Otherwise create a new wallet for a fresh
+                      start.
+                    </p>
+                  )}
+                {walletFile.data?.is_new_install && (
+                  <p className="mt-2 text-xs text-fg-muted">
+                    No existing {profile.displayName} wallet was detected on this
+                    Mac — you are setting up a new {profile.symbol} wallet.
                   </p>
                 )}
               </div>
@@ -401,8 +428,8 @@ export function Setup() {
 
               {walletSetupMode === "offline" && (
                 <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-fg-muted">
-                  Go back to <strong>Start node</strong> and connect to veriumd
-                  before setting up your wallet.
+                  Go back to <strong>Start node</strong> and connect to{" "}
+                  {profile.binaryName} before setting up your wallet.
                 </div>
               )}
 
@@ -411,7 +438,7 @@ export function Setup() {
                   <>
                     <WalletUnlockForm
                       title="Unlock your existing wallet"
-                      description="Enter the passphrase from your previous Verium wallet. Your coins, addresses, and transaction history stay exactly as they are."
+                      description={`Enter the passphrase from your previous ${profile.displayName} wallet. Your coins, addresses, and transaction history stay exactly as they are.`}
                       onUnlocked={() => setStep("bootstrap")}
                     />
                     <div className="border-t border-border pt-3">
@@ -453,8 +480,8 @@ export function Setup() {
                         Import wallet.dat
                       </span>
                       <span className="text-xs text-fg-muted">
-                        Restore a backup from Verium-Qt, this app, or another
-                        computer.
+                        Restore a backup from {profile.displayName}-Qt, this
+                        app, or another computer.
                       </span>
                     </button>
                     <button
@@ -539,8 +566,8 @@ export function Setup() {
                 cannot look it up for you.
               </p>
               <RecoveryPhraseWizard
-                onComplete={(phrase) => {
-                  applyRecovery.mutate({
+                onComplete={async (phrase) => {
+                  await applyRecovery.mutateAsync({
                     phrase,
                     unlock: pendingPassphrase ?? undefined,
                   });

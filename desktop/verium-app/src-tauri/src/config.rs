@@ -203,7 +203,8 @@ pub fn load_config_for_network(coin: CoinId, mode: NetworkMode) -> AppResult<Dae
 /// writes when something is missing.
 pub fn ensure_first_run_config(coin: CoinId, cfg: &mut DaemonConfig) -> AppResult<bool> {
     fs::create_dir_all(&cfg.datadir)?;
-    fs::create_dir_all(chain_datadir(coin, cfg))?;
+    let _ = promote_root_chain_data_for_unified(coin, cfg)?;
+    fs::create_dir_all(effective_chain_datadir(coin, cfg))?;
     refresh_config_paths(coin, cfg)?;
 
     let diag = rpc_auth_diagnostics(coin, cfg);
@@ -394,23 +395,83 @@ pub fn legacy_root_chain_dir(cfg: &DaemonConfig) -> PathBuf {
 
 /// Where bootstrap must extract `blocks/` and `chainstate/` so the running daemon reads them.
 pub fn bootstrap_chain_datadir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
+    let _ = promote_root_chain_data_for_unified(coin, cfg);
     if coin == CoinId::Verium && verium_uses_legacy_flat(cfg) {
         legacy_root_chain_dir(cfg)
-    } else if binary_supports_unified_subdir(coin, cfg) {
-        chain_datadir(coin, cfg)
     } else {
-        legacy_root_chain_dir(cfg)
+        effective_chain_datadir(coin, cfg)
     }
 }
 
+/// Unified vericoind reads `datadir/vericoin/`, but older bootstraps landed at `datadir/`.
+pub fn promote_root_chain_data_for_unified(coin: CoinId, cfg: &DaemonConfig) -> AppResult<bool> {
+    if coin != CoinId::Vericoin || !binary_supports_unified_subdir(coin, cfg) {
+        return Ok(false);
+    }
+    let root = legacy_root_chain_dir(cfg);
+    let sub = chain_datadir(coin, cfg);
+    if root == sub {
+        return Ok(false);
+    }
+
+    let root_blocks = root.join("blocks");
+    let root_chainstate = root.join("chainstate");
+    if !chain_dir_has_snapshot(&root_blocks, &root_chainstate) {
+        return Ok(false);
+    }
+
+    let sub_blocks = sub.join("blocks");
+    let sub_chainstate = sub.join("chainstate");
+    let root_bytes = chain_snapshot_bytes(&root_blocks, &root_chainstate);
+    let sub_bytes = chain_snapshot_bytes(&sub_blocks, &sub_chainstate);
+    if sub_bytes + 50_000_000 > root_bytes && sub_bytes >= 1_000_000 {
+        return Ok(false);
+    }
+
+    fs::create_dir_all(&sub)?;
+    let mut moved = false;
+    for name in [
+        "blocks",
+        "chainstate",
+        "peers.dat",
+        "debug.log",
+        "banlist.dat",
+        "fee_estimates.dat",
+    ] {
+        let src = root.join(name);
+        if !src.exists() {
+            continue;
+        }
+        let dst = sub.join(name);
+        if dst.exists() {
+            if dst.is_dir() {
+                fs::remove_dir_all(&dst)?;
+            } else {
+                let _ = fs::remove_file(&dst);
+            }
+        }
+        fs::rename(&src, &dst)?;
+        tracing::info!(
+            "unified chain promote ({}): moved {} -> {}",
+            coin.as_str(),
+            src.display(),
+            dst.display()
+        );
+        moved = true;
+    }
+    Ok(moved)
+}
+
 fn binary_supports_unified_subdir(coin: CoinId, cfg: &DaemonConfig) -> bool {
-    use crate::daemon::{binary_supports_unified_chain_selector, detect_binary};
-    detect_binary(coin)
-        .path
-        .as_ref()
-        .map(|p| binary_supports_unified_chain_selector(std::path::Path::new(p), coin))
-        .unwrap_or(false)
-        && !(coin == CoinId::Verium && verium_uses_legacy_flat(cfg))
+    use crate::daemon::bundled_sidecar_available;
+    if coin == CoinId::Verium && verium_uses_legacy_flat(cfg) {
+        return false;
+    }
+    if bundled_sidecar_available(coin) {
+        return true;
+    }
+    // Unified veriumd can host Vericoin without a dedicated vericoind sidecar.
+    coin == CoinId::Vericoin && bundled_sidecar_available(CoinId::Verium)
 }
 
 /// True when bootstrap/chain data under `…/verium/` is much larger than the legacy root
@@ -952,9 +1013,33 @@ fn wallet_dir(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {
     }
 }
 
-/// Locate the active wallet file on disk (legacy root or `wallets/` layout).
-pub fn resolve_wallet_dat_path(coin: CoinId, cfg: &DaemonConfig) -> Option<PathBuf> {
-    let base = chain_datadir(coin, cfg);
+/// Known data-folder roots from Verium-Qt / Vericoin-Qt and earlier wallet builds.
+pub fn legacy_install_datadir_roots(coin: CoinId) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    if let Some(d) = dirs::data_dir() {
+        match coin {
+            CoinId::Verium => roots.push(d.join("Verium")),
+            CoinId::Vericoin => {
+                roots.push(d.join("Vericonomy"));
+                roots.push(d.join("Vericoin"));
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    if let Some(h) = dirs::home_dir() {
+        match coin {
+            CoinId::Verium => roots.push(h.join(".verium")),
+            CoinId::Vericoin => {
+                roots.push(h.join(".vericonomy"));
+                roots.push(h.join(".vericoin"));
+            }
+        }
+    }
+    roots
+}
+
+fn resolve_wallet_in_base(base: &Path) -> Option<PathBuf> {
     let candidates = [
         base.join("wallet.dat"),
         base.join("wallets").join("wallet.dat"),
@@ -976,6 +1061,38 @@ pub fn resolve_wallet_dat_path(coin: CoinId, cfg: &DaemonConfig) -> Option<PathB
         }
     }
     None
+}
+
+/// Wallet file under a legacy Qt datadir that is not the wallet's configured `-datadir`.
+pub fn resolve_legacy_wallet_outside_cfg(coin: CoinId, cfg: &DaemonConfig) -> Option<PathBuf> {
+    let active = chain_datadir(coin, cfg);
+    let datadir = &cfg.datadir;
+    for root in legacy_install_datadir_roots(coin) {
+        if root == *datadir || root == active {
+            continue;
+        }
+        let mut bases = vec![root.clone()];
+        if coin == CoinId::Vericoin {
+            let sub = root.join("vericoin");
+            if sub != active {
+                bases.push(sub);
+            }
+        }
+        for base in bases {
+            if base == active {
+                continue;
+            }
+            if let Some(path) = resolve_wallet_in_base(&base) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// Locate the active wallet file on disk (legacy root or `wallets/` layout).
+pub fn resolve_wallet_dat_path(coin: CoinId, cfg: &DaemonConfig) -> Option<PathBuf> {
+    resolve_wallet_in_base(&chain_datadir(coin, cfg))
 }
 
 pub fn wallet_dat_path(coin: CoinId, cfg: &DaemonConfig) -> PathBuf {

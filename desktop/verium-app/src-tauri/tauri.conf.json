@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run build && npm run fetch:sidecars:if-missing",
+    "beforeBuildCommand": "npm run build && npm run fetch:sidecars:if-missing && npm run assert:sidecars:warn",
     "frontendDist": "../dist"
   },
   "app": {

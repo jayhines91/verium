@@ -14,7 +14,8 @@ use zip::read::ZipArchive;
 use crate::coin_profile::CoinId;
 use crate::config::{
     bootstrap_chain_datadir, chain_snapshot_needs_reindex, ensure_daemon_conf_complete,
-    promote_subdir_chain_data_for_legacy, validate_bootstrap_staging, verium_uses_legacy_flat,
+    promote_root_chain_data_for_unified, promote_subdir_chain_data_for_legacy,
+    validate_bootstrap_staging, verium_uses_legacy_flat,
 };
 use crate::daemon::{
     detect_binary, force_stop_native_daemon, free_rpc_port, wait_for_native_daemon_exit,
@@ -472,6 +473,7 @@ async fn import_bootstrap_inner(
     stop_daemon_for_bootstrap(state, coin, &cfg.datadir, cancel).await;
     ensure_not_cancelled(cancel)?;
 
+    let _ = promote_root_chain_data_for_unified(coin, &cfg)?;
     if coin == CoinId::Verium && verium_uses_legacy_flat(&cfg) {
         let _ = promote_subdir_chain_data_for_legacy(coin, &cfg)?;
     }

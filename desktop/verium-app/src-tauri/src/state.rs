@@ -7,7 +7,7 @@ use tauri::AppHandle;
 use tokio::sync::RwLock;
 
 use crate::coin_profile::CoinId;
-use crate::config::{ensure_first_run_config, load_config_for_network, refresh_config_paths, DaemonConfig};
+use crate::config::{load_config_for_network, refresh_config_paths, DaemonConfig};
 use crate::daemon::DaemonManager;
 use crate::error::{AppError, AppResult};
 use crate::features::effective_network_mode;
@@ -65,10 +65,9 @@ impl AppState {
         let network_mode = effective_network_mode(prefs.network_mode);
         let mut coins = HashMap::new();
         for coin in CoinId::all() {
-            let mut config = load_config_for_network(*coin, network_mode)?;
-            if let Err(e) = ensure_first_run_config(*coin, &mut config) {
-                tracing::warn!("first-run config bootstrap failed for {}: {e}", coin.as_str());
-            }
+            let config = load_config_for_network(*coin, network_mode)?;
+            // First-run datadir/conf work runs on the async orchestrator so the UI
+            // window is not blocked by chain promotion or daemon `-help` probes.
             coins.insert(
                 *coin,
                 CoinRuntime {

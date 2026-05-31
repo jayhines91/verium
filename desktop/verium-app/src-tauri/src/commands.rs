@@ -18,7 +18,9 @@ use crate::config::{
     apply_partial_to_config, chain_datadir, chain_index_needs_rebuild, chain_snapshot_needs_reindex,
     expected_debug_log_path,
     ensure_daemon_conf_complete, ensure_first_run_config, generate_rpc_password, generate_rpc_user,
-    promote_subdir_chain_data_for_legacy, verium_uses_legacy_flat,
+    effective_chain_datadir, promote_root_chain_data_for_unified,
+    promote_subdir_chain_data_for_legacy, resolve_legacy_wallet_outside_cfg,
+    verium_uses_legacy_flat,
     prepare_chain_for_reindex, legacy_subdir_chain_ahead,
     node_conf_dir, refresh_config_paths,
     rpc_auth_diagnostics, save_app_daemon_config, is_live_wallet_destination,
@@ -367,10 +369,9 @@ pub(crate) async fn daemon_boot_in_progress(
         }
     }
     if native_daemon_image_running(coin) {
-        let datadir = chain_datadir(coin, cfg);
-        let log_path = datadir.join("debug.log");
+        let log_path = expected_debug_log_path(coin, cfg);
         if log_recently_modified(&log_path, Duration::from_secs(120)) {
-            let lines = tail_debug_log(&datadir, 40)
+            let lines = tail_coin_debug_log(coin, cfg, 40)
                 .await
                 .unwrap_or_default();
             if detect_reindex_active_session(&lines, state.pending_reindex_active(coin))
@@ -385,12 +386,11 @@ pub(crate) async fn daemon_boot_in_progress(
 
 /// Log-only hint for warming UX; does not block managed auto-start.
 pub(crate) async fn daemon_log_suggests_loading(coin: CoinId, cfg: &DaemonConfig) -> bool {
-    let datadir = chain_datadir(coin, cfg);
-    let log_path = datadir.join("debug.log");
+    let log_path = expected_debug_log_path(coin, cfg);
     if !log_recently_modified(&log_path, Duration::from_secs(90)) {
         return false;
     }
-    let lines = tail_debug_log(&datadir, 40)
+    let lines = tail_coin_debug_log(coin, cfg, 40)
         .await
         .unwrap_or_default();
     detect_reindex_active_session(&lines, false) || detect_node_starting(&lines)
@@ -437,7 +437,7 @@ fn daemon_needs_reindex_start(state: &AppState, coin: CoinId, cfg: &DaemonConfig
     if state.pending_reindex_active(coin) {
         return true;
     }
-    chain_index_needs_rebuild(&chain_datadir(coin, cfg))
+    chain_index_needs_rebuild(&effective_chain_datadir(coin, cfg))
 }
 
 pub(crate) async fn bootstrap_suppresses_auto_start(
@@ -462,8 +462,7 @@ pub(crate) async fn reindex_running_live(
     coin: CoinId,
     cfg: &DaemonConfig,
 ) -> bool {
-    let datadir = chain_datadir(coin, cfg);
-    let log_path = datadir.join("debug.log");
+    let log_path = expected_debug_log_path(coin, cfg);
     let process_up =
         daemon_process_live(state, coin, cfg).await || native_daemon_image_running(coin);
 
@@ -474,7 +473,7 @@ pub(crate) async fn reindex_running_live(
     if !log_recently_modified(&log_path, REINDEX_LOG_MAX_AGE) {
         return false;
     }
-    let lines = tail_debug_log(&datadir, 120).await.unwrap_or_default();
+    let lines = tail_coin_debug_log(coin, cfg, 120).await.unwrap_or_default();
     let session = current_log_session(&lines);
     if detect_reindex_file_rebuild_session(&session) {
         return process_up;
@@ -507,6 +506,7 @@ async fn start_inner(state: &AppState, coin: CoinId) -> AppResult<()> {
 pub(crate) async fn start_inner_impl(state: &AppState, coin: CoinId, force: bool) -> AppResult<()> {
     let mut cfg = state.config_fresh(coin).await?;
     crate::config::sync_cfg_rpc_credentials_from_conf(coin, &mut cfg)?;
+    let _ = promote_root_chain_data_for_unified(coin, &cfg);
     ensure_daemon_conf_complete(coin, &mut cfg)?;
     state.replace_config(coin, cfg.clone()).await?;
     let binary = coin.binary_base();
@@ -755,7 +755,7 @@ pub async fn get_node_status(
         state.inner(),
         coin,
         &cfg,
-        &chain_datadir(coin, &cfg),
+        &effective_chain_datadir(coin, &cfg),
     )
     .await;
     if status.connected {
@@ -1877,6 +1877,26 @@ pub async fn rpc_raw_call(
         return Err(AppError::other("method must not be empty"));
     }
     let p = params.unwrap_or(Value::Array(Vec::new()));
+    let inner = state.inner();
+    let mut cfg = state.config_fresh(coin).await?;
+
+    if !inner.bootstrap_loading_active(coin)
+        && !inner.bootstrap_session_active()
+        && detect_binary(coin).manageable
+        && !rpc_reachable(coin, &cfg).await
+    {
+        ensure_daemon_running(inner, coin, &cfg).await;
+        cfg = state.config_fresh(coin).await?;
+        if !wait_for_rpc(inner, coin, 45).await {
+            return Err(AppError::DaemonUnreachable(format!(
+                "{} is not responding on http://{}:{}/. Start the node from Settings → Daemon (or wait if it is still loading after bootstrap).",
+                coin.binary_base(),
+                cfg.rpc_host,
+                cfg.rpc_port
+            )));
+        }
+    }
+
     state.rpc_client(coin).await?.call(&method, p).await
 }
 
@@ -2403,6 +2423,11 @@ pub struct WalletFileStatus {
     pub path: String,
     /// When the wallet file lives outside the legacy `<datadir>/wallet.dat` path.
     pub note: Option<String>,
+    /// `true` when no wallet is in the configured datadir and none was found in legacy Qt folders.
+    pub is_new_install: bool,
+    /// `true` when a wallet.dat exists under a different legacy data folder (e.g. old Vericoin-Qt).
+    pub legacy_wallet_detected: bool,
+    pub legacy_wallet_path: Option<String>,
     /// Folder opened by the backup save dialog (`<datadir>/backups`).
     pub backup_folder: String,
     /// Default filename + folder for the save dialog.
@@ -2419,6 +2444,10 @@ pub async fn wallet_file_status(
     let resolved = resolve_wallet_dat_path(coin, &cfg);
     let default_path = wallet_dat_path(coin, &cfg);
     let exists = wallet_dat_exists(coin, &cfg);
+    let legacy_wallet = resolve_legacy_wallet_outside_cfg(coin, &cfg);
+    let legacy_wallet_detected = legacy_wallet.is_some();
+    let legacy_wallet_path = legacy_wallet.as_ref().map(|p| p.display().to_string());
+    let is_new_install = !exists && !legacy_wallet_detected;
     let path = resolved
         .unwrap_or(default_path)
         .display()
@@ -2432,6 +2461,16 @@ pub async fn wallet_file_status(
     let binary = coin.binary_base();
     let note = if exists {
         None
+    } else if let Some(ref legacy) = legacy_wallet_path {
+        Some(format!(
+            "Found an existing {name} wallet at {legacy}. Use Import wallet.dat, set your data directory to that folder in Advanced setup, or create a new wallet for a fresh start.",
+            name = coin.display_name()
+        ))
+    } else if is_new_install {
+        Some(format!(
+            "No {name} wallet on this machine yet — create a new encrypted wallet or restore from a backup / recovery phrase.",
+            name = coin.display_name()
+        ))
     } else {
         Some(format!(
             "No wallet.dat found on disk yet. If the wallet is unlocked in the app, use Back up wallet.dat — {binary} exports the live wallet file."
@@ -2441,6 +2480,9 @@ pub async fn wallet_file_status(
         exists,
         path,
         note,
+        is_new_install,
+        legacy_wallet_detected,
+        legacy_wallet_path,
         backup_folder,
         suggested_backup_path,
     })
@@ -2693,8 +2735,7 @@ pub(crate) async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &
         return;
     }
 
-    let datadir = chain_datadir(coin, cfg);
-    let lines = tail_debug_log(&datadir, 120).await.unwrap_or_default();
+    let lines = tail_coin_debug_log(coin, cfg, 120).await.unwrap_or_default();
     if let Some(detail) = detect_chain_corruption_session(&lines) {
         if is_timestamp_rule_failure(&detail) {
             state.set_daemon_phase(coin, "error");
@@ -2711,7 +2752,7 @@ pub(crate) async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &
             );
             return;
         }
-        if chain_snapshot_needs_reindex(&datadir) {
+        if chain_snapshot_needs_reindex(&effective_chain_datadir(coin, cfg)) {
             tracing::info!(
                 "ensure ({}): incomplete snapshot — use Download snapshot, not auto-reindex",
                 coin.as_str()
@@ -2760,6 +2801,15 @@ pub(crate) async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &
         if let Err(e) = start_inner_impl(state, coin, false).await {
             tracing::warn!("ensure ({}): failed to start daemon: {e}", coin.as_str());
         }
+    } else {
+        state.set_daemon_phase(coin, "binary_missing");
+        tracing::warn!(
+            "ensure ({}): cannot auto-start — {}",
+            coin.as_str(),
+            binary_missing_hint(coin).unwrap_or_else(|| {
+                format!("no runnable {} binary found", coin.binary_base())
+            })
+        );
     }
 }
 
@@ -2861,7 +2911,6 @@ pub async fn ensure_daemon_connected(
 ) -> AppResult<EnsureConnectResult> {
     let coin = parse_coin_id(&coin)?;
     let binary = coin.binary_base();
-    let _guard = state.inner().runtime(coin)?.ensure_lock.lock().await;
     let cfg = state.config_fresh(coin).await?;
     if state.inner().bootstrap_session_active() {
         return Ok(EnsureConnectResult {
@@ -2906,7 +2955,10 @@ pub async fn ensure_daemon_connected(
         });
     }
 
-    ensure_daemon_running(state.inner(), coin, &cfg).await;
+    {
+        let _guard = state.inner().runtime(coin)?.ensure_lock.lock().await;
+        ensure_daemon_running(state.inner(), coin, &cfg).await;
+    }
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     let connected = wait_for_rpc(state.inner(), coin, 45).await;
     if connected {
@@ -2959,6 +3011,7 @@ pub(crate) async fn startup_prepare_chain_data(state: &AppState, coin: CoinId) -
         let _ = promote_subdir_chain_data_for_legacy(coin, &cfg)?;
     }
 
+    ensure_first_run_config(coin, &mut cfg)?;
     ensure_daemon_conf_complete(coin, &mut cfg)?;
     state.replace_config(coin, cfg).await?;
     Ok(())

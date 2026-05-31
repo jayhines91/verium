@@ -462,6 +462,11 @@ export interface WalletFileStatus {
   exists: boolean;
   path: string;
   note?: string | null;
+  /** No wallet in the active datadir and none in legacy Qt folders. */
+  is_new_install: boolean;
+  /** Wallet.dat found under a different legacy data folder. */
+  legacy_wallet_detected: boolean;
+  legacy_wallet_path?: string | null;
   backup_folder: string;
   suggested_backup_path: string;
 }
