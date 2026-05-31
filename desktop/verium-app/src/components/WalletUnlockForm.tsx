@@ -18,6 +18,8 @@ interface WalletUnlockFormProps {
   onUnlocked?: () => void;
   mintingOnly?: boolean;
   className?: string;
+  submitDisabled?: boolean;
+  submitDisabledMessage?: string;
 }
 
 export function WalletUnlockForm({
@@ -26,6 +28,8 @@ export function WalletUnlockForm({
   onUnlocked,
   mintingOnly = false,
   className,
+  submitDisabled = false,
+  submitDisabledMessage,
 }: WalletUnlockFormProps) {
   const coin = useActiveCoin();
   const queryClient = useQueryClient();
@@ -75,6 +79,7 @@ export function WalletUnlockForm({
         className="flex flex-col gap-4"
         onSubmit={(e) => {
           e.preventDefault();
+          if (submitDisabled) return;
           if (passphrase) unlock.mutate();
         }}
       >
@@ -100,10 +105,13 @@ export function WalletUnlockForm({
         </div>
 
         {error && <div className="text-xs text-danger">{error}</div>}
+        {submitDisabled && submitDisabledMessage && (
+          <div className="text-xs text-fg-muted">{submitDisabledMessage}</div>
+        )}
 
         <Button
           type="submit"
-          disabled={!passphrase || unlock.isPending}
+          disabled={!passphrase || unlock.isPending || submitDisabled}
           className="self-start"
         >
           {unlock.isPending ? "Unlocking…" : "Unlock wallet"}

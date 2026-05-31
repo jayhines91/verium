@@ -8,6 +8,9 @@ $(package)_dependencies=zlib
 define $(package)_set_vars
 $(package)_config_opts=--enable-cxx --disable-shared --enable-static
 $(package)_config_opts_linux=--with-pic
+# Legacy minizip sources in this release use K&R-style C function definitions
+# that modern clang may reject under newer default C standards.
+$(package)_cflags+=-std=gnu89
 endef
 
 define $(package)_config_cmds

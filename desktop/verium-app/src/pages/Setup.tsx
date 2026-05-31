@@ -137,6 +137,10 @@ export function Setup() {
     walletInfo.data,
     walletFile.data?.exists,
   );
+  const walletUnlockAwaitingNode =
+    walletAction === "unlock" &&
+    walletSetupMode === "loading" &&
+    walletFile.data?.exists === true;
 
   useEffect(() => {
     setStep("welcome");
@@ -433,12 +437,14 @@ export function Setup() {
                 </div>
               )}
 
-              {walletSetupMode === "needs_unlock" &&
+              {(walletSetupMode === "needs_unlock" || walletUnlockAwaitingNode) &&
                 walletAction === "unlock" && (
                   <>
                     <WalletUnlockForm
                       title="Unlock your existing wallet"
                       description={`Enter the passphrase from your previous ${profile.displayName} wallet. Your coins, addresses, and transaction history stay exactly as they are.`}
+                      submitDisabled={walletUnlockAwaitingNode}
+                      submitDisabledMessage="Wallet is still loading in the node. Wait for checking to finish, then unlock."
                       onUnlocked={() => setStep("bootstrap")}
                     />
                     <div className="border-t border-border pt-3">

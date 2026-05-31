@@ -173,6 +173,53 @@ def patch_package_registry() -> bool:
         return True
     return False
 
+def patch_curl() -> bool:
+    path = root / "depends/packages/curl.mk"
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    original = text
+
+    # SSPI is Windows-only; enabling it on Darwin can break configure scripts.
+    text = text.replace("--enable-sspi ", "")
+    text = text.replace(" --enable-sspi", "")
+    text = text.replace("--enable-sspi", "")
+
+    # Force a sane Darwin SSL backend for cross-macOS builds.
+    if "$(package)_config_opts_darwin=" in text:
+        text = re.sub(
+            r"^\$\(package\)_config_opts_darwin=.*$",
+            "$(package)_config_opts_darwin=--without-ssl --with-secure-transport",
+            text,
+            flags=re.M,
+        )
+
+    if text != original:
+        path.write_text(text, encoding="utf-8")
+        return True
+    return False
+
+def patch_minizip() -> bool:
+    path = root / "depends/packages/minizip.mk"
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    original = text
+
+    # Minizip 1.1 still contains K&R-style C definitions in ioapi/mztools.
+    # Force an older GNU C dialect so modern clang accepts these sources.
+    if "-std=gnu89" not in text and "define $(package)_set_vars" in text:
+        lines = text.splitlines()
+        end = next((i for i, line in enumerate(lines) if line.strip() == "endef"), None)
+        if end is not None:
+            lines.insert(end, "$(package)_cflags+=-std=gnu89")
+            text = "\n".join(lines) + "\n"
+
+    if text != original:
+        path.write_text(text, encoding="utf-8")
+        return True
+    return False
+
 changed = []
 if patch_bdb():
     changed.append("depends/packages/bdb.mk")
@@ -182,6 +229,10 @@ if patch_openssl():
     changed.append("depends/packages/openssl.mk")
 if patch_package_registry():
     changed.append("depends/packages/packages.mk")
+if patch_curl():
+    changed.append("depends/packages/curl.mk")
+if patch_minizip():
+    changed.append("depends/packages/minizip.mk")
 
 if changed:
     print("==> Patched depends recipes:", ", ".join(changed))
@@ -202,9 +253,9 @@ if [[ "$KIND" == "linux" || "$KIND" == "mingw" ]]; then
   export CONFIG_SITE="$(pwd)/depends/$HOST/share/config.site"
   EXTRA=""
   if [[ "$KIND" == "mingw" ]]; then
-    EXTRA="ac_cv_search_clock_gettime=no"
+    EXTRA="RC=${HOST}-windres WINDRES=${HOST}-windres CC_FOR_BUILD=gcc CXX_FOR_BUILD=g++ ac_cv_search_clock_gettime=no"
   fi
-  make -C depends HOST="$HOST" NO_QT=1 -j"$JOBS"
+  make -C depends HOST="$HOST" NO_QT=1 -j"$JOBS" $EXTRA
   ./configure \
     --host="$HOST" \
     --prefix="$(pwd)/depends/$HOST" \
