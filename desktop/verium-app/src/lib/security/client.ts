@@ -197,11 +197,30 @@ export async function receiveRequestsList(coin: CoinId): Promise<ReceiveRequest[
   return invoke("receive_requests_list", { coin });
 }
 
-export async function receiveRequestsSave(
+export type ReceiveRequestDraft = Omit<ReceiveRequest, "id" | "created_at"> & {
+  id?: string;
+  created_at?: number;
+};
+
+export async function receiveRequestsAppend(
   coin: CoinId,
-  requests: ReceiveRequest[],
+  entry: ReceiveRequestDraft,
+): Promise<ReceiveRequest> {
+  return invoke<ReceiveRequest>("receive_requests_append", {
+    coin,
+    entry: {
+      id: "",
+      created_at: 0,
+      ...entry,
+    },
+  });
+}
+
+export async function receiveRequestsDelete(
+  coin: CoinId,
+  id: string,
 ): Promise<void> {
-  return invoke("receive_requests_save", { coin, requests });
+  return invoke("receive_requests_delete", { coin, id });
 }
 
 // ── Hardware wallets ────────────────────────────────────────────────────────

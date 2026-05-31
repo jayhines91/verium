@@ -253,9 +253,15 @@ pub fn receive_requests_list(coin: String) -> AppResult<Vec<ReceiveRequest>> {
 }
 
 #[tauri::command]
-pub fn receive_requests_save(coin: String, requests: Vec<ReceiveRequest>) -> AppResult<()> {
+pub fn receive_requests_append(coin: String, entry: ReceiveRequest) -> AppResult<ReceiveRequest> {
     let coin = parse_coin_id(&coin)?;
-    receive_requests::save_all(coin, &requests)
+    receive_requests::append(coin, entry)
+}
+
+#[tauri::command]
+pub fn receive_requests_delete(coin: String, id: String) -> AppResult<()> {
+    let coin = parse_coin_id(&coin)?;
+    receive_requests::delete_entry(coin, &id)
 }
 
 // ── Hardware wallets ─────────────────────────────────────────────────────────

@@ -53,20 +53,36 @@ export function AddressBook() {
         notes: entry.notes.trim(),
         category: entry.category,
       }),
-    onSuccess: () => {
+    onSuccess: (saved) => {
+      const category: AddressBookCategory =
+        saved.category === "receive" ? "receive" : "send";
+      queryClient.setQueryData<AddressBookEntry[]>(
+        coinQueryKey(coin, "address-book"),
+        (prev) => {
+          const list = prev ?? [];
+          const normalized = { ...saved, category };
+          const index = list.findIndex((e) => e.id === normalized.id);
+          if (index >= 0) {
+            const next = [...list];
+            next[index] = normalized;
+            return next;
+          }
+          return [...list, normalized];
+        },
+      );
+      setFilter(category);
       setDraft(null);
-      queryClient.invalidateQueries({
-        queryKey: coinQueryKey(coin, "address-book"),
-      });
     },
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => deleteAddressBookEntry(coin, id),
-    onSuccess: () =>
-      queryClient.invalidateQueries({
-        queryKey: coinQueryKey(coin, "address-book"),
-      }),
+    onSuccess: (_result, id) => {
+      queryClient.setQueryData<AddressBookEntry[]>(
+        coinQueryKey(coin, "address-book"),
+        (prev) => (prev ?? []).filter((e) => e.id !== id),
+      );
+    },
   });
 
   const filtered = useMemo(() => {
@@ -127,7 +143,7 @@ export function AddressBook() {
               Could not load address book: {String(entries.error)}
             </div>
           )}
-          {upsert.isError && !draft && (
+          {upsert.isError && (
             <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
               Save failed: {String(upsert.error)}
             </div>

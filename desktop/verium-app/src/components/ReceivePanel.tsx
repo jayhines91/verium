@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { Copy, Pencil, QrCode, X } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Copy, QrCode, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ExplorerLink } from "@/components/ExplorerLink";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QrCodeDisplay } from "@/components/QrCodeDisplay";
 import { rpcGetNewAddress } from "@/lib/rpc/client";
 import { useActiveCoin, useCoinProfile } from "@/lib/coin/context";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { formatCoinAmount, coinSymbol } from "@/lib/units";
 import {
+  receiveRequestsAppend,
+  receiveRequestsDelete,
   receiveRequestsList,
-  receiveRequestsSave,
-  type ReceiveRequest,
 } from "@/lib/security/client";
 import { cn } from "@/lib/utils";
 
@@ -22,43 +24,26 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
   const coin = useActiveCoin();
   const profile = useCoinProfile();
   const symbol = coinSymbol(coin);
+  const queryClient = useQueryClient();
   const [label, setLabel] = useState("");
   const [amount, setAmount] = useState("");
   const [message, setMessage] = useState("");
-  const [requests, setRequests] = useState<ReceiveRequest[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showDetail, setShowDetail] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
-  useEffect(() => {
-    void receiveRequestsList(coin).then(setRequests);
-  }, [coin]);
+  const requestsQuery = useQuery({
+    queryKey: coinQueryKey(coin, "receive-requests"),
+    queryFn: () => receiveRequestsList(coin),
+  });
 
-  const persist = useCallback(
-    (next: ReceiveRequest[]) => {
-      setRequests(next);
-      void receiveRequestsSave(coin, next);
-    },
-    [coin],
-  );
-
-  const selected = useMemo(
-    () => requests.find((r) => r.id === selectedId) ?? null,
-    [requests, selectedId],
-  );
-
-  const clearForm = useCallback(() => {
-    setLabel("");
-    setAmount("");
-    setMessage("");
-  }, []);
+  const requests = requestsQuery.data ?? [];
 
   const create = useMutation({
     mutationFn: async () => {
       const address = await rpcGetNewAddress(coin, label.trim() || undefined);
       const parsedAmount = amount.trim() ? Number(amount) : null;
-      const entry: ReceiveRequest = {
-        id: crypto.randomUUID(),
-        created_at: Math.floor(Date.now() / 1000),
+      return receiveRequestsAppend(coin, {
         label: label.trim(),
         message: message.trim(),
         amount:
@@ -68,23 +53,49 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
             ? parsedAmount
             : null,
         address,
-      };
-      return entry;
+      });
     },
     onSuccess: (entry) => {
-      persist([entry, ...requests]);
+      queryClient.setQueryData(
+        coinQueryKey(coin, "receive-requests"),
+        (prev: typeof requestsQuery.data) => {
+          const list = prev ?? [];
+          if (list.some((r) => r.id === entry.id)) return list;
+          return [entry, ...list];
+        },
+      );
       setSelectedId(entry.id);
       setShowDetail(true);
-      clearForm();
+      setLabel("");
+      setAmount("");
+      setMessage("");
     },
   });
 
-  const removeSelected = useCallback(() => {
-    if (!selectedId) return;
-    persist(requests.filter((r) => r.id !== selectedId));
-    setSelectedId(null);
-    setShowDetail(false);
-  }, [selectedId]);
+  const remove = useMutation({
+    mutationFn: (id: string) => receiveRequestsDelete(coin, id),
+    onSuccess: (_result, id) => {
+      queryClient.setQueryData(
+        coinQueryKey(coin, "receive-requests"),
+        (prev: typeof requestsQuery.data) =>
+          (prev ?? []).filter((r) => r.id !== id),
+      );
+      setSelectedId(null);
+      setShowDetail(false);
+      setPendingDeleteId(null);
+    },
+  });
+
+  const selected = useMemo(
+    () => requests.find((r) => r.id === selectedId) ?? null,
+    [requests, selectedId],
+  );
+
+  const clearForm = () => {
+    setLabel("");
+    setAmount("");
+    setMessage("");
+  };
 
   return (
     <div className={cn("flex flex-col gap-4", className)}>
@@ -185,15 +196,26 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
           <h3 className="text-sm font-semibold">Requested payments history</h3>
         </div>
 
+        {requestsQuery.error && (
+          <div className="border-b border-border px-4 py-2 text-xs text-danger">
+            Could not load payment request history:{" "}
+            {String(requestsQuery.error)}
+          </div>
+        )}
+
         <div className="max-h-[280px] overflow-auto">
           <table className="w-full border-collapse text-sm">
             <thead className="sticky top-0 bg-bg-panel text-xs uppercase text-fg-subtle">
               <tr>
                 <th className="px-4 py-2 text-left font-medium">Date</th>
                 <th className="px-4 py-2 text-left font-medium">Label</th>
+                <th className="px-4 py-2 text-left font-medium">Address</th>
                 <th className="px-4 py-2 text-left font-medium">Message</th>
                 <th className="px-4 py-2 text-right font-medium bg-white dark:bg-slate-900 ">
                   Requested ({profile.symbol})
+                </th>
+                <th className="px-4 py-2 text-right font-medium bg-white dark:bg-slate-900 ">
+                  Actions
                 </th>
               </tr>
             </thead>
@@ -221,6 +243,12 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
                     <td className="max-w-[120px] truncate px-4 py-2">
                       {row.label || "—"}
                     </td>
+                    <td
+                      className="max-w-[160px] truncate px-4 py-2 font-mono text-xs text-fg-muted"
+                      title={row.address}
+                    >
+                      {row.address}
+                    </td>
                     <td className="max-w-[180px] truncate px-4 py-2 text-fg-muted">
                       {row.message || "—"}
                     </td>
@@ -229,13 +257,43 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
                         ? formatCoinAmount(row.amount, coin, 8)
                         : "—"}
                     </td>
+                    <td className="px-2 py-2 text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          aria-label="Show QR code"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedId(row.id);
+                            setShowDetail(true);
+                          }}
+                        >
+                          <QrCode className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          aria-label="Remove payment request"
+                          disabled={remove.isPending}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPendingDeleteId(row.id);
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-danger" />
+                        </Button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
-              {requests.length === 0 && (
+              {!requestsQuery.isLoading && requests.length === 0 && (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={6}
                     className="px-4 py-8 text-center text-sm text-fg-subtle"
                   >
                     No payment requests yet. Create a receiving address above.
@@ -244,29 +302,6 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
               )}
             </tbody>
           </table>
-        </div>
-
-        <div className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            disabled={!selected}
-            onClick={() => setShowDetail(true)}
-          >
-            <Pencil className="h-3.5 w-3.5" />
-            Show
-          </Button>
-          <Button
-            type="button"
-            variant="danger"
-            size="sm"
-            disabled={!selected}
-            onClick={removeSelected}
-          >
-            <X className="h-3.5 w-3.5" />
-            Remove
-          </Button>
         </div>
       </div>
 
@@ -332,6 +367,18 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteId != null}
+        title="Are you sure?"
+        message="This payment request will be removed from your history. The address will continue working for this wallet."
+        confirmLabel="Remove"
+        confirming={remove.isPending}
+        onCancel={() => setPendingDeleteId(null)}
+        onConfirm={() => {
+          if (pendingDeleteId) remove.mutate(pendingDeleteId);
+        }}
+      />
     </div>
   );
 }

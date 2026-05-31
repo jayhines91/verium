@@ -32,9 +32,7 @@ $(package)_cxxflags=-std=c++11
 endef
 
 define $(package)_preprocess_cmds
-  # Some legacy/generated configure scripts can contain a bare ';;' line that
-  # trips POSIX sh parsing on macOS runners. Normalize it before configure.
-  sed -i.old 's/^[[:space:]]*;;[[:space:]]*$$/  : ;;/g' configure
+  sed -i.old 's/^[[:space:]]*;;[[:space:]]*$$/  : ;;/g' configure && true
 endef
 
 define $(package)_config_cmds
