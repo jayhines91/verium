@@ -26,6 +26,7 @@ PHASE="all"
 INSTALL_DEPS=0
 SKIP_SIDECAR_BUILD=0
 SKIP_DEPENDS=0
+DEPS_ONLY=0
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
 usage() {
@@ -42,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --install-deps) INSTALL_DEPS=1; shift ;;
     --skip-sidecar-build) SKIP_SIDECAR_BUILD=1; shift ;;
     --skip-depends) SKIP_DEPENDS=1; shift ;;
+    --deps-only) DEPS_ONLY=1; shift ;;
     *) echo "Unknown option: $1" >&2; usage 1 ;;
   esac
 done
@@ -80,7 +82,31 @@ esac
 
 log() { printf '\n=== %s ===\n' "$*"; }
 
+need_sudo() {
+  sudo -n true 2>/dev/null
+}
+
+require_sudo() {
+  if ! need_sudo; then
+    echo "ERROR: sudo password required for apt packages." >&2
+    echo "Run once in WSL (enter your password):" >&2
+    echo "  sudo apt-get update && sudo apt-get install -y build-essential libtool autotools-dev automake pkg-config bsdmainutils python3 curl ca-certificates" >&2
+    if [[ "$HOST" == "aarch64-linux-gnu" && "$(uname -m)" != "aarch64" ]]; then
+      echo "  sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu" >&2
+    fi
+    if [[ "$KIND" == "mingw" ]]; then
+      echo "  sudo apt-get install -y g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64" >&2
+    fi
+    if [[ "$KIND" == "linux" ]] && [[ "$PHASE" == "wallet" || "$PHASE" == "all" ]]; then
+      echo "  sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libfuse2" >&2
+    fi
+    echo "Or re-run with --install-deps after configuring passwordless sudo." >&2
+    exit 1
+  fi
+}
+
 install_sidecar_deps() {
+  require_sudo
   if [[ "$KIND" == "linux" || "$KIND" == "mingw" ]]; then
     sudo apt-get update
     sudo apt-get install -y \
@@ -103,10 +129,23 @@ install_sidecar_deps() {
 }
 
 install_wallet_deps_linux() {
+  require_sudo
   sudo apt-get update
   sudo apt-get install -y \
     libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
     build-essential curl wget file libssl-dev libgtk-3-dev libfuse2
+}
+
+install_node_rust_wsl() {
+  if ! command -v node >/dev/null; then
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+  fi
+  if ! command -v cargo >/dev/null; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+  fi
+  # shellcheck disable=SC1091
+  [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
 }
 
 prepare_depends_no_qt() {
@@ -149,6 +188,17 @@ fix_windows_checkout() {
 build_sidecar() {
   cd "$ROOT"
   fix_windows_checkout
+  if [[ "$HOST" == "aarch64-linux-gnu" && "$(uname -m)" != "aarch64" ]] \
+      && ! command -v aarch64-linux-gnu-g++ >/dev/null; then
+    echo "ERROR: aarch64-linux-gnu-g++ not found. Install with:" >&2
+    echo "  sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu" >&2
+    exit 1
+  fi
+  if [[ "$KIND" == "mingw" ]] && ! command -v x86_64-w64-mingw32-g++ >/dev/null; then
+    echo "ERROR: x86_64-w64-mingw32-g++ not found. Install with:" >&2
+    echo "  sudo apt-get install -y g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64" >&2
+    exit 1
+  fi
   log "Build depends (HOST=$HOST NO_QT=1)"
   if [[ "$SKIP_DEPENDS" == "0" ]]; then
   prepare_depends_no_qt
@@ -220,8 +270,10 @@ build_wallet() {
     echo "Wallet build via this script is only wired for Linux (use native macOS/Windows for other targets)." >&2
     exit 1
   fi
-  command -v node >/dev/null || { echo "node missing; install Node 20+" >&2; exit 1; }
-  command -v cargo >/dev/null || { echo "cargo missing; install Rust stable" >&2; exit 1; }
+  # shellcheck disable=SC1091
+  [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
+  command -v node >/dev/null || { echo "node missing; run with --install-deps or install Node 20+" >&2; exit 1; }
+  command -v cargo >/dev/null || { echo "cargo missing; run with --install-deps or install Rust stable" >&2; exit 1; }
   rustup target add "$TARGET" 2>/dev/null || true
 
   cd "$APP"
@@ -248,8 +300,14 @@ build_wallet() {
 }
 
 [[ "$INSTALL_DEPS" == "1" ]] && install_sidecar_deps
-if [[ "$PHASE" == "all" || "$PHASE" == "wallet" ]] && [[ "$KIND" == "linux" ]]; then
-  [[ "$INSTALL_DEPS" == "1" ]] && install_wallet_deps_linux
+if [[ "$INSTALL_DEPS" == "1" ]] && [[ "$KIND" == "linux" ]]; then
+  install_wallet_deps_linux
+  install_node_rust_wsl
+fi
+
+if [[ "${DEPS_ONLY:-0}" == "1" ]]; then
+  log "Dependencies installed"
+  exit 0
 fi
 
 case "$PHASE" in
