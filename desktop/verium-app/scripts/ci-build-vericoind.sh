@@ -39,11 +39,15 @@ patch_file "src/wallet/db.cpp" 'fs::copy_option::overwrite_if_exists' 'fs::copy_
 patch_file "src/wallet/walletutil.cpp" 'it.level()' 'it.depth()'
 
 patch_depends_recipes_for_modern_toolchains() {
+  export VERIUM_ROOT="$(cd "$APP_ROOT/../.." && pwd)"
   python3 - <<'PY'
 from pathlib import Path
+import os
 import re
+import shutil
 
 root = Path(".")
+verium_root = Path(os.environ.get("VERIUM_ROOT", ""))
 
 def patch_bdb() -> bool:
     path = root / "depends/packages/bdb.mk"
@@ -174,39 +178,13 @@ def patch_package_registry() -> bool:
     return False
 
 def patch_curl() -> bool:
-    path = root / "depends/packages/curl.mk"
-    if not path.exists():
+    """Use verium's curl recipe (8.7.x, no autoreconf/sed on configure)."""
+    src = verium_root / "depends/packages/curl.mk"
+    dst = root / "depends/packages/curl.mk"
+    if not src.is_file() or not dst.parent.is_dir():
         return False
-    text = path.read_text(encoding="utf-8")
-    original = text
-
-    # SSPI is Windows-only; enabling it on Darwin can break configure scripts.
-    text = text.replace("--enable-sspi ", "")
-    text = text.replace(" --enable-sspi", "")
-    text = text.replace("--enable-sspi", "")
-
-    # Force a sane Darwin SSL backend for cross-macOS builds.
-    if "$(package)_config_opts_darwin=" in text:
-        text = re.sub(
-            r"^\$\(package\)_config_opts_darwin=.*$",
-            "$(package)_config_opts_darwin=--without-ssl --with-secure-transport",
-            text,
-            flags=re.M,
-        )
-
-    # Drop any curl preprocess hook from upstream snapshots. Some variants
-    # carry a malformed sed expression that fails in "Preprocessing curl...".
-    text = re.sub(
-        r"^define \$\(package\)_preprocess_cmds\n(?:.*\n)*?endef\n\n",
-        "",
-        text,
-        flags=re.M,
-    )
-
-    if text != original:
-        path.write_text(text, encoding="utf-8")
-        return True
-    return False
+    shutil.copy2(src, dst)
+    return True
 
 def patch_minizip() -> bool:
     path = root / "depends/packages/minizip.mk"
@@ -252,6 +230,21 @@ PY
 
 patch_depends_recipes_for_modern_toolchains
 
+dump_curl_configure_snippet() {
+  local cfg
+  cfg="$(find depends/work/build -path "*/curl/*/configure" 2>/dev/null | head -1)" || return 0
+  echo "=== curl configure snippet (lines 7100-7155): $cfg ==="
+  nl -ba "$cfg" | sed -n '7100,7155p' || true
+}
+
+build_depends() {
+  local extra="${1:-}"
+  if ! make -C depends HOST="$HOST" NO_QT=1 -j"$JOBS" $extra; then
+    dump_curl_configure_snippet
+    return 1
+  fi
+}
+
 if [[ "$KIND" == "macos" ]]; then
   brew install automake libtool pkg-config || true
   python3 -m pip install --user --break-system-packages --upgrade pip setuptools wheel 2>/dev/null || true
@@ -264,7 +257,7 @@ if [[ "$KIND" == "linux" || "$KIND" == "mingw" ]]; then
   if [[ "$KIND" == "mingw" ]]; then
     EXTRA="RC=${HOST}-windres WINDRES=${HOST}-windres CC_FOR_BUILD=gcc CXX_FOR_BUILD=g++ ac_cv_search_clock_gettime=no"
   fi
-  make -C depends HOST="$HOST" NO_QT=1 -j"$JOBS" $EXTRA
+  build_depends "$EXTRA"
   ./configure \
     --host="$HOST" \
     --prefix="$(pwd)/depends/$HOST" \
@@ -292,7 +285,7 @@ if [[ "$KIND" == "macos" ]]; then
     aarch64-*) export MACOSX_DEPLOYMENT_TARGET=11.0 ;;
     *) export MACOSX_DEPLOYMENT_TARGET=10.15 ;;
   esac
-  make -C depends HOST="$HOST" NO_QT=1 -j"$JOBS"
+  build_depends
   ./configure \
     --host="$HOST" \
     --prefix="$(pwd)/depends/$HOST" \
