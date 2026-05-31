@@ -9,10 +9,19 @@ KIND="${VERICOIND_CI_KIND:?VERICOIND_CI_KIND required}"
 HOST="${VERICOIND_CI_HOST:?VERICOIND_CI_HOST required}"
 CONFIGURE_EXTRA="${VERICOIND_CONFIGURE_EXTRA:-}"
 OUT_DIR="${VERICOIND_OUT_DIR:-out}"
+# Shared-depends mode: reuse a depends/ prefix already built by the veriumd job
+# instead of compiling a second tree inside the vericoin clone.
+SKIP_DEPENDS="${VERICOIND_SKIP_DEPENDS:-}"
 
 APP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${VERICOIN_BUILD_DIR:-$APP_ROOT/../../.ci-vericoin-src}"
-OUT_BASE="$APP_ROOT/${VERICOIND_OUT_DIR:-src-tauri/binaries}"
+# Absolute VERICOIND_OUT_DIR is used as-is (e.g. repo-root out/ in the merged CI
+# job); a relative value stays anchored under the wallet app for local builds.
+if [[ "${VERICOIND_OUT_DIR:-}" = /* ]]; then
+  OUT_BASE="$VERICOIND_OUT_DIR"
+else
+  OUT_BASE="$APP_ROOT/${VERICOIND_OUT_DIR:-src-tauri/binaries}"
+fi
 
 if [[ ! -d "$BUILD_DIR/.git" ]]; then
   git clone --depth 1 --branch "$VERICOIN_REF" "$VERICOIN_REPO" "$BUILD_DIR"
@@ -23,6 +32,15 @@ fi
 
 cd "$BUILD_DIR"
 JOBS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
+
+# In shared-depends mode the prefix lives in the verium repo (where the veriumd
+# job built it); otherwise it is the depends tree inside this vericoin clone.
+if [[ -n "$SKIP_DEPENDS" ]]; then
+  DEPENDS_ROOT="${VERICOIND_DEPENDS_ROOT:?VERICOIND_DEPENDS_ROOT required when VERICOIND_SKIP_DEPENDS is set}"
+else
+  DEPENDS_ROOT="$(pwd)"
+fi
+DEPENDS_PREFIX="$DEPENDS_ROOT/depends/$HOST"
 
 patch_file() {
   local file="$1" from="$2" to="$3"
@@ -296,22 +314,28 @@ build_depends() {
   fi
 }
 
-if [[ "$KIND" == "macos" ]]; then
+# In shared-depends mode the calling workflow already installs macOS toolchain
+# deps before the veriumd build, so skip the redundant brew/pip pass here.
+if [[ "$KIND" == "macos" && -z "$SKIP_DEPENDS" ]]; then
   brew install automake libtool pkg-config || true
   python3 -m pip install --user --break-system-packages --upgrade pip setuptools wheel 2>/dev/null || true
 fi
 
 if [[ "$KIND" == "linux" || "$KIND" == "mingw" ]]; then
   ./autogen.sh
-  export CONFIG_SITE="$(pwd)/depends/$HOST/share/config.site"
+  export CONFIG_SITE="$DEPENDS_PREFIX/share/config.site"
   EXTRA=""
   if [[ "$KIND" == "mingw" ]]; then
     EXTRA="RC=${HOST}-windres WINDRES=${HOST}-windres CC_FOR_BUILD=gcc CXX_FOR_BUILD=g++ ac_cv_search_clock_gettime=no"
   fi
-  build_depends "$EXTRA"
+  if [[ -z "$SKIP_DEPENDS" ]]; then
+    build_depends "$EXTRA"
+  else
+    echo "==> Skipping depends build (VERICOIND_SKIP_DEPENDS=1); reusing $DEPENDS_PREFIX"
+  fi
   ./configure \
     --host="$HOST" \
-    --prefix="$(pwd)/depends/$HOST" \
+    --prefix="$DEPENDS_PREFIX" \
     --without-gui --disable-tests --disable-bench \
     --enable-reduce-exports --disable-shared --enable-static \
     $CONFIGURE_EXTRA $EXTRA
@@ -330,16 +354,20 @@ fi
 
 if [[ "$KIND" == "macos" ]]; then
   ./autogen.sh
-  export CONFIG_SITE="$(pwd)/depends/$HOST/share/config.site"
+  export CONFIG_SITE="$DEPENDS_PREFIX/share/config.site"
   export CXXFLAGS="${CXXFLAGS:-} -Wno-enum-constexpr-conversion -Wno-error=enum-constexpr-conversion"
   case "$HOST" in
     aarch64-*) export MACOSX_DEPLOYMENT_TARGET=11.0 ;;
     *) export MACOSX_DEPLOYMENT_TARGET=10.15 ;;
   esac
-  build_depends
+  if [[ -z "$SKIP_DEPENDS" ]]; then
+    build_depends
+  else
+    echo "==> Skipping depends build (VERICOIND_SKIP_DEPENDS=1); reusing $DEPENDS_PREFIX"
+  fi
   ./configure \
     --host="$HOST" \
-    --prefix="$(pwd)/depends/$HOST" \
+    --prefix="$DEPENDS_PREFIX" \
     --without-gui --disable-tests --disable-bench \
     --enable-reduce-exports --disable-shared --enable-static \
     $CONFIGURE_EXTRA
