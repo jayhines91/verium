@@ -284,6 +284,7 @@ jobs:
           sparse-checkout: |
             desktop/verium-app/scripts
             depends/packages
+            depends/patches
             depends/hosts
           fetch-depth: 1
 

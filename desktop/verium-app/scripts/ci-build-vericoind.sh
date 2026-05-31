@@ -190,6 +190,24 @@ def patch_package_registry() -> bool:
         return True
     return False
 
+def sync_depends_patches() -> bool:
+    """Copied package recipes reference verium patch files (e.g. zlib darwin_fdopen)."""
+    src = verium_root / "depends/patches"
+    dst = root / "depends/patches"
+    if not src.is_dir():
+        print("==> WARN: verium depends/patches not found (sparse checkout?)")
+        return False
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        target = dst / item.name
+        if item.is_dir():
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(item, target)
+        else:
+            shutil.copy2(item, target)
+    return True
+
 def patch_curl() -> bool:
     """Use verium's curl recipe (8.7.x, no autoreconf/sed on configure)."""
     dst = root / "depends/packages/curl.mk"
@@ -251,6 +269,8 @@ def patch_minizip() -> bool:
     return False
 
 changed = []
+if sync_depends_patches():
+    changed.append("depends/patches")
 if patch_bdb():
     changed.append("depends/packages/bdb.mk")
 if patch_boost():
@@ -277,7 +297,11 @@ patch_depends_recipes_for_modern_toolchains
 
 dump_curl_configure_snippet() {
   local cfg
-  cfg="$(find depends/work/build -path "*/curl/*/configure" 2>/dev/null | head -1)" || return 0
+  cfg="$(find depends/work/build -path "*/curl/*/configure" 2>/dev/null | head -1)" || true
+  if [[ -z "$cfg" || ! -f "$cfg" ]]; then
+    echo "=== curl configure snippet: no configure file found under depends/work/build ==="
+    return 0
+  fi
   echo "=== curl configure snippet (lines 7100-7155): $cfg ==="
   nl -ba "$cfg" | sed -n '7100,7155p' || true
 }
