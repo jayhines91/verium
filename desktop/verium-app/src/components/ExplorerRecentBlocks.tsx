@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useQuery } from "@tanstack/react-query";
 
@@ -28,6 +28,7 @@ import {
 import { subscribeBlockMined } from "@/hooks/useBlockMinedWatcher";
 
 import { BLOCK_AGE_TICK_MS } from "@/lib/block-tip";
+import { useChainTip } from "@/lib/chain-tip-store";
 
 import { fetchExplorerBlocks, isExplorerApiEnabled } from "@/lib/explorer-api";
 import type { ExplorerBlock } from "@/lib/explorer-api";
@@ -52,9 +53,12 @@ interface ExplorerRecentBlocksProps {
   className?: string;
 }
 
-/** Dashboard live chain feed poll interval. */
-
-const DASHBOARD_BLOCKS_REFETCH_MS = 10_000;
+/**
+ * Live updates now arrive instantly from the chain tip watcher; the explorer
+ * query is only a safety-net poll plus the source of enrichment (miner address,
+ * reward) that the local node row lacks.
+ */
+const BLOCKS_FALLBACK_REFETCH_MS = 60_000;
 
 const CELEBRATION_DISMISS_MS = 60_000;
 
@@ -107,6 +111,8 @@ export function ExplorerRecentBlocks({
 
   const visible = useWindowVisible();
 
+  const chainTip = useChainTip(coin);
+
   const [ageTick, setAgeTick] = useState(0);
 
   const [celebration, setCelebration] = useState<CelebrationState | null>(null);
@@ -136,19 +142,15 @@ export function ExplorerRecentBlocks({
   });
 
   const blocks = useQuery({
-    queryKey: ["explorer-blocks", isDashboard ? 10 : 10],
+    queryKey: ["explorer-blocks", 10],
 
-    queryFn: () => fetchExplorerBlocks(coin, isDashboard ? 10 : 10),
+    queryFn: () => fetchExplorerBlocks(coin, 10),
 
     enabled: (isDashboard || enabled.data === true) && visible,
 
-    staleTime: isDashboard ? DASHBOARD_BLOCKS_REFETCH_MS : 0,
+    staleTime: BLOCKS_FALLBACK_REFETCH_MS,
 
-    refetchInterval: visible
-      ? isDashboard
-        ? DASHBOARD_BLOCKS_REFETCH_MS
-        : 5_000
-      : false,
+    refetchInterval: visible ? BLOCKS_FALLBACK_REFETCH_MS : false,
 
     refetchOnWindowFocus: !isDashboard,
 
@@ -205,11 +207,13 @@ export function ExplorerRecentBlocks({
   const loading = enabled.isLoading || blocks.isLoading;
 
   const feedLimit = isDashboard ? 10 : 10;
-  const blockRows = mergeRecentBlocks(
-    blocks.data ?? [],
-    coin === "verium" ? localBlocks : [],
-    feedLimit,
-  );
+  const liveAndLocal = useMemo(() => {
+    const local = coin === "verium" ? localBlocks : [];
+    // Local mined rows carry reward/address and take precedence over the
+    // node-derived tip rows, which only know time/size/tx count.
+    return mergeRecentBlocks(chainTip.recentBlocks, local, 24);
+  }, [chainTip.recentBlocks, localBlocks, coin]);
+  const blockRows = mergeRecentBlocks(blocks.data ?? [], liveAndLocal, feedLimit);
 
   const minedInFeed = blockRows.filter((block) =>
     isBlockMinedByWallet(block, miningCtx),

@@ -34,6 +34,7 @@ import {
   syncTargetHeight,
 } from "@/lib/bootstrap-policy";
 import { BLOCK_AGE_TICK_MS } from "@/lib/block-tip";
+import { useChainTip } from "@/lib/chain-tip-store";
 import { miningInfoRefetchMs } from "@/lib/mining-boot";
 import { cn, formatBlockAge, formatNumber } from "@/lib/utils";
 
@@ -148,6 +149,7 @@ function VeriumSummaryCard() {
   const connected = status?.connected === true;
   const explorerEnabled = useExplorerQueriesEnabled();
   const visible = useWindowVisible();
+  const chainTip = useChainTip(coin);
 
   const blockchain = useQuery({
     queryKey: coinQueryKey(coin, "getblockchaininfo"),
@@ -229,10 +231,11 @@ function VeriumSummaryCard() {
   const blockTimeMin = resolveBlockTimeMinutes(explorer.data, mining.data);
   const mempool = mining.data?.pooledtx ?? explorer.data?.pooled_tx;
   const blockHash = blockchain.data?.bestblockhash;
-  const blockAge =
-    blockchain.data?.mediantime != null
-      ? formatBlockAge(blockchain.data.mediantime, ageTick)
-      : "—";
+  const tipTime =
+    chainTip.tip?.time != null && chainTip.tip.time > 0
+      ? chainTip.tip.time
+      : blockchain.data?.mediantime;
+  const blockAge = tipTime != null ? formatBlockAge(tipTime, ageTick) : "—";
   const connections = status?.connections ?? 0;
   const connectionLabel =
     connections === 1
@@ -382,6 +385,7 @@ function VericoinSummaryCard() {
   const connected = status?.connected === true;
   const explorerEnabled = useExplorerQueriesEnabled();
   const visible = useWindowVisible();
+  const chainTip = useChainTip(coin);
 
   const blockchain = useQuery({
     queryKey: coinQueryKey(coin, "getblockchaininfo"),
@@ -447,10 +451,11 @@ function VericoinSummaryCard() {
       ? "1 connection"
       : `${formatNumber(connections, 0)} connections`;
   const blockHash = blockchain.data?.bestblockhash;
-  const blockAge =
-    blockchain.data?.mediantime != null
-      ? formatBlockAge(blockchain.data.mediantime, ageTick)
-      : "—";
+  const tipTime =
+    chainTip.tip?.time != null && chainTip.tip.time > 0
+      ? chainTip.tip.time
+      : blockchain.data?.mediantime;
+  const blockAge = tipTime != null ? formatBlockAge(tipTime, ageTick) : "—";
   const mempool = vrcMining.data?.pooledtx ?? explorer.data?.pooled_tx;
   const posDifficulty = vrcNetwork.posDifficulty ?? blockchain.data?.difficulty;
 

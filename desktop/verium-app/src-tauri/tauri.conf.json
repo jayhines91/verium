@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob: asset: http://ipc.localhost https://explorer-vrm.vericonomy.com https://explorer-vrc.vericonomy.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; media-src 'self' blob:"
+      "csp": "default-src 'self'; img-src 'self' data: blob: asset: http://ipc.localhost https://staging-explorer.vericonomy.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; media-src 'self' blob:"
     }
   },
   "plugins": {

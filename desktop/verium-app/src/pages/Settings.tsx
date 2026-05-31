@@ -510,8 +510,8 @@ export function Settings() {
                 <h3 className="text-sm font-semibold">Explorer integration</h3>
                 <p className="text-xs text-fg-muted">
                   URL templates used when opening transactions, blocks, and
-                  addresses on the official explorer. Defaults follow the active
-                  chain (VRM → explorer-vrm, VRC → explorer-vrc). Use{" "}
+                  addresses on the official explorer. Defaults open the active
+                  chain on the Vericonomy explorer (VRM and VRC). Use{" "}
                   <span className="font-mono">%s</span> as the placeholder.
                 </p>
                 <Field

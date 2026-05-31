@@ -123,6 +123,8 @@ pub async fn startup(app: AppHandle, state: &AppState) {
     tauri::async_runtime::spawn(async move {
         invalid_block_heal_loop(&heal_state).await;
     });
+
+    crate::chain_tip_watcher::spawn_chain_tip_watchers(app, state.clone());
 }
 
 /// Proactively clear invalid block flags before status polling can surface a stall banner.

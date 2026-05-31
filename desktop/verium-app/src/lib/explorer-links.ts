@@ -1,5 +1,4 @@
 import type { CoinId } from "@/lib/coin/profile";
-import { getCoinProfile } from "@/lib/coin/profile";
 
 /** V2 explorer web UI (external links only — API fetches stay on production explorers). */
 export const EXPLORER_LINK_BASE = "https://staging-explorer.vericonomy.com";
@@ -21,10 +20,10 @@ export function explorerHome(coin: CoinId): string {
   return `${chainBase(coin)}/`;
 }
 
-/** Logo asset URL — served from the production explorer (not staging). */
+/** Logo asset URL — served from the staging explorer-v2 web app. */
 export function explorerLogoUrl(coin: CoinId): string {
-  const apiBase = getCoinProfile(coin).explorerApiBase.replace(/\/$/, "");
-  return `${apiBase}/assets/images/logo.png`;
+  const slug = coin === "verium" ? "verium" : "vericoin";
+  return `${EXPLORER_LINK_BASE}/img/vericonomy/${slug}-logo.svg`;
 }
 
 export function defaultTxExplorerTemplate(coin: CoinId): string {

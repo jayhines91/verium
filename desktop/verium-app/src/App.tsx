@@ -16,6 +16,7 @@ import { useAutoStake } from "@/hooks/useAutoStake";
 import { useBlockMinedSound } from "@/hooks/useBlockMinedSound";
 import { useBlockMinedWatcher } from "@/hooks/useBlockMinedWatcher";
 import { useBlockMinedDashboardSync } from "@/hooks/useBlockMinedDashboardSync";
+import { useChainTipWatcher } from "@/hooks/useChainTipWatcher";
 import { useIncomingVrmNotifications } from "@/hooks/useIncomingVrmNotifications";
 import { useIncomingVrmWatcher } from "@/hooks/useIncomingVrmWatcher";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
@@ -101,6 +102,7 @@ function AppHooks() {
   useAutoLock();
   useScheduledBackup();
   useTheme();
+  useChainTipWatcher();
   useBlockMinedWatcher();
   useBlockMinedDashboardSync();
   useBlockMinedSound();

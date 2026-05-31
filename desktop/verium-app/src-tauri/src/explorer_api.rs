@@ -23,7 +23,7 @@ pub fn explorer_logo_url(coin: CoinId) -> String {
     coin.explorer_logo_url().to_string()
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExplorerStats {
     pub network_hash: Option<f64>,
     pub supply: Option<f64>,
@@ -150,66 +150,12 @@ async fn get_json(client: &reqwest::Client, url: &str) -> AppResult<Value> {
     Ok(resp.json().await?)
 }
 
-fn parse_f64(v: &Value) -> Option<f64> {
-    match v {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.parse().ok(),
-        _ => None,
-    }
-}
-
 fn parse_u64(v: &Value) -> Option<u64> {
     match v {
         Value::Number(n) => n.as_u64(),
         Value::String(s) => s.parse().ok(),
         _ => None,
     }
-}
-
-fn coingecko_id(coin: CoinId) -> &'static str {
-    match coin {
-        CoinId::Verium => "veriumreserve",
-        CoinId::Vericoin => "vericoin",
-    }
-}
-
-fn parse_pos_pow_difficulty(
-    coin: CoinId,
-    mining: &Value,
-) -> (Option<f64>, Option<f64>, Option<f64>) {
-    let Some(diff) = mining.get("difficulty") else {
-        return (None, None, None);
-    };
-    if coin == CoinId::Vericoin {
-        if let Some(obj) = diff.as_object() {
-            return (
-                obj.get("proof-of-stake").and_then(parse_f64),
-                obj.get("proof-of-work").and_then(parse_f64),
-                None,
-            );
-        }
-        return (None, None, None);
-    }
-    (None, None, diff.as_f64().or_else(|| parse_f64(diff)))
-}
-
-async fn latest_block_generation(client: &reqwest::Client, coin: CoinId) -> Option<f64> {
-    let blocks = get_json(
-        client,
-        &explorer_api_url(coin, "block?limit=1"),
-    )
-    .await
-    .ok()?;
-    let first = blocks.as_array()?.first()?;
-    first
-        .get("generation")
-        .and_then(parse_f64)
-        .or_else(|| {
-            first
-                .get("generation")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse().ok())
-        })
 }
 
 pub async fn fetch_network_stats(coin: CoinId) -> AppResult<ExplorerStats> {
@@ -221,111 +167,11 @@ pub async fn fetch_network_stats(coin: CoinId) -> AppResult<ExplorerStats> {
         return Ok(cached);
     }
 
+    // The explorer-v2 `/wallet/stats` compat route aggregates the network,
+    // market, and mining RPC fields into the legacy `ExplorerStats` shape.
     let client = http_client()?;
-
-    let mining = get_json(
-        &client,
-        &explorer_api_url(coin, "rpc/getmininginfo"),
-    )
-    .await?;
-
-    let supply_info = get_json(
-        &client,
-        &explorer_api_url(coin, "rpc/gettxoutsetinfo"),
-    )
-    .await
-    .ok();
-
-    let price_info = get_json(
-        &client,
-        &explorer_api_url(coin, "coingecko/price"),
-    )
-    .await
-    .ok();
-
-    let cg_id = coingecko_id(coin);
-    let price_usd = price_info
-        .as_ref()
-        .and_then(|p| p.get(cg_id))
-        .and_then(|v| v.get("usd"))
-        .and_then(parse_f64);
-
-    let price_btc = price_info
-        .as_ref()
-        .and_then(|p| p.get(cg_id))
-        .and_then(|v| v.get("btc"))
-        .and_then(parse_f64);
-
-    let market_cap_usd = price_info
-        .as_ref()
-        .and_then(|p| p.get(cg_id))
-        .and_then(|v| v.get("usd_market_cap"))
-        .and_then(parse_f64);
-
-    let volume_24h_usd = price_info
-        .as_ref()
-        .and_then(|p| p.get(cg_id))
-        .and_then(|v| v.get("usd_24h_vol"))
-        .and_then(parse_f64);
-
-    let (pos_difficulty, pow_difficulty, flat_difficulty) =
-        parse_pos_pow_difficulty(coin, &mining);
-
-    let mut block_reward = mining.get("blockreward").and_then(parse_f64);
-    if coin == CoinId::Vericoin {
-        if block_reward.is_none_or(|r| r > 100.0) {
-            block_reward = latest_block_generation(&client, coin).await;
-        }
-    }
-
-    let stake_interest = if coin == CoinId::Vericoin {
-        mining.get("stakeinterest").and_then(parse_f64)
-    } else {
-        None
-    };
-    let stake_inflation = if coin == CoinId::Vericoin {
-        mining.get("stakeinflation").and_then(parse_f64)
-    } else {
-        None
-    };
-    let net_stake_weight = if coin == CoinId::Vericoin {
-        mining.get("netstakeweight").and_then(parse_f64)
-    } else {
-        None
-    };
-
-    let stats = ExplorerStats {
-        network_hash: mining.get("networkhashps").and_then(parse_f64),
-        supply: supply_info
-            .as_ref()
-            .and_then(|s| s.get("total_amount"))
-            .and_then(parse_f64),
-        height: mining
-            .get("blocks")
-            .and_then(parse_u64)
-            .or_else(|| {
-                supply_info
-                    .as_ref()
-                    .and_then(|s| s.get("height"))
-                    .and_then(parse_u64)
-            }),
-        block_reward,
-        difficulty: flat_difficulty.or(pos_difficulty),
-        blocks_per_hour: mining.get("blocksperhour").and_then(parse_f64),
-        block_time_min: mining.get("blocktime").and_then(parse_f64),
-        pooled_tx: mining.get("pooledtx").and_then(parse_u64),
-        price_usd,
-        price_btc,
-        market_cap_usd,
-        volume_24h_usd,
-        stake_interest,
-        stake_inflation,
-        net_stake_weight,
-        pos_difficulty,
-        pow_difficulty,
-        fetched_at: now_secs(),
-        source: "explorer-rest".to_string(),
-    };
+    let value = get_json(&client, &explorer_api_url(coin, "stats")).await?;
+    let stats: ExplorerStats = serde_json::from_value(value)?;
 
     write_stats_cache(coin, stats.clone()).await;
     Ok(stats)
@@ -340,83 +186,11 @@ pub async fn fetch_explorer_peers(coin: CoinId) -> AppResult<Vec<ExplorerPeerEnt
         return Ok(cached);
     }
 
+    // The explorer-v2 `/wallet/peers` compat route returns a flat list already
+    // mapped to the legacy `ExplorerPeerEntry` shape (deduped by the server).
     let client = http_client()?;
-    let versions = get_json(&client, &explorer_api_url(coin, "peer?limit=50")).await?;
-    let versions = versions
-        .as_array()
-        .ok_or_else(|| AppError::other("peer versions response is not an array"))?;
-
-    let mut by_ip: HashMap<String, ExplorerPeerEntry> = HashMap::new();
-    let p2p_port = coin.default_p2p_port();
-
-    for version in versions {
-        let version_id = match version.get("version_id").and_then(parse_u64) {
-            Some(id) => id,
-            None => continue,
-        };
-        let subversion = version
-            .get("version_subVersion")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let protocol_version = version
-            .get("version_version")
-            .and_then(parse_u64)
-            .unwrap_or(0);
-
-        let detail = get_json(
-            &client,
-            &explorer_api_url(coin, &format!("peer/{version_id}")),
-        )
-        .await?;
-        let Some(peer_list) = detail.get("peers").and_then(|p| p.as_array()) else {
-            continue;
-        };
-
-        for peer in peer_list {
-            let ip = peer.get("ip").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if ip.is_empty() {
-                continue;
-            }
-            // Explorer REST stores the ephemeral source port from inbound connections,
-            // not the peer's P2P listen port. Always use the chain default for addnode.
-            let ip_key = ip.to_lowercase();
-            let address = format!("{ip}:{p2p_port}");
-            let entry = ExplorerPeerEntry {
-                id: peer.get("id").and_then(parse_u64).unwrap_or(0),
-                address: address.clone(),
-                ip,
-                port: p2p_port,
-                subversion: subversion.clone(),
-                protocol_version,
-                connected_on_explorer: peer
-                    .get("connected")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-                last_seen: peer
-                    .get("lastSeen")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-            };
-            by_ip
-                .entry(ip_key)
-                .and_modify(|existing| {
-                    if entry.connected_on_explorer && !existing.connected_on_explorer {
-                        *existing = entry.clone();
-                    } else if entry.last_seen.as_deref() > existing.last_seen.as_deref() {
-                        *existing = entry.clone();
-                    }
-                })
-                .or_insert(entry);
-        }
-    }
-
-    let mut peers: Vec<ExplorerPeerEntry> = by_ip.into_values().collect();
-    peers.sort_by(|a, b| {
-        b.connected_on_explorer
-            .cmp(&a.connected_on_explorer)
-            .then_with(|| a.address.cmp(&b.address))
-    });
+    let value = get_json(&client, &explorer_api_url(coin, "peers?limit=50")).await?;
+    let peers: Vec<ExplorerPeerEntry> = serde_json::from_value(value)?;
 
     write_peers_cache(coin, peers.clone()).await;
     Ok(peers)
@@ -428,7 +202,7 @@ pub async fn fetch_blocks(coin: CoinId, limit: u32) -> AppResult<Vec<ExplorerBlo
         cached
     } else {
         let client = http_client()?;
-        let url = explorer_api_url(coin, "block?limit=100");
+        let url = explorer_api_url(coin, "blocks?limit=100");
         let value = get_json(&client, &url).await?;
         let arr = value
             .as_array()
@@ -483,7 +257,7 @@ pub async fn fetch_transactions(coin: CoinId, limit: u32) -> AppResult<Vec<Explo
     }
 
     let client = http_client()?;
-    let url = explorer_api_url(coin, &format!("transaction?limit={limit}"));
+    let url = explorer_api_url(coin, &format!("transactions?limit={limit}"));
     let value = get_json(&client, &url).await?;
     let arr = value
         .as_array()
@@ -628,6 +402,15 @@ async fn write_blocks_cache(coin: CoinId, blocks: Vec<ExplorerBlock>) {
     .await;
 }
 
+/// Drop the cached blocks list so the next fetch hits the explorer immediately.
+/// Called by the chain tip watcher when a new block arrives.
+pub async fn invalidate_blocks_cache(coin: CoinId) {
+    with_coin_cache(coin, |c| {
+        c.blocks = None;
+    })
+    .await;
+}
+
 async fn read_transactions_cache(coin: CoinId) -> Option<Vec<ExplorerTransaction>> {
     let guard = CACHE.lock().await;
     guard
@@ -706,11 +489,4 @@ async fn write_peers_cache(coin: CoinId, peers: Vec<ExplorerPeerEntry>) {
         });
     })
     .await;
-}
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }

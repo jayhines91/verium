@@ -4,6 +4,7 @@ mod audit_log;
 mod auto_lock;
 mod backup_scheduler;
 mod bootstrap;
+mod chain_tip_watcher;
 mod coin_profile;
 mod commands;
 mod config;

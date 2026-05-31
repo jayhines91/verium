@@ -1,7 +1,7 @@
 import type { ExplorerBlock } from "@/lib/explorer-api";
 
-/** How often live block ages refresh (matches live chain feed). */
-export const BLOCK_AGE_TICK_MS = 30_000;
+/** How often live block ages refresh ("1m 51s" recompute between tip pushes). */
+export const BLOCK_AGE_TICK_MS = 5_000;
 
 /** Tip block from explorer list, preferring the row at `localHeight`. */
 export function resolveTipBlock(

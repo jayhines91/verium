@@ -21,7 +21,7 @@ import {
 export const EXPLORER_HOME = explorerHome("verium");
 export const EXPLORER_LOGO_URL = explorerLogoUrl("verium");
 export const EXPLORER_REST_BASE =
-  "https://explorer-vrm.vericonomy.com/rest/api/1";
+  "https://staging-explorer.vericonomy.com/v1/vrm/wallet";
 export const EXPLORER_BLOCKS = explorerBlocksHash("verium");
 export const EXPLORER_PEERS = explorerPeersHash("verium");
 export const EXPLORER_EXTRACTION = explorerExtractionHash("verium");

@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { coinQueryKey } from "@/lib/coin/profile";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { subscribeChainTip } from "@/lib/chain-tip-store";
 import { rpcListTransactions, type TransactionItem } from "@/lib/rpc/client";
 
 export interface BlockMinedEvent {
@@ -28,7 +29,10 @@ function emitBlockMined(event: BlockMinedEvent): void {
   }
 }
 
-const POLL_MS = 10_000;
+/** Fallback wallet poll; new coinbase detection is normally driven by chain tip events. */
+const POLL_MS = 60_000;
+/** Re-check the wallet shortly after a tip in case the coinbase lands just after it. */
+const TIP_RECHECK_MS = 2_500;
 const VERIUM = "verium" as const;
 /** Older mined txs seeded on first poll; fresher ones may still chime. */
 const FRESH_MINED_SEED_GRACE_SEC = 180;
@@ -44,6 +48,7 @@ function minedSortKey(tx: TransactionItem): number {
 /** Polls verium wallet coinbase transactions and emits new mined blocks. */
 export function useBlockMinedWatcher(): void {
   const { data: status } = useDaemonStatus(VERIUM);
+  const queryClient = useQueryClient();
   const seenTxids = useRef<Set<string>>(new Set());
   const initialized = useRef(false);
 
@@ -54,6 +59,21 @@ export function useBlockMinedWatcher(): void {
     retry: 0,
     enabled: status?.connected === true,
   });
+
+  // A new chain tip means a block was just connected, so the wallet may now
+  // hold a fresh coinbase. Re-check immediately (and once more shortly after,
+  // since the tip notification can slightly precede the wallet write) so the
+  // chime fires on the same instant the block appears.
+  useEffect(() => {
+    const queryKey = coinQueryKey(VERIUM, "listtransactions", "block-mined-watcher");
+    const recheck = () => {
+      void queryClient.invalidateQueries({ queryKey });
+    };
+    return subscribeChainTip(VERIUM, () => {
+      recheck();
+      window.setTimeout(recheck, TIP_RECHECK_MS);
+    });
+  }, [queryClient]);
 
   useEffect(() => {
     if (!txs.isSuccess || txs.data === undefined) return;
