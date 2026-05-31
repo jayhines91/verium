@@ -8,6 +8,9 @@ export interface BlockMinedEvent {
   height: number;
   amount?: number;
   txid?: string;
+  blockhash?: string;
+  blocktime?: number;
+  address?: string;
 }
 
 type BlockMinedListener = (event: BlockMinedEvent) => void;
@@ -27,6 +30,8 @@ function emitBlockMined(event: BlockMinedEvent): void {
 
 const POLL_MS = 10_000;
 const VERIUM = "verium" as const;
+/** Older mined txs seeded on first poll; fresher ones may still chime. */
+const FRESH_MINED_SEED_GRACE_SEC = 180;
 
 function isMinedCoinbase(tx: TransactionItem): boolean {
   return tx.category === "generate" || tx.category === "immature";
@@ -56,11 +61,14 @@ export function useBlockMinedWatcher(): void {
     const mined = txs.data.filter(isMinedCoinbase);
 
     if (!initialized.current) {
+      const nowSec = Date.now() / 1000;
       for (const tx of mined) {
-        seenTxids.current.add(tx.txid);
+        const t = tx.blocktime ?? tx.time ?? 0;
+        if (t > 0 && nowSec - t > FRESH_MINED_SEED_GRACE_SEC) {
+          seenTxids.current.add(tx.txid);
+        }
       }
       initialized.current = true;
-      return;
     }
 
     const sorted = [...mined].sort((a, b) => minedSortKey(b) - minedSortKey(a));
@@ -73,6 +81,9 @@ export function useBlockMinedWatcher(): void {
         height: tx.blockheight ?? 0,
         amount: tx.amount,
         txid: tx.txid,
+        blockhash: tx.blockhash,
+        blocktime: tx.blocktime ?? tx.time,
+        address: tx.address,
       });
       break;
     }

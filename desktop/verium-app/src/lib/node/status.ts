@@ -51,7 +51,15 @@ export function nodeStateFromStatus(status: NodeStatus | undefined): NodeState {
   if (status?.chain_corrupt) return "chain_corrupt";
   if (status?.reindex_in_progress) return "reindexing";
   if (status?.warming_up) return "warming_up";
-  if (status?.connected) return "connected_ready";
+  if (status?.sync_stalled) return "sync_stalled";
+  if (status?.connected) {
+    if (status.initial_block_download) return "connected_syncing";
+    const blocks = status.blocks ?? 0;
+    const headers = status.headers ?? 0;
+    if (blocks === 0 && headers === 0) return "connected_syncing";
+    if (headers > blocks + 2) return "connected_syncing";
+    return "connected_ready";
+  }
   if (status?.error?.toLowerCase().includes("unauthorized")) return "auth_mismatch";
   return "starting";
 }

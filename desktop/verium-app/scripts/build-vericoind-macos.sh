@@ -11,19 +11,35 @@
 set -euo pipefail
 
 APP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERICOIN_ROOT="${VERICOIN_ROOT:-$(cd "$APP_ROOT/../../vericoin" 2>/dev/null && pwd || true)}"
+VERIUM_ROOT="$(cd "$APP_ROOT/../.." && pwd)"
+DEFAULT_VERICOIN_ROOT="$VERIUM_ROOT/vericoin"
+VERICOIN_ROOT="${VERICOIN_ROOT:-$DEFAULT_VERICOIN_ROOT}"
+VERICOIN_REPO="${VERICOIN_GIT_URL:-https://github.com/VeriConomy/vericoin.git}"
+VERICOIN_REF="${VERICOIN_GIT_REF:-master}"
 TARGET_TRIPLE="${VERICOIND_TARGET_TRIPLE:-aarch64-apple-darwin}"
 
-if [[ -z "$VERICOIN_ROOT" || ! -d "$VERICOIN_ROOT" ]]; then
-  echo "Vericoin source tree not found."
-  echo "Clone it, then re-run:"
-  echo "  git clone https://github.com/VeriConomy/vericoin.git \"$(cd "$APP_ROOT/../.." && pwd)/vericoin\""
-  echo "  VERICOIN_ROOT=/path/to/vericoin $0"
-  exit 1
+if [[ ! -d "$VERICOIN_ROOT/.git" ]]; then
+  echo "==> Cloning Vericoin ($VERICOIN_REF) into $VERICOIN_ROOT"
+  git clone --depth 1 --branch "$VERICOIN_REF" "$VERICOIN_REPO" "$VERICOIN_ROOT"
 fi
 
 echo "==> Vericoin source: $VERICOIN_ROOT"
 cd "$VERICOIN_ROOT"
+
+# Homebrew boost@1.85+ API changes (copy_options, depth()).
+patch_boost_185_compat() {
+  local db_cpp="src/wallet/db.cpp"
+  if [[ -f "$db_cpp" ]] && grep -q 'copy_option::overwrite_if_exists' "$db_cpp"; then
+    sed -i '' 's/fs::copy_option::overwrite_if_exists/fs::copy_options::overwrite_existing/g' "$db_cpp"
+    echo "==> Patched $db_cpp for Boost 1.85+"
+  fi
+  local util_cpp="src/wallet/walletutil.cpp"
+  if [[ -f "$util_cpp" ]] && grep -q 'it\.level()' "$util_cpp"; then
+    sed -i '' 's/it\.level()/it.depth()/g' "$util_cpp"
+    echo "==> Patched $util_cpp for Boost 1.85+"
+  fi
+}
+patch_boost_185_compat
 
 if [[ ! -f configure ]]; then
   ./autogen.sh
@@ -50,6 +66,21 @@ export LDFLAGS="-L$(brew --prefix openssl@3)/lib -L$(brew --prefix berkeley-db@4
 export CPPFLAGS="-I$(brew --prefix openssl@3)/include -I$(brew --prefix berkeley-db@4)/include -I$B/include -I$M/include -I$Z/include -I$E/include"
 
 ./configure --without-gui --disable-tests --disable-bench --with-boost="$B" --with-boost-libdir="$B/lib"
+
+# crc32c enables weak getauxval on clang, but macOS does not provide the symbol.
+fix_darwin_crc32c() {
+  local mk="$VERICOIN_ROOT/src/Makefile"
+  [[ -f "$mk" ]] || return 0
+  sed -i '' \
+    -e 's/-DHAVE_WEAK_GETAUXVAL=1/-DHAVE_WEAK_GETAUXVAL=0/g' \
+    -e 's/-DHAVE_STRONG_GETAUXVAL=1/-DHAVE_STRONG_GETAUXVAL=0/g' \
+    -e 's/-DHAVE_ARM64_CRC32C=1/-DHAVE_ARM64_CRC32C=0/g' \
+    "$mk"
+  find "$VERICOIN_ROOT/src/crc32c" \( -name '*.o' -o -name '*.a' \) -delete 2>/dev/null || true
+  echo "==> Disabled Linux getauxval ARM CRC path for macOS link"
+}
+fix_darwin_crc32c
+
 make -j"$(sysctl -n hw.ncpu)" src/vericoind
 
 echo "==> Built $(file -b src/vericoind)"

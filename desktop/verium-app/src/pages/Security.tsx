@@ -1,14 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertTriangle,
-  KeyRound,
-  Lock,
-  Shield,
-  Smartphone,
-  Usb,
-  Users,
-} from "lucide-react";
+import { AlertTriangle, KeyRound, Lock, Shield, Smartphone } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -19,20 +11,12 @@ import {
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { RecoveryPhraseWizard } from "@/components/RecoveryPhraseWizard";
-import { HardwarePsbtSendCard } from "@/components/HardwarePsbtSendCard";
-import { DumpPrivkeyCard } from "@/components/DumpPrivkeyCard";
+import { RestoreFromPhraseForm } from "@/components/RestoreFromPhraseForm";
 import { TwoFactorEnrollmentPanel } from "@/components/TwoFactorEnrollmentPanel";
 import { useActiveCoin } from "@/lib/coin/context";
 import {
   autoLockGetConfig,
   autoLockSetConfig,
-  hardwareWalletAdd,
-  hardwareWalletImportXpub,
-  hardwareWalletList,
-  hardwareWalletRemove,
-  multisigCreateAddress,
-  multisigList,
-  multisigSave,
   passkeyDisable,
   passkeyEnrollPin,
   passkeyStatus,
@@ -44,13 +28,24 @@ import {
   twoFactorDisable,
   twoFactorStatus,
   type AutoLockConfig,
-  type HardwareWalletConfig,
-  type MultisigWalletConfig,
   type SpendingControlsConfig,
 } from "@/lib/security/client";
 
 const totpInputClass =
   "h-8 w-32 rounded-md border border-border bg-bg-subtle px-2 text-sm text-fg placeholder:text-fg-subtle outline-none focus:border-accent focus:ring-1 focus:ring-accent/30";
+
+const DEFAULT_AUTO_LOCK: AutoLockConfig = {
+  enabled: false,
+  idle_seconds: 900,
+  lock_on_blur: false,
+  lock_on_sleep: false,
+};
+
+const DEFAULT_SPENDING: SpendingControlsConfig = {
+  allowlist_only: false,
+  require_first_send_confirmation: true,
+  clipboard_guard_enabled: true,
+};
 
 export function Security() {
   const coin = useActiveCoin();
@@ -59,13 +54,12 @@ export function Security() {
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [showRecovery, setShowRecovery] = useState(false);
+  const [showPhraseRestore, setShowPhraseRestore] = useState(false);
   const [walletUnlockPass, setWalletUnlockPass] = useState("");
 
   const twoFa = useQuery({ queryKey: ["two-factor"], queryFn: twoFactorStatus });
   const passkey = useQuery({ queryKey: ["passkey"], queryFn: passkeyStatus });
   const autoLock = useQuery({ queryKey: ["auto-lock"], queryFn: autoLockGetConfig });
-  const hw = useQuery({ queryKey: ["hw-wallets"], queryFn: hardwareWalletList });
-  const ms = useQuery({ queryKey: ["multisig"], queryFn: multisigList });
   const spending = useQuery({ queryKey: ["spending-controls"], queryFn: spendingControlsGet });
   const isHd = useQuery({
     queryKey: ["wallet-is-hd", coin],
@@ -84,15 +78,6 @@ export function Security() {
     onSuccess: async () => {
       setPin("");
       setConfirmPin("");
-      queryClient.setQueryData(
-        ["passkey"],
-        (prev: Awaited<ReturnType<typeof passkeyStatus>> | undefined) => ({
-          ...(prev ?? { use_pin_fallback: true }),
-          enabled: true,
-          use_pin_fallback: true,
-          enrolled_at: Math.floor(Date.now() / 1000),
-        }),
-      );
       await queryClient.invalidateQueries({ queryKey: ["passkey"] });
       await queryClient.invalidateQueries({ queryKey: PASSKEY_GATE_QUERY_KEY });
     },
@@ -126,77 +111,30 @@ export function Security() {
   const pinEnrolled = passkey.data?.enabled === true;
 
   const saveAutoLock = async (patch: Partial<AutoLockConfig>) => {
-    const current = autoLock.data ?? {
-      enabled: false,
-      idle_seconds: 900,
-      lock_on_blur: true,
-      lock_on_sleep: true,
-    };
+    const current = { ...DEFAULT_AUTO_LOCK, ...autoLock.data };
     await autoLockSetConfig({ ...current, ...patch });
     queryClient.invalidateQueries({ queryKey: ["auto-lock"] });
   };
 
   const saveSpending = async (patch: Partial<SpendingControlsConfig>) => {
-    const current = spending.data ?? {
-      allowlist_only: false,
-      require_first_send_confirmation: true,
-      clipboard_guard_enabled: true,
-    };
+    const current = { ...DEFAULT_SPENDING, ...spending.data };
     await spendingControlsSave({ ...current, ...patch });
     queryClient.invalidateQueries({ queryKey: ["spending-controls"] });
   };
 
-  const addHwWallet = async () => {
-    const xpub = prompt("Paste hardware wallet xpub:");
-    if (!xpub) return;
-    const label = prompt("Label for this device:") ?? "Hardware wallet";
-    const config: HardwareWalletConfig = {
-      id: crypto.randomUUID(),
-      vendor: "manual",
-      label,
-      xpub,
-      derivation_path: "m/44'/0'/0'",
-      created_at: Date.now() / 1000,
-    };
-    await hardwareWalletAdd(config);
-    await hardwareWalletImportXpub(coin, xpub, label);
-    queryClient.invalidateQueries({ queryKey: ["hw-wallets"] });
-  };
-
-  const createMultisig = async () => {
-    const label = prompt("Multisig wallet label:") ?? "Multisig";
-    const pk1 = prompt("Cosigner 1 pubkey (hex):");
-    const pk2 = prompt("Cosigner 2 pubkey (hex):");
-    if (!pk1 || !pk2) return;
-    const addr = await multisigCreateAddress(coin, 2, [pk1, pk2], label);
-    const wallet: MultisigWalletConfig = {
-      id: crypto.randomUUID(),
-      label,
-      required_sigs: 2,
-      total_cosigners: 2,
-      cosigners: [
-        { id: "1", label: "Cosigner 1", xpub: pk1, derivation_path: "" },
-        { id: "2", label: "Cosigner 2", xpub: pk2, derivation_path: "" },
-      ],
-      multisig_address: addr,
-      created_at: Date.now() / 1000,
-    };
-    await multisigSave(wallet);
-    queryClient.invalidateQueries({ queryKey: ["multisig"] });
-    alert(`Multisig address: ${addr}`);
-  };
+  const autoLockCfg = { ...DEFAULT_AUTO_LOCK, ...autoLock.data };
+  const spendingCfg = { ...DEFAULT_SPENDING, ...spending.data };
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold">Security center</h1>
         <p className="mt-1 text-sm text-fg-muted">
-          Recovery, 2FA, passkeys, hardware wallets, multisig, and spending controls.
-          Wallet backups are in Settings.
+          Recovery phrase, app PIN, 2FA, spending controls, and auto-lock.
+          Wallet.dat backups are in Settings.
         </p>
       </div>
 
-      {/* Recovery phrase */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -204,8 +142,8 @@ export function Security() {
           </CardTitle>
           <CardDescription>
             {walletIsHd
-              ? "Your wallet uses HD derivation with a recovery phrase."
-              : "Upgrade to HD to enable mnemonic recovery."}
+              ? "Restore or rotate access using your 24-word phrase. wallet.dat backup is in Settings."
+              : "Upgrade to HD to generate a recovery phrase."}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -215,9 +153,10 @@ export function Security() {
               Non-HD wallet detected. Generate a phrase and upgrade to enable recovery.
             </div>
           )}
-          {walletIsHd && !showRecovery && (
+          {walletIsHd && (
             <p className="text-xs text-success">
-              HD recovery is enabled for this chain wallet.
+              HD recovery is enabled. To restore keys from a phrase, use the form below
+              (replaces wallet keys — back up wallet.dat first).
             </p>
           )}
           {!walletIsHd && !showRecovery && (
@@ -242,6 +181,29 @@ export function Security() {
               />
             </div>
           )}
+          {walletIsHd && (
+            <div className="flex flex-col gap-3 border-t border-border pt-3">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setShowPhraseRestore((v) => !v)}
+              >
+                {showPhraseRestore ? "Hide" : "Restore from recovery phrase"}
+              </Button>
+              {showPhraseRestore && (
+                <div className="rounded-md border border-warning/40 bg-warning/10 p-3">
+                  <RestoreFromPhraseForm
+                    onRestored={() => {
+                      setShowPhraseRestore(false);
+                      void queryClient.invalidateQueries({
+                        queryKey: ["wallet-is-hd", coin],
+                      });
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
           {applyHd.isPending && (
             <p className="text-xs text-fg-muted">Applying HD seed…</p>
           )}
@@ -251,24 +213,20 @@ export function Security() {
         </CardContent>
       </Card>
 
-      {/* 2FA */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Smartphone className="h-4 w-4 text-accent" /> Two-factor authentication
           </CardTitle>
           <CardDescription>
-            When enabled, every send requires a TOTP code, along with passphrase changes and
-            key exports.
+            When enabled, sends and sensitive actions require a TOTP code.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <Badge tone={twoFa.data?.enabled ? "success" : "neutral"}>
             {twoFa.data?.enabled ? "Enabled" : "Disabled"}
           </Badge>
-          {!twoFa.data?.enabled && (
-            <TwoFactorEnrollmentPanel showStartButton />
-          )}
+          {!twoFa.data?.enabled && <TwoFactorEnrollmentPanel showStartButton />}
           {twoFa.data?.enabled && (
             <div className="flex gap-2">
               <input
@@ -296,13 +254,15 @@ export function Security() {
         </CardContent>
       </Card>
 
-      {/* Passkey / PIN */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Lock className="h-4 w-4 text-accent" /> App unlock PIN
           </CardTitle>
-          <CardDescription>PIN gate before the wallet UI opens.</CardDescription>
+          <CardDescription>
+            PIN gate before the wallet UI opens. Restart the app after enrolling to
+            test the lock screen.
+          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <Badge tone={pinEnrolled ? "success" : "neutral"}>
@@ -339,9 +299,7 @@ export function Security() {
                   size="sm"
                   onClick={() => enrollPin.mutate()}
                   disabled={
-                    pin.length < 6 ||
-                    pin !== confirmPin ||
-                    enrollPin.isPending
+                    pin.length < 6 || pin !== confirmPin || enrollPin.isPending
                   }
                 >
                   {enrollPin.isPending ? "Enrolling…" : "Enroll PIN"}
@@ -386,18 +344,20 @@ export function Security() {
         </CardContent>
       </Card>
 
-      {/* Auto-lock */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shield className="h-4 w-4 text-accent" /> Auto-lock
           </CardTitle>
+          <CardDescription>
+            Locks the chain wallet via RPC (passphrase required to unlock again).
+          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
-              checked={autoLock.data?.enabled ?? false}
+              checked={autoLockCfg.enabled}
               onChange={(e) => void saveAutoLock({ enabled: e.target.checked })}
               className="accent-accent"
             />
@@ -406,7 +366,7 @@ export function Security() {
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
-              checked={autoLock.data?.lock_on_blur ?? true}
+              checked={autoLockCfg.lock_on_blur}
               onChange={(e) => void saveAutoLock({ lock_on_blur: e.target.checked })}
               className="accent-accent"
             />
@@ -418,26 +378,29 @@ export function Security() {
               type="number"
               min={1}
               max={1440}
-              value={Math.round((autoLock.data?.idle_seconds ?? 900) / 60)}
+              disabled={!autoLockCfg.enabled}
+              value={Math.round(autoLockCfg.idle_seconds / 60)}
               onChange={(e) =>
                 void saveAutoLock({ idle_seconds: Number(e.target.value) * 60 })
               }
-              className="h-8 w-20 rounded border border-border px-2 text-sm"
+              className="h-8 w-20 rounded border border-border px-2 text-sm disabled:opacity-50"
             />
           </div>
         </CardContent>
       </Card>
 
-      {/* Spending controls */}
       <Card>
         <CardHeader>
           <CardTitle>Spending controls</CardTitle>
+          <CardDescription>
+            Applied when you confirm a send from the Transactions page.
+          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3 text-sm">
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
-              checked={spending.data?.clipboard_guard_enabled ?? true}
+              checked={spendingCfg.clipboard_guard_enabled}
               onChange={(e) =>
                 void saveSpending({ clipboard_guard_enabled: e.target.checked })
               }
@@ -448,9 +411,11 @@ export function Security() {
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
-              checked={spending.data?.require_first_send_confirmation ?? true}
+              checked={spendingCfg.require_first_send_confirmation}
               onChange={(e) =>
-                void saveSpending({ require_first_send_confirmation: e.target.checked })
+                void saveSpending({
+                  require_first_send_confirmation: e.target.checked,
+                })
               }
               className="accent-accent"
             />
@@ -459,11 +424,11 @@ export function Security() {
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
-              checked={spending.data?.allowlist_only ?? false}
+              checked={spendingCfg.allowlist_only}
               onChange={(e) => void saveSpending({ allowlist_only: e.target.checked })}
               className="accent-accent"
             />
-            Allowlist-only sends (address book only)
+            Allowlist-only sends (address book send entries only)
           </label>
           <div className="flex items-center gap-2">
             <span className="text-fg-muted">Daily cap (VRM):</span>
@@ -471,10 +436,29 @@ export function Security() {
               type="number"
               min={0}
               step="0.01"
-              value={spending.data?.daily_spend_cap_vrm ?? ""}
+              value={spendingCfg.daily_spend_cap_vrm ?? ""}
               onChange={(e) =>
                 void saveSpending({
-                  daily_spend_cap_vrm: e.target.value ? Number(e.target.value) : null,
+                  daily_spend_cap_vrm: e.target.value
+                    ? Number(e.target.value)
+                    : null,
+                })
+              }
+              className="h-8 w-28 rounded border border-border px-2"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-fg-muted">Daily cap (VRC):</span>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={spendingCfg.daily_spend_cap_vrc ?? ""}
+              onChange={(e) =>
+                void saveSpending({
+                  daily_spend_cap_vrc: e.target.value
+                    ? Number(e.target.value)
+                    : null,
                 })
               }
               className="h-8 w-28 rounded border border-border px-2"
@@ -482,69 +466,6 @@ export function Security() {
           </div>
         </CardContent>
       </Card>
-
-      {/* Hardware wallets */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Usb className="h-4 w-4 text-accent" /> Hardware wallets
-          </CardTitle>
-          <CardDescription>
-            Trezor, Ledger, Coldcard via xpub import + PSBT signing.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <p className="text-xs text-fg-muted">
-            Configured: {hw.data?.length ?? 0} device(s). Import xpub from Trezor, Ledger, or Coldcard.
-          </p>
-          {hw.data?.map((w) => (
-            <div key={w.id} className="flex items-center justify-between rounded border border-border px-3 py-2 text-xs">
-              <span>{w.label} ({w.vendor})</span>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  void hardwareWalletRemove(w.id).then(() =>
-                    queryClient.invalidateQueries({ queryKey: ["hw-wallets"] }),
-                  );
-                }}
-              >
-                Remove
-              </Button>
-            </div>
-          ))}
-          <Button size="sm" onClick={() => void addHwWallet()}>
-            Import hardware wallet xpub
-          </Button>
-        </CardContent>
-      </Card>
-
-      <HardwarePsbtSendCard />
-
-      {/* Multisig */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-accent" /> Multisig wallets
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {ms.data?.map((w) => (
-            <div key={w.id} className="rounded border border-border px-3 py-2 text-xs">
-              <div className="font-medium">{w.label}</div>
-              <div className="text-fg-muted">{w.multisig_address ?? "—"}</div>
-              <div className="text-fg-subtle">
-                {w.required_sigs}-of-{w.total_cosigners}
-              </div>
-            </div>
-          ))}
-          <Button size="sm" onClick={() => void createMultisig()}>
-            Create 2-of-2 multisig
-          </Button>
-        </CardContent>
-      </Card>
-
-      <DumpPrivkeyCard />
     </div>
   );
 }

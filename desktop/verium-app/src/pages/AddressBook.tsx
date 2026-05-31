@@ -122,6 +122,16 @@ export function AddressBook() {
             </div>
           )}
 
+          {entries.isError && (
+            <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+              Could not load address book: {String(entries.error)}
+            </div>
+          )}
+          {upsert.isError && !draft && (
+            <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+              Save failed: {String(upsert.error)}
+            </div>
+          )}
           {entries.isLoading ? (
             <div className="py-10 text-center text-sm text-fg-muted">
               Loading…
@@ -219,7 +229,7 @@ function DraftRow({
         <Button
           size="sm"
           onClick={onSave}
-          disabled={!draft.address.trim() || !draft.label.trim() || saving}
+          disabled={!draft.address.trim() || saving}
         >
           <Save className="h-3.5 w-3.5" /> {saving ? "Saving…" : "Save"}
         </Button>

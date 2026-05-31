@@ -23,9 +23,9 @@ pub struct AutoLockConfig {
     /// Idle seconds before auto-lock (default 15 minutes).
     #[serde(default = "default_idle_seconds")]
     pub idle_seconds: u32,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_false")]
     pub lock_on_blur: bool,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_false")]
     pub lock_on_sleep: bool,
 }
 
@@ -33,8 +33,8 @@ fn default_idle_seconds() -> u32 {
     15 * 60
 }
 
-fn default_true() -> bool {
-    true
+fn default_false() -> bool {
+    false
 }
 
 impl Default for AutoLockConfig {
@@ -42,8 +42,8 @@ impl Default for AutoLockConfig {
         Self {
             enabled: false,
             idle_seconds: default_idle_seconds(),
-            lock_on_blur: true,
-            lock_on_sleep: true,
+            lock_on_blur: false,
+            lock_on_sleep: false,
         }
     }
 }

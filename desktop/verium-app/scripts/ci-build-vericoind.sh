@@ -24,6 +24,20 @@ fi
 cd "$BUILD_DIR"
 JOBS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
 
+patch_file() {
+  local file="$1" from="$2" to="$3"
+  [[ -f "$file" ]] || return 0
+  grep -q "$from" "$file" || return 0
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    sed -i '' "s/${from}/${to}/g" "$file"
+  else
+    sed -i "s/${from}/${to}/g" "$file"
+  fi
+  echo "==> Patched $file for Boost 1.85+"
+}
+patch_file "src/wallet/db.cpp" 'fs::copy_option::overwrite_if_exists' 'fs::copy_options::overwrite_existing'
+patch_file "src/wallet/walletutil.cpp" 'it.level()' 'it.depth()'
+
 if [[ "$KIND" == "macos" ]]; then
   brew install automake libtool pkg-config || true
   python3 -m pip install --user --break-system-packages --upgrade pip setuptools wheel 2>/dev/null || true
@@ -70,6 +84,14 @@ if [[ "$KIND" == "macos" ]]; then
     --without-gui --disable-tests --disable-bench \
     --enable-reduce-exports --disable-shared --enable-static \
     $CONFIGURE_EXTRA
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    sed -i '' \
+      -e 's/-DHAVE_WEAK_GETAUXVAL=1/-DHAVE_WEAK_GETAUXVAL=0/g' \
+      -e 's/-DHAVE_STRONG_GETAUXVAL=1/-DHAVE_STRONG_GETAUXVAL=0/g' \
+      -e 's/-DHAVE_ARM64_CRC32C=1/-DHAVE_ARM64_CRC32C=0/g' \
+      src/Makefile
+    rm -f src/crc32c/{*.o,*.a} 2>/dev/null || true
+  fi
   make -j"$JOBS" src/vericoind
   mkdir -p "$OUT_BASE"
   cp src/vericoind "$OUT_BASE/vericoind-${TARGET}"

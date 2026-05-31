@@ -121,6 +121,7 @@ pub fn run() {
             commands::debug_log_status,
             commands::check_for_updates,
             commands::open_external_url,
+            commands::play_block_chime,
             commands::read_verium_conf,
             commands::write_verium_conf,
             commands::open_verium_conf,

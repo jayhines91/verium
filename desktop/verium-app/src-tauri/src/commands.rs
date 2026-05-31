@@ -41,15 +41,19 @@ use crate::logs::{
     current_log_session, detect_chain_corruption_session,
     detect_datadir_lock_conflict, detect_node_starting, detect_reindex_active_session,
     detect_reindex_file_rebuild_session,
-    detect_reindex_progress, detect_sync_stall, detect_invalid_block_stall,
+    detect_invalid_block_hashes, detect_recent_coin_age_failure, detect_reindex_progress,
+    detect_sync_stall, detect_txindex_complete, detect_txindex_pos_stall, effective_txindex_height,
+    parse_txindex_enabled_height, parse_txindex_sync_height, tail_coin_debug_log,
+    tail_debug_log,
     rpc_reports_synced,
     is_timestamp_rule_failure, log_recently_modified,
-    tail_coin_debug_log, tail_debug_log,
 };
 use crate::node::orchestrator::maybe_emit_state;
 use crate::node::snapshot::{detect_binary_for_coin, snapshot_from_status};
 use crate::node::status::{apply_snapshot, disconnected, warming_up, NodeStatus};
-use crate::node::constants::{REINDEX_LOG_MAX_AGE, REPAIR_BACKOFF};
+use crate::node::constants::{
+    REINDEX_LOG_MAX_AGE, REPAIR_BACKOFF, TXINDEX_PAUSE_BLOCK_LAG, TXINDEX_RESUME_BLOCK_LAG,
+};
 use crate::prefs::{self, PartialUserPreferences, UserPreferences};
 use crate::rpc::RpcClient;
 use crate::state::{AppState, EarnLocalState, MinerLocalState};
@@ -850,42 +854,236 @@ async fn enrich_status_from_log(
     }
 
     if status.connected {
-        if let Some(hash) = detect_invalid_block_stall(&lines) {
-            status.sync_stalled = true;
-            status.invalid_block_hash = Some(hash.clone());
-            if !state.repair_backoff_active(coin) {
-                match clear_invalid_block_via_rpc(state, coin, &hash).await {
-                    Ok(detail) => {
-                        state.mark_repair_attempt(coin);
-                        status.sync_stall_detail = Some(detail);
-                        status.user_message = Some("Recovering sync…".into());
-                    }
-                    Err(err) => {
-                        status.sync_stall_detail = Some(format!(
-                            "Block {hash} is marked invalid in the local index, so peers disconnect during sync. {err}"
-                        ));
-                    }
-                }
-            } else {
-                status.sync_stall_detail = Some(format!(
-                    "Block {hash} is marked invalid in the local index. \
-                     The wallet is retrying recovery automatically."
-                ));
+        if coin == CoinId::Vericoin {
+            if detect_txindex_pos_stall(&lines) || detect_txindex_complete(&lines) {
+                status.txindex_sync_height = effective_txindex_height(&lines);
             }
-        } else {
-            let lag = status
-                .headers
-                .unwrap_or(0)
-                .saturating_sub(status.blocks.unwrap_or(0));
-            if lag > 0 {
-                if let Some(detail) = detect_sync_stall(&lines) {
-                    status.sync_stalled = true;
-                    status.sync_stall_detail = Some(detail);
-                }
+            status.txindex_network_paused = state.txindex_network_paused(coin);
+        }
+        // Invalid-block / txindex stalls are healed in the background.
+        let _ = heal_invalid_blocks_silently(state, coin, cfg).await;
+        if coin == CoinId::Vericoin {
+            status.txindex_network_paused = state.txindex_network_paused(coin);
+        }
+
+        let lag = status
+            .headers
+            .unwrap_or(0)
+            .saturating_sub(status.blocks.unwrap_or(0));
+        if lag > 0 {
+            if let Some(detail) = detect_sync_stall(&lines) {
+                status.sync_stalled = true;
+                status.sync_stall_detail = Some(detail);
             }
         }
     }
     status
+}
+
+async fn set_network_active(state: &AppState, coin: CoinId, active: bool) -> AppResult<()> {
+    state
+        .rpc_client(coin)
+        .await?
+        .call_no_result("setnetworkactive", json!([active]))
+        .await
+}
+
+/// Clears incorrectly invalid-marked blocks via RPC without updating UI status fields.
+pub(crate) async fn heal_invalid_blocks_silently(
+    state: &AppState,
+    coin: CoinId,
+    cfg: &DaemonConfig,
+) -> AppResult<()> {
+    let paused = state.txindex_network_paused(coin);
+    if state.invalid_clear_backoff_active(coin) && !paused {
+        return Ok(());
+    }
+
+    let lines = tail_coin_debug_log(coin, cfg, 200).await?;
+
+    if coin == CoinId::Vericoin && detect_txindex_complete(&lines) {
+        return resume_vericoin_after_txindex(state, coin, &lines).await;
+    }
+
+    if coin == CoinId::Vericoin && detect_txindex_pos_stall(&lines) {
+        return heal_vericoin_txindex_stall(state, coin, &lines).await;
+    }
+
+    let hashes = detect_invalid_block_hashes(&lines);
+    if hashes.is_empty() {
+        return Ok(());
+    }
+    if detect_recent_coin_age_failure(&lines) {
+        tracing::debug!(
+            "heal (vericoin): skipping reconsiderblock — txindex not ready for PoS blocks"
+        );
+        return Ok(());
+    }
+    match clear_invalid_blocks_via_rpc(state, coin, &hashes).await {
+        Ok(_) => {
+            state.mark_invalid_clear_attempt(coin);
+            tracing::info!(
+                "heal ({}): cleared invalid flag on {} block(s) in background",
+                coin.as_str(),
+                hashes.len()
+            );
+        }
+        Err(e) => {
+            tracing::debug!(
+                "heal ({}): reconsiderblock will retry ({e})",
+                coin.as_str()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// After txindex finishes: turn P2P back on and clear bogus invalid flags from the lag window.
+async fn resume_vericoin_after_txindex(
+    state: &AppState,
+    coin: CoinId,
+    lines: &[String],
+) -> AppResult<()> {
+    let hashes = detect_invalid_block_hashes(lines);
+    let txindex_h = effective_txindex_height(lines);
+    let chain_blocks: Option<u64> = state
+        .rpc_client(coin)
+        .await?
+        .call::<serde_json::Value>("getblockchaininfo", json!([]))
+        .await
+        .ok()
+        .and_then(|v| v.get("blocks").and_then(|b| b.as_u64()));
+
+    if state.txindex_network_paused(coin) {
+        if let Err(e) = set_network_active(state, coin, true).await {
+            tracing::warn!("heal (vericoin): setnetworkactive true after txindex done failed: {e}");
+        } else {
+            state.set_txindex_network_paused(coin, false);
+            tracing::info!(
+                "heal (vericoin): resumed P2P — txindex finished (chain ~{}, index ~{:?})",
+                chain_blocks.unwrap_or(0),
+                txindex_h
+            );
+        }
+    }
+
+    if !hashes.is_empty() && !detect_recent_coin_age_failure(lines) {
+        match clear_invalid_blocks_via_rpc(state, coin, &hashes).await {
+            Ok(_) => tracing::info!(
+                "heal (vericoin): cleared invalid flag on {} block(s) after txindex ready",
+                hashes.len()
+            ),
+            Err(e) => tracing::debug!("heal (vericoin): reconsiderblock after txindex ({e})"),
+        }
+    }
+    state.mark_invalid_clear_attempt(coin);
+    Ok(())
+}
+
+/// Pause P2P while txindex catches up; `reconsiderblock` alone retriggers failed ConnectTip.
+async fn heal_vericoin_txindex_stall(
+    state: &AppState,
+    coin: CoinId,
+    lines: &[String],
+) -> AppResult<()> {
+    let hashes = detect_invalid_block_hashes(lines);
+    let txindex_h = effective_txindex_height(lines);
+    let chain_blocks: Option<u64> = state
+        .rpc_client(coin)
+        .await?
+        .call::<serde_json::Value>("getblockchaininfo", json!([]))
+        .await
+        .ok()
+        .and_then(|v| v.get("blocks").and_then(|b| b.as_u64()));
+
+    let block_lag = match (chain_blocks, txindex_h) {
+        (Some(b), Some(t)) => b.saturating_sub(t),
+        _ => u64::MAX,
+    };
+
+    let coin_age_fail = detect_recent_coin_age_failure(lines);
+
+    let should_pause = coin_age_fail
+        || (!hashes.is_empty() && block_lag > TXINDEX_PAUSE_BLOCK_LAG)
+        || block_lag == u64::MAX && coin_age_fail;
+
+    if should_pause && !state.txindex_network_paused(coin) {
+        if let Err(e) = set_network_active(state, coin, false).await {
+            tracing::warn!("heal (vericoin): setnetworkactive false failed: {e}");
+        } else {
+            state.set_txindex_network_paused(coin, true);
+            tracing::info!(
+                "heal (vericoin): paused P2P while txindex catches up (chain ~{}, txindex ~{:?}, lag {})",
+                chain_blocks.unwrap_or(0),
+                txindex_h,
+                block_lag
+            );
+        }
+        state.mark_invalid_clear_attempt(coin);
+        return Ok(());
+    }
+
+    if state.txindex_network_paused(coin) {
+        let index_at_tip = match (chain_blocks, txindex_h) {
+            (Some(b), Some(t)) => t >= b.saturating_sub(2),
+            _ => false,
+        };
+        let can_resume = index_at_tip
+            || (chain_blocks.is_some()
+                && txindex_h.is_some()
+                && block_lag <= TXINDEX_RESUME_BLOCK_LAG
+                && !coin_age_fail);
+
+        if can_resume {
+            if let Err(e) = set_network_active(state, coin, true).await {
+                tracing::warn!("heal (vericoin): setnetworkactive true failed: {e}");
+                return Ok(());
+            }
+            state.set_txindex_network_paused(coin, false);
+            if !hashes.is_empty() {
+                let _ = clear_invalid_blocks_via_rpc(state, coin, &hashes).await;
+            }
+            tracing::info!(
+                "heal (vericoin): resumed P2P after txindex caught up (lag {block_lag} blocks)"
+            );
+        }
+        state.mark_invalid_clear_attempt(coin);
+        return Ok(());
+    }
+
+    // Txindex stall detected but lag not huge — do not reconsider if coin-age is failing.
+    if coin_age_fail || !hashes.is_empty() {
+        state.mark_invalid_clear_attempt(coin);
+        return Ok(());
+    }
+    Ok(())
+}
+
+async fn clear_invalid_blocks_via_rpc(
+    state: &AppState,
+    coin: CoinId,
+    hashes: &[String],
+) -> AppResult<String> {
+    if hashes.is_empty() {
+        return Err(AppError::other("No invalid block hashes to clear"));
+    }
+    let client = state.rpc_client(coin).await?;
+    for hash in hashes {
+        client
+            .call_no_result("reconsiderblock", json!([hash]))
+            .await?;
+    }
+    let primary = &hashes[0];
+    let extra = hashes.len().saturating_sub(1);
+    Ok(if extra == 0 {
+        format!(
+            "Cleared invalid flag on block {primary}. Sync should resume once the chain can validate the next block."
+        )
+    } else {
+        format!(
+            "Cleared invalid flags on {primary} and {extra} other block(s). Sync should resume once validation succeeds."
+        )
+    })
 }
 
 async fn clear_invalid_block_via_rpc(
@@ -893,14 +1091,7 @@ async fn clear_invalid_block_via_rpc(
     coin: CoinId,
     hash: &str,
 ) -> AppResult<String> {
-    state
-        .rpc_client(coin)
-        .await?
-        .call_no_result("reconsiderblock", json!([hash]))
-        .await?;
-    Ok(format!(
-        "Cleared invalid flag on block {hash}. Sync should resume shortly."
-    ))
+    clear_invalid_blocks_via_rpc(state, coin, &[hash.to_string()]).await
 }
 
 #[tauri::command]
@@ -910,11 +1101,11 @@ pub async fn node_retry(
 ) -> AppResult<()> {
     let coin = parse_coin_id(&coin)?;
     let cfg = state.config_fresh(coin).await?;
-    let datadir = chain_datadir(coin, &cfg);
-    let lines = tail_debug_log(&datadir, 120).await.unwrap_or_default();
-    if let Some(hash) = detect_invalid_block_stall(&lines) {
-        clear_invalid_block_via_rpc(state.inner(), coin, &hash).await?;
-        return Ok(());
+    if heal_invalid_blocks_silently(state.inner(), coin, &cfg).await.is_ok() {
+        let lines = tail_coin_debug_log(coin, &cfg, 120).await.unwrap_or_default();
+        if detect_invalid_block_hashes(&lines).is_empty() {
+            return Ok(());
+        }
     }
     restart_daemon_full_cycle(state.inner(), coin).await?;
     Ok(())
@@ -929,10 +1120,13 @@ pub async fn node_clear_invalid_block(
     let cfg = state.config_fresh(coin).await?;
     let datadir = chain_datadir(coin, &cfg);
     let lines = tail_debug_log(&datadir, 120).await.unwrap_or_default();
-    let hash = detect_invalid_block_stall(&lines).ok_or_else(|| {
-        AppError::other("No invalid-block sync stall detected in debug.log")
-    })?;
-    clear_invalid_block_via_rpc(state.inner(), coin, &hash).await
+    let hashes = detect_invalid_block_hashes(&lines);
+    if hashes.is_empty() {
+        return Err(AppError::other(
+            "No invalid-block sync stall detected in debug.log",
+        ));
+    }
+    clear_invalid_blocks_via_rpc(state.inner(), coin, &hashes).await
 }
 
 #[tauri::command]
@@ -2679,6 +2873,7 @@ pub(crate) async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &
     }
 
     if rpc_reachable(coin, cfg).await {
+        let _ = heal_invalid_blocks_silently(state, coin, cfg).await;
         state.set_daemon_phase(coin, "connected");
         return;
     }
@@ -3157,6 +3352,29 @@ pub struct DiagnosticBundle {
     pub daemon_runtime: String,
     pub daemon_path: Option<String>,
     pub log_tail: Vec<String>,
+}
+
+/// System chime when Web Audio is blocked (common in macOS WKWebView after async RPC).
+#[tauri::command]
+pub fn play_block_chime() -> AppResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        const SOUND: &str = "/System/Library/Sounds/Glass.aiff";
+        if Path::new(SOUND).is_file() {
+            std::process::Command::new("/usr/bin/afplay")
+                .arg(SOUND)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| AppError::other(format!("afplay failed: {e}")))?;
+            return Ok(());
+        }
+        return Err(AppError::other("system chime file missing"));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(AppError::other("system chime unavailable on this platform"))
+    }
 }
 
 #[tauri::command]

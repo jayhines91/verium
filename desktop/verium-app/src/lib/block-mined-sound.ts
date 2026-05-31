@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import {
   getSharedAudioContext,
   unlockSharedWebAudio,
@@ -10,13 +11,21 @@ export async function unlockBlockMinedAudio(): Promise<void> {
   await unlockSharedWebAudio();
 }
 
-export async function playBlockMinedSound(): Promise<void> {
+async function playNativeBlockChime(): Promise<void> {
+  try {
+    await invoke("play_block_chime");
+  } catch {
+    // Not macOS or afplay unavailable
+  }
+}
+
+async function playBlockMinedWebAudio(): Promise<boolean> {
   const ctx = getSharedAudioContext();
-  if (!ctx) return;
+  if (!ctx) return false;
 
   try {
     await unlockSharedWebAudio();
-    if (ctx.state !== "running") return;
+    if (ctx.state !== "running") return false;
 
     const now = ctx.currentTime;
     const notes = [523.25, 659.25, 783.99]; // C5 · E5 · G5
@@ -33,12 +42,18 @@ export async function playBlockMinedSound(): Promise<void> {
       const peak = 0.18 - i * 0.03;
       gain.gain.setValueAtTime(0.0001, start);
       gain.gain.exponentialRampToValueAtTime(Math.max(peak, 0.06), start + 0.025);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.42);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.45);
 
       osc.start(start);
       osc.stop(start + 0.45);
     }
+    return true;
   } catch {
-    // Ignore playback failures (muted, policy, etc.)
+    return false;
   }
+}
+
+export async function playBlockMinedSound(): Promise<void> {
+  if (await playBlockMinedWebAudio()) return;
+  await playNativeBlockChime();
 }

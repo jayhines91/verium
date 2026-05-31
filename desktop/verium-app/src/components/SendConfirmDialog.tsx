@@ -11,6 +11,7 @@ import {
 import { cn, formatNumber } from "@/lib/utils";
 
 const CONFIRM_DELAY_SEC = 3;
+const FIRST_SEND_CONFIRM_DELAY_SEC = 8;
 
 export interface SendConfirmRecipient {
   address: string;
@@ -25,6 +26,8 @@ interface SendConfirmDialogProps {
   feeRatePerKb: number;
   subtractFeeFromAmount: boolean;
   confirming?: boolean;
+  /** Longer countdown when sending to a new address (spending controls). */
+  extraConfirmDelay?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -36,24 +39,28 @@ export function SendConfirmDialog({
   feeRatePerKb,
   subtractFeeFromAmount,
   confirming = false,
+  extraConfirmDelay = false,
   onConfirm,
   onCancel,
 }: SendConfirmDialogProps) {
-  const [secDelay, setSecDelay] = useState(CONFIRM_DELAY_SEC);
+  const delaySec = extraConfirmDelay
+    ? FIRST_SEND_CONFIRM_DELAY_SEC
+    : CONFIRM_DELAY_SEC;
+  const [secDelay, setSecDelay] = useState(delaySec);
 
   useEffect(() => {
     if (!open) {
-      setSecDelay(CONFIRM_DELAY_SEC);
+      setSecDelay(delaySec);
       return;
     }
 
-    setSecDelay(CONFIRM_DELAY_SEC);
+    setSecDelay(delaySec);
     const timer = window.setInterval(() => {
       setSecDelay((prev) => (prev <= 1 ? 0 : prev - 1));
     }, 1_000);
 
     return () => window.clearInterval(timer);
-  }, [open]);
+  }, [open, delaySec]);
 
   useEffect(() => {
     if (!open) return;
@@ -108,6 +115,12 @@ export function SendConfirmDialog({
               <p className="mt-1 text-xs text-fg-muted">
                 Please, review your transaction.
               </p>
+              {extraConfirmDelay && (
+                <p className="mt-2 text-xs text-warning">
+                  First send to this address — extra review time before confirm
+                  is enabled.
+                </p>
+              )}
             </div>
 
             {!multiple ? (

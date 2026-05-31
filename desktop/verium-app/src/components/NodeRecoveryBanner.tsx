@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/Button";
 import { BootstrapProgressPanel } from "@/components/BootstrapProgressPanel";
 import { DaemonConnectingBanner } from "@/components/DaemonConnectingBanner";
 import { coinQueryKey } from "@/lib/coin/profile";
+import { useDashboardActivity } from "@/hooks/useDashboardActivity";
 import { useActiveCoin } from "@/lib/coin/context";
 import { getCoinProfile } from "@/lib/coin/profile";
 import { isBinaryUnavailableError } from "@/lib/daemon-connecting";
+import { showDashboardActivityBanner } from "@/lib/node/dashboard-activity";
 import { bootstrapCanCancel } from "@/lib/bootstrap-progress";
 import { useBootstrapProgress } from "@/hooks/useBootstrapProgress";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
@@ -29,6 +31,7 @@ export function NodeRecoveryBanner() {
   const profile = getCoinProfile(coin);
   const queryClient = useQueryClient();
   const { data, isConnecting } = useNodeStatus(coin);
+  const { activity } = useDashboardActivity(coin);
 
   const reindex = useMutation({
     mutationFn: () => tauriRepairChain(coin, "reindex"),
@@ -90,6 +93,10 @@ export function NodeRecoveryBanner() {
 
   const state = nodeStateFromStatus(data);
   const recoveryHint = recoveryHintFromStatus(data);
+
+  if (showDashboardActivityBanner(activity)) {
+    return null;
+  }
 
   if (isConnecting && !data?.chain_corrupt && !data?.error) {
     return <DaemonConnectingBanner coin={coin} status={data} />;

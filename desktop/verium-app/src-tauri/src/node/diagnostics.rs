@@ -69,6 +69,13 @@ const SYNC_STALL_MARKERS: &[&str] = &[
 
 const INVALID_BLOCK_STALL_MARKER: &str = "is marked invalid";
 
+/// Vericoin PoS sync can mark blocks invalid when the tx index lags the chain tip.
+const TXINDEX_POS_STALL_MARKERS: &[&str] = &[
+    "tx missing in tx index",
+    "unable to get coin age for coinstake",
+    "Syncing txindex with block chain",
+];
+
 const CORRUPTION_MAX_AGE_SECS: i64 = 20 * 60;
 const NODE_STARTING_MAX_AGE_SECS: i64 = 180;
 
@@ -111,9 +118,101 @@ fn extract_block_hash_from_invalid_line(line: &str) -> Option<String> {
     }
 }
 
-/// Detect sync stuck because a main-chain block was incorrectly marked invalid in
-/// the local block index (peers disconnect when relaying that header).
-pub fn detect_invalid_block_stall(lines: &[String]) -> Option<String> {
+/// Latest `Syncing txindex with block chain from height N` line in debug.log.
+pub fn parse_txindex_sync_height(lines: &[String]) -> Option<u64> {
+    parse_txindex_log_height(lines, "Syncing txindex with block chain from height ")
+}
+
+/// `txindex is enabled at height N` — index finished catching up to the chain tip.
+pub fn parse_txindex_enabled_height(lines: &[String]) -> Option<u64> {
+    parse_txindex_log_height(lines, "txindex is enabled at height ")
+}
+
+fn parse_txindex_log_height(lines: &[String], needle: &str) -> Option<u64> {
+    let now = Utc::now();
+    for line in lines.iter().rev().take(60) {
+        let Some(idx) = line.find(needle) else {
+            continue;
+        };
+        if let Some(ts) = parse_log_timestamp(line) {
+            let age = now.signed_duration_since(ts).num_seconds();
+            if age > CORRUPTION_MAX_AGE_SECS {
+                continue;
+            }
+        }
+        let rest = &line[idx + needle.len()..];
+        let num = rest.split_whitespace().next()?;
+        return num.parse().ok();
+    }
+    None
+}
+
+/// Best txindex position for UI/heal: enabled height wins over in-progress sync height.
+pub fn effective_txindex_height(lines: &[String]) -> Option<u64> {
+    parse_txindex_enabled_height(lines).or_else(|| parse_txindex_sync_height(lines))
+}
+
+/// Txindex background thread finished (see `txindex thread exit` / `txindex is enabled`).
+pub fn detect_txindex_complete(lines: &[String]) -> bool {
+    let now = Utc::now();
+    for line in lines.iter().rev().take(40) {
+        if !line.contains("txindex thread exit") && !line.contains("txindex is enabled at height") {
+            continue;
+        }
+        if let Some(ts) = parse_log_timestamp(line) {
+            let age = now.signed_duration_since(ts).num_seconds();
+            if age > CORRUPTION_MAX_AGE_SECS {
+                continue;
+            }
+        }
+        return true;
+    }
+    false
+}
+
+/// Recent ConnectTip / GetCoinAge failures (txindex not ready for PoS blocks).
+pub fn detect_recent_coin_age_failure(lines: &[String]) -> bool {
+    let now = Utc::now();
+    for line in lines.iter().rev().take(40) {
+        if !line.contains("unable to get coin age for coinstake")
+            && !line.contains("tx missing in tx index in GetCoinAge")
+        {
+            continue;
+        }
+        if let Some(ts) = parse_log_timestamp(line) {
+            let age = now.signed_duration_since(ts).num_seconds();
+            if age > 120 {
+                continue;
+            }
+        }
+        return true;
+    }
+    false
+}
+
+/// Recent log lines suggest PoS validation failed because the tx index is behind the chain.
+pub fn detect_txindex_pos_stall(lines: &[String]) -> bool {
+    if detect_txindex_complete(lines) {
+        return false;
+    }
+    let now = Utc::now();
+    for line in lines.iter().rev().take(80) {
+        if !TXINDEX_POS_STALL_MARKERS.iter().any(|m| line.contains(m)) {
+            continue;
+        }
+        if let Some(ts) = parse_log_timestamp(line) {
+            let age = now.signed_duration_since(ts).num_seconds();
+            if age > CORRUPTION_MAX_AGE_SECS {
+                continue;
+            }
+        }
+        return true;
+    }
+    false
+}
+
+/// All block hashes recently flagged invalid in debug.log (most frequent first).
+pub fn detect_invalid_block_hashes(lines: &[String]) -> Vec<String> {
     let now = Utc::now();
     let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
     for line in lines.iter().rev().take(80) {
@@ -130,10 +229,15 @@ pub fn detect_invalid_block_stall(lines: &[String]) -> Option<String> {
             *counts.entry(hash).or_insert(0) += 1;
         }
     }
-    counts
-        .into_iter()
-        .max_by_key(|(_, count)| *count)
-        .map(|(hash, _)| hash)
+    let mut ordered: Vec<_> = counts.into_iter().collect();
+    ordered.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    ordered.into_iter().map(|(hash, _)| hash).collect()
+}
+
+/// Detect sync stuck because a main-chain block was incorrectly marked invalid in
+/// the local block index (peers disconnect when relaying that header).
+pub fn detect_invalid_block_stall(lines: &[String]) -> Option<String> {
+    detect_invalid_block_hashes(lines).into_iter().next()
 }
 
 pub fn detect_chain_corruption(lines: &[String]) -> Option<String> {
@@ -346,6 +450,37 @@ mod tests {
 
     fn recent_ts() -> String {
         format!("{}Z", Utc::now().format("%Y-%m-%dT%H:%M:%S"))
+    }
+
+    #[test]
+    fn parses_txindex_sync_height() {
+        let lines = vec![format!(
+            "{} Syncing txindex with block chain from height 2262075",
+            recent_ts()
+        )];
+        assert_eq!(parse_txindex_sync_height(&lines), Some(2_262_075));
+    }
+
+    #[test]
+    fn detects_txindex_pos_stall() {
+        let lines = vec![format!(
+            "{} ERROR: ConnectTip: ConnectBlock failed, unable to get coin age for coinstake",
+            recent_ts()
+        )];
+        assert!(detect_txindex_pos_stall(&lines));
+    }
+
+    #[test]
+    fn txindex_complete_clears_stall_and_uses_enabled_height() {
+        let ts = recent_ts();
+        let lines = vec![
+            format!("{ts} Syncing txindex with block chain from height 6971503"),
+            format!("{ts} txindex is enabled at height 6974778"),
+            format!("{ts} txindex thread exit"),
+        ];
+        assert!(detect_txindex_complete(&lines));
+        assert!(!detect_txindex_pos_stall(&lines));
+        assert_eq!(effective_txindex_height(&lines), Some(6_974_778));
     }
 
     #[test]

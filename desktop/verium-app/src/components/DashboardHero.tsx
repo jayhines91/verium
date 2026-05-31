@@ -1,9 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Coins, Cpu, Users, Wallet } from "lucide-react";
+import { Coins, Cpu, Loader2, Users, Wallet } from "lucide-react";
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
-import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { useDashboardActivity } from "@/hooks/useDashboardActivity";
+import {
+  heroStatusPillLabel,
+  heroStatusPillShowsPulse,
+} from "@/lib/node/dashboard-activity";
 import {
   rpcGetBlockchainInfo,
   rpcGetMinerState,
@@ -16,9 +20,7 @@ import { formatCoinAmount } from "@/lib/units";
 import { fetchExplorerStats } from "@/lib/explorer-api";
 import { useExplorerQueriesEnabled } from "@/lib/network-mode";
 import {
-  buildNetworkStats,
   networkHashToKhm,
-  networkSharePercent,
   resolveBlockTimeMinutes,
 } from "@/lib/mining-revenue";
 import {
@@ -37,9 +39,11 @@ import { cn, formatBlockAge, formatNumber } from "@/lib/utils";
 function StatusPill({
   children,
   tone = "neutral",
+  loading = false,
 }: {
   children: ReactNode;
   tone?: "neutral" | "success" | "accent";
+  loading?: boolean;
 }) {
   return (
     <span
@@ -50,8 +54,46 @@ function StatusPill({
         tone === "neutral" && "bg-bg-subtle text-fg-muted",
       )}
     >
+      {loading && (
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />
+      )}
       {children}
     </span>
+  );
+}
+
+function HeroBlockHeight({
+  localBlocks,
+  activityLoading,
+  connected,
+}: {
+  localBlocks?: number;
+  activityLoading: boolean;
+  connected: boolean;
+}) {
+  const showPlaceholder = activityLoading && localBlocks == null;
+  return (
+    <>
+      <div
+        className={cn(
+          "mt-1 text-4xl font-bold tabular-nums tracking-tight",
+          showPlaceholder ? "text-fg-muted" : "text-fg",
+        )}
+      >
+        {showPlaceholder ? (
+          <span className="inline-flex items-center gap-2">
+            <Loader2
+              className="h-9 w-9 animate-spin text-accent/80"
+              aria-hidden
+            />
+          </span>
+        ) : connected && localBlocks != null ? (
+          formatNumber(localBlocks)
+        ) : (
+          "—"
+        )}
+      </div>
+    </>
   );
 }
 
@@ -101,7 +143,7 @@ function VeriumSummaryCard() {
   const coin = "verium" as const;
   const profile = getCoinProfile(coin);
   const [ageTick, setAgeTick] = useState(0);
-  const { data: status } = useDaemonStatus(coin);
+  const { data: status, activity } = useDashboardActivity(coin);
   const connected = status?.connected === true;
   const explorerEnabled = useExplorerQueriesEnabled();
 
@@ -170,8 +212,6 @@ function VeriumSummaryCard() {
   const matchesExplorer = heightDelta != null && Math.abs(heightDelta) <= 1;
 
   const localHashrate = mining.data?.hashrate ?? 0;
-  const networkStats = buildNetworkStats(explorer.data, mining.data);
-  const share = networkSharePercent(localHashrate, networkStats?.networkHash);
   const networkHashKhm =
     explorer.data?.network_hash != null
       ? networkHashToKhm(explorer.data.network_hash)
@@ -195,20 +235,17 @@ function VeriumSummaryCard() {
       ? "1 connection"
       : `${formatNumber(connections, 0)} connections`;
 
+  const pillLoading = heroStatusPillShowsPulse(activity);
+  const pillTone = synced && activity.kind === "ready" ? "success" : "accent";
+
   return (
     <div className="rounded-xl border border-border bg-bg-panel p-5 shadow-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <StatusPill tone={synced ? "success" : "neutral"}>
-          {synced && (
+        <StatusPill tone={pillTone} loading={pillLoading}>
+          {synced && activity.kind === "ready" && (
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-success" />
           )}
-          {synced
-            ? "Fully synced"
-            : phase === "offline"
-              ? "Offline"
-              : blockchain.data?.initialblockdownload
-                ? "Syncing"
-                : "Catching up"}
+          {heroStatusPillLabel(activity, synced)}
         </StatusPill>
         <StatusPill tone="neutral">
           {blockchain.data?.chain === "test" ? "Testnet" : "Mainnet"}
@@ -227,9 +264,14 @@ function VeriumSummaryCard() {
           <div className="text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">
             Latest Block
           </div>
-          <div className="mt-1 text-4xl font-bold tabular-nums tracking-tight text-fg">
-            {connected && localBlocks != null ? formatNumber(localBlocks) : "—"}
-          </div>
+          <HeroBlockHeight
+            localBlocks={localBlocks}
+            activityLoading={activity.showSpinner}
+            connected={connected}
+          />
+          {activity.kind !== "ready" && (
+            <p className="mt-1 text-xs text-fg-muted">{activity.title}</p>
+          )}
           {!synced && syncTarget != null && syncTarget > (localBlocks ?? 0) && (
             <div className="mt-1 text-xs text-fg-muted">
               of ~{formatNumber(syncTarget)} network tip
@@ -323,10 +365,6 @@ function VeriumSummaryCard() {
           label="Mempool"
           value={mempool != null ? formatNumber(mempool, 0) : "—"}
         />
-        <NetworkMetric
-          label="Hashrate share"
-          value={share != null ? `${formatNumber(share, 2)}%` : "—"}
-        />
       </div>
     </div>
   );
@@ -336,7 +374,7 @@ function VericoinSummaryCard() {
   const coin = "vericoin" as const;
   const profile = getCoinProfile(coin);
   const [ageTick, setAgeTick] = useState(0);
-  const { data: status } = useDaemonStatus(coin);
+  const { data: status, activity } = useDashboardActivity(coin);
   const connected = status?.connected === true;
   const explorerEnabled = useExplorerQueriesEnabled();
 
@@ -409,22 +447,18 @@ function VericoinSummaryCard() {
       : "—";
   const mempool = vrcMining.data?.pooledtx ?? explorer.data?.pooled_tx;
   const posDifficulty = vrcNetwork.posDifficulty ?? blockchain.data?.difficulty;
-  const blockReward = vrcNetwork.blockReward ?? explorer.data?.block_reward;
+
+  const pillLoading = heroStatusPillShowsPulse(activity);
+  const pillTone = synced && activity.kind === "ready" ? "success" : "accent";
 
   return (
     <div className="rounded-xl border border-border bg-bg-panel p-5 shadow-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <StatusPill tone={synced ? "success" : "neutral"}>
-          {synced && (
+        <StatusPill tone={pillTone} loading={pillLoading}>
+          {synced && activity.kind === "ready" && (
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-success" />
           )}
-          {synced
-            ? "Fully synced"
-            : phase === "offline"
-              ? "Offline"
-              : blockchain.data?.initialblockdownload
-                ? "Syncing"
-                : "Catching up"}
+          {heroStatusPillLabel(activity, synced)}
         </StatusPill>
         <StatusPill tone="neutral">
           {blockchain.data?.chain === "test" ? "Testnet" : "Mainnet"}
@@ -443,9 +477,14 @@ function VericoinSummaryCard() {
           <div className="text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">
             Latest Block
           </div>
-          <div className="mt-1 text-4xl font-bold tabular-nums tracking-tight text-fg">
-            {connected && localBlocks != null ? formatNumber(localBlocks) : "—"}
-          </div>
+          <HeroBlockHeight
+            localBlocks={localBlocks}
+            activityLoading={activity.showSpinner}
+            connected={connected}
+          />
+          {activity.kind !== "ready" && (
+            <p className="mt-1 text-xs text-fg-muted">{activity.title}</p>
+          )}
           {!synced && syncTarget != null && syncTarget > (localBlocks ?? 0) && (
             <div className="mt-1 text-xs text-fg-muted">
               of ~{formatNumber(syncTarget)} network tip
@@ -542,15 +581,6 @@ function VericoinSummaryCard() {
         <NetworkMetric
           label="Mempool"
           value={mempool != null ? formatNumber(mempool, 0) : "—"}
-        />
-
-        <NetworkMetric
-          label="Block reward"
-          value={
-            blockReward != null
-              ? `${formatNumber(blockReward, 4)} ${profile.symbol}`
-              : "—"
-          }
         />
       </div>
     </div>

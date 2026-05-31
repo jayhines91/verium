@@ -25,6 +25,7 @@ pub struct NodeStatus {
     pub sync_stalled: bool,
     pub sync_stall_detail: Option<String>,
     /// Block hash blocking sync because it is flagged invalid in the local index.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub invalid_block_hash: Option<String>,
     /// Authoritative lifecycle state (snake_case string).
     pub state: Option<String>,
@@ -33,6 +34,10 @@ pub struct NodeStatus {
     pub needs_bootstrap: bool,
     /// User-facing status line.
     pub user_message: Option<String>,
+    /// Vericoin txindex rebuild height from debug.log (when syncing).
+    pub txindex_sync_height: Option<u64>,
+    /// Vericoin: wallet paused P2P until txindex nears chain tip.
+    pub txindex_network_paused: bool,
 }
 
 pub fn warming_up(message: String) -> NodeStatus {
@@ -95,6 +100,8 @@ fn empty_base() -> NodeStatus {
         recovery_hint: None,
         needs_bootstrap: false,
         user_message: None,
+        txindex_sync_height: None,
+        txindex_network_paused: false,
     }
 }
 

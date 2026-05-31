@@ -57,9 +57,21 @@ pub fn list_entries(coin: CoinId) -> AppResult<Vec<AddressBookEntry>> {
 }
 
 pub fn upsert_entry(coin: CoinId, mut entry: AddressBookEntry) -> AppResult<AddressBookEntry> {
-    if entry.address.trim().is_empty() {
+    entry.address = entry.address.trim().to_string();
+    if entry.address.is_empty() {
         return Err(AppError::other("address must not be empty"));
     }
+    if entry.label.trim().is_empty() {
+        let short = if entry.address.len() > 12 {
+            format!("{}…{}", &entry.address[..6], &entry.address[entry.address.len() - 4..])
+        } else {
+            entry.address.clone()
+        };
+        entry.label = short;
+    } else {
+        entry.label = entry.label.trim().to_string();
+    }
+    entry.notes = entry.notes.trim().to_string();
     let mut file = load_file(coin)?;
     let now = chrono::Utc::now().timestamp();
     if entry.id.is_empty() {

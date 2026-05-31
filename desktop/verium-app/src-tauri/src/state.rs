@@ -33,11 +33,15 @@ struct Inner {
     pending_reindex: Mutex<HashSet<CoinId>>,
     auth_restart_attempts: Mutex<HashMap<CoinId, u32>>,
     daemon_phase: Mutex<HashMap<CoinId, String>>,
+    /// Throttle background `reconsiderblock` clears (separate from full chain repair).
+    last_invalid_clear_at: Mutex<HashMap<CoinId, Instant>>,
+    /// Vericoin: P2P paused via `setnetworkactive false` while txindex catches up.
+    txindex_network_paused: Mutex<HashSet<CoinId>>,
 }
 
 pub use crate::node::constants::{
-    AUTH_RETRY_MAX, BOOTSTRAP_LOADING_GRACE, POST_BOOTSTRAP_REINDEX_GRACE, REPAIR_BACKOFF,
-    SPAWN_COOLDOWN,
+    AUTH_RETRY_MAX, BOOTSTRAP_LOADING_GRACE, INVALID_CLEAR_COOLDOWN,
+    POST_BOOTSTRAP_REINDEX_GRACE, REPAIR_BACKOFF, SPAWN_COOLDOWN,
 };
 
 pub struct CoinRuntime {
@@ -90,8 +94,45 @@ impl AppState {
                 pending_reindex: Mutex::new(HashSet::new()),
                 auth_restart_attempts: Mutex::new(HashMap::new()),
                 daemon_phase: Mutex::new(HashMap::new()),
+                last_invalid_clear_at: Mutex::new(HashMap::new()),
+                txindex_network_paused: Mutex::new(HashSet::new()),
             }),
         })
+    }
+
+    pub fn txindex_network_paused(&self, coin: CoinId) -> bool {
+        self.inner
+            .txindex_network_paused
+            .lock()
+            .ok()
+            .map(|set| set.contains(&coin))
+            .unwrap_or(false)
+    }
+
+    pub fn set_txindex_network_paused(&self, coin: CoinId, paused: bool) {
+        let Ok(mut set) = self.inner.txindex_network_paused.lock() else {
+            return;
+        };
+        if paused {
+            set.insert(coin);
+        } else {
+            set.remove(&coin);
+        }
+    }
+
+    pub fn mark_invalid_clear_attempt(&self, coin: CoinId) {
+        if let Ok(mut map) = self.inner.last_invalid_clear_at.lock() {
+            map.insert(coin, Instant::now());
+        }
+    }
+
+    pub fn invalid_clear_backoff_active(&self, coin: CoinId) -> bool {
+        let Ok(map) = self.inner.last_invalid_clear_at.lock() else {
+            return false;
+        };
+        map.get(&coin)
+            .map(|t| t.elapsed() < INVALID_CLEAR_COOLDOWN)
+            .unwrap_or(false)
     }
 
     /// Registers a bootstrap session and returns its cooperative cancel flag.

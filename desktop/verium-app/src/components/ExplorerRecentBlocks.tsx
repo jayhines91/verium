@@ -30,10 +30,17 @@ import { subscribeBlockMined } from "@/hooks/useBlockMinedWatcher";
 import { BLOCK_AGE_TICK_MS } from "@/lib/block-tip";
 
 import { fetchExplorerBlocks, isExplorerApiEnabled } from "@/lib/explorer-api";
+import type { ExplorerBlock } from "@/lib/explorer-api";
+import {
+  blockRowFromMinedEvent,
+  mergeRecentBlocks,
+} from "@/lib/local-recent-block";
 
 import { explorerBlocksHash } from "@/lib/explorer-links";
 
-import { cn, formatBlockAge, formatNumber, formatVrm } from "@/lib/utils";
+import type { CoinId } from "@/lib/coin/profile";
+import { formatCoinAmount } from "@/lib/units";
+import { cn, formatBlockAge, formatNumber } from "@/lib/utils";
 
 interface ExplorerRecentBlocksProps {
   coin: import("@/lib/coin/profile").CoinId;
@@ -62,17 +69,17 @@ function formatDifficulty(value?: string): string {
   return n.toExponential(2);
 }
 
-function formatOutput(value?: string): string {
+function formatBlockOutput(value: string | undefined, coin: CoinId): string {
   if (!value) return "—";
 
   const n = Number(value);
 
   if (!Number.isFinite(n)) return value;
 
-  return `${formatNumber(n, 4)} VRM`;
+  return formatCoinAmount(n, coin, 4);
 }
 
-function parseOutputVrm(value?: string): number {
+function parseBlockOutput(value?: string): number {
   const n = Number(value);
 
   return Number.isFinite(n) ? n : 0;
@@ -100,6 +107,8 @@ export function ExplorerRecentBlocks({
   const [ageTick, setAgeTick] = useState(0);
 
   const [celebration, setCelebration] = useState<CelebrationState | null>(null);
+
+  const [localBlocks, setLocalBlocks] = useState<ExplorerBlock[]>([]);
 
   const dismissTimer = useRef<number | null>(null);
 
@@ -140,17 +149,27 @@ export function ExplorerRecentBlocks({
   });
 
   useEffect(() => {
+    if (coin !== "verium") return;
+
     return subscribeBlockMined((event) => {
       setCelebration({
         height: event.height,
 
         reward:
           event.amount != null && Number.isFinite(event.amount)
-            ? formatVrm(event.amount, 4)
+            ? formatCoinAmount(event.amount, "verium", 4)
             : "—",
       });
+
+      void blockRowFromMinedEvent("verium", event).then((row) => {
+        if (!row) return;
+        setLocalBlocks((prev) => {
+          const next = prev.filter((b) => b.height !== row.height);
+          return [row, ...next].slice(0, 12);
+        });
+      });
     });
-  }, []);
+  }, [coin]);
 
   useEffect(() => {
     if (!celebration) return;
@@ -178,14 +197,19 @@ export function ExplorerRecentBlocks({
 
   const loading = enabled.isLoading || blocks.isLoading;
 
-  const blockRows = blocks.data ?? [];
+  const feedLimit = isDashboard ? 10 : 10;
+  const blockRows = mergeRecentBlocks(
+    blocks.data ?? [],
+    coin === "verium" ? localBlocks : [],
+    feedLimit,
+  );
 
   const minedInFeed = blockRows.filter((block) =>
     isBlockMinedByWallet(block, miningCtx),
   );
 
   const minedRewardTotal = minedInFeed.reduce(
-    (sum, block) => sum + parseOutputVrm(block.output_total ?? block.mint),
+    (sum, block) => sum + parseBlockOutput(block.output_total ?? block.mint),
 
     0,
   );
@@ -314,8 +338,9 @@ export function ExplorerRecentBlocks({
 
                     const isFresh = isYours && isFreshMinedBlock(block.time);
 
-                    const reward = formatOutput(
+                    const reward = formatBlockOutput(
                       block.output_total ?? block.mint,
+                      coin,
                     );
 
                     return (

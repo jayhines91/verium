@@ -9,7 +9,8 @@ use crate::coin_profile::CoinId;
 use crate::commands::{
     ensure_daemon_running, start_inner_impl, startup_prepare_chain_data, wait_for_rpc,
 };
-use crate::node::constants::{STARTUP_RPC_WAIT, SUPERVISOR_TICK};
+use crate::commands::{heal_invalid_blocks_silently, rpc_reachable};
+use crate::node::constants::{INVALID_BLOCK_HEAL_TICK, STARTUP_RPC_WAIT, SUPERVISOR_TICK};
 use crate::node::state::NodeSnapshot;
 use crate::network_mode_commands;
 use crate::prefs;
@@ -122,6 +123,33 @@ pub async fn startup(app: AppHandle, state: &AppState) {
     tauri::async_runtime::spawn(async move {
         supervisor_loop(&supervisor_app, &supervisor_state).await;
     });
+
+    let heal_state = state.clone();
+    tauri::async_runtime::spawn(async move {
+        invalid_block_heal_loop(&heal_state).await;
+    });
+}
+
+/// Proactively clear invalid block flags before status polling can surface a stall banner.
+async fn invalid_block_heal_loop(state: &AppState) {
+    sleep(Duration::from_secs(8)).await;
+    loop {
+        let prefs = prefs::load().await.unwrap_or_default();
+        for coin in CoinId::all() {
+            if !prefs::coin_enabled(&prefs, *coin) {
+                continue;
+            }
+            let cfg = match state.config_fresh(*coin).await {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            if !rpc_reachable(*coin, &cfg).await {
+                continue;
+            }
+            let _ = heal_invalid_blocks_silently(state, *coin, &cfg).await;
+        }
+        sleep(INVALID_BLOCK_HEAL_TICK).await;
+    }
 }
 
 async fn supervisor_loop(app: &AppHandle, state: &AppState) {
@@ -160,6 +188,7 @@ async fn supervise_coin(_app: &AppHandle, state: &AppState, coin: CoinId) {
     }
 
     if rpc_reachable(coin, &cfg).await {
+        let _ = heal_invalid_blocks_silently(state, coin, &cfg).await;
         state.clear_auth_restart_attempts(coin);
         state.set_daemon_phase(coin, "connected");
         return;

@@ -25,6 +25,7 @@ import { invalidateWalletQueries } from "@/lib/invalidate-wallet-queries";
 import { TwoFactorPrompt } from "@/components/TwoFactorPrompt";
 import { useTwoFactorGate } from "@/hooks/useTwoFactorGate";
 import { ScheduledBackupControls } from "@/components/ScheduledBackupControls";
+import { RestoreFromPhraseForm } from "@/components/RestoreFromPhraseForm";
 
 export function WalletBackupCard() {
   const coin = useActiveCoin();
@@ -36,6 +37,7 @@ export function WalletBackupCard() {
   });
 
   const [showRestoreNote, setShowRestoreNote] = useState(false);
+  const [showPhraseRestore, setShowPhraseRestore] = useState(false);
   const [pendingRestorePath, setPendingRestorePath] = useState<string | null>(
     null,
   );
@@ -251,6 +253,27 @@ export function WalletBackupCard() {
           )}
 
           <ScheduledBackupControls />
+
+          <div className="space-y-2 border-t border-border pt-3">
+            <div className="text-sm font-medium text-fg">Restore from recovery phrase</div>
+            <p className="text-xs text-fg-muted">
+              Use your 24-word BIP39 phrase to recover an HD wallet (not the same as
+              restoring a wallet.dat file). Also available under Security → Recovery
+              phrase.
+            </p>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setShowPhraseRestore((v) => !v)}
+            >
+              {showPhraseRestore ? "Hide phrase restore" : "Restore from recovery phrase"}
+            </Button>
+            {showPhraseRestore && (
+              <div className="rounded-md border border-warning/40 bg-warning/10 p-3">
+                <RestoreFromPhraseForm />
+              </div>
+            )}
+          </div>
 
           {showRestoreNote && (
             <div className="space-y-2 rounded-md border border-border bg-bg-subtle px-3 py-3 text-xs text-fg-muted">

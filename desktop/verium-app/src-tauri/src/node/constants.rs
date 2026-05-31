@@ -18,6 +18,18 @@ pub const REINDEX_LOG_MAX_AGE: Duration = Duration::from_secs(600);
 /// Minimum interval between automatic chain repair attempts for one coin.
 pub const REPAIR_BACKOFF: Duration = Duration::from_secs(60);
 
+/// How often to retry `reconsiderblock` for invalid-block sync stalls (background only).
+pub const INVALID_CLEAR_COOLDOWN: Duration = Duration::from_secs(8);
+
+/// Background loop interval for invalid-block self-heal.
+pub const INVALID_BLOCK_HEAL_TICK: Duration = Duration::from_secs(12);
+
+/// Vericoin: pause P2P when chain blocks run this far ahead of txindex sync height.
+pub const TXINDEX_PAUSE_BLOCK_LAG: u64 = 5_000;
+
+/// Vericoin: resume P2P when txindex is within this many blocks of the chain tip.
+pub const TXINDEX_RESUME_BLOCK_LAG: u64 = 2_000;
+
 /// Supervisor polling interval.
 pub const SUPERVISOR_TICK: Duration = Duration::from_secs(30);
 

@@ -24,11 +24,13 @@ export function PasskeyGate({ children }: PasskeyGateProps) {
 
   useEffect(() => {
     if (gate.data === undefined) return;
-    setUnlocked(!gate.data);
-    if (gate.data) {
-      setPin("");
-      setError(null);
+    if (!gate.data) {
+      setUnlocked(true);
+      return;
     }
+    setUnlocked(false);
+    setPin("");
+    setError(null);
   }, [gate.data]);
 
   const tryUnlock = async () => {

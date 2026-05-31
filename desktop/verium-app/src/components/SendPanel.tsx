@@ -34,8 +34,10 @@ import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { coinSymbol, formatCoinAmount } from "@/lib/units";
 import { cn } from "@/lib/utils";
+import { listAddressBookEntries } from "@/lib/address-book";
 import {
   auditLogRecord,
+  spendingControlsCheckAllowlist,
   spendingControlsCheckSend,
   spendingControlsGet,
   spendingControlsRecordSend,
@@ -215,6 +217,7 @@ export function SendPanel({
   const [twoFaOpen, setTwoFaOpen] = useState(false);
   const [clipboardGuardError, setClipboardGuardError] = useState<string | null>(null);
   const [spendWarning, setSpendWarning] = useState<string | null>(null);
+  const [extraConfirmDelay, setExtraConfirmDelay] = useState(false);
   const [lastSend, setLastSend] = useState<SendSuccessResult | null>(null);
   const clipboardSnapshot = useRef<Map<string, string>>(new Map());
 
@@ -392,12 +395,31 @@ export function SendPanel({
     }
 
     const total = validRows.reduce((s, r) => s + parseAmount(r.amount)!, 0);
+
+    if (spendingCfg.data?.allowlist_only) {
+      const book = await listAddressBookEntries(coin);
+      const allowlist = book
+        .filter((e) => e.category === "send")
+        .map((e) => e.address);
+      for (const row of validRows) {
+        const addr = row.address.trim();
+        const ok = await spendingControlsCheckAllowlist(addr, allowlist);
+        if (!ok) {
+          setSpendWarning(
+            `Allowlist mode: add ${addr.slice(0, 12)}… to Address book (Send) first.`,
+          );
+          return;
+        }
+      }
+    }
+
     const check = await spendingControlsCheckSend(total, coin, validRows[0]!.address.trim());
     if (!check.allowed) {
       setSpendWarning(check.reason ?? "Send blocked by spending controls.");
       return;
     }
     if (check.look_alike_warning) setSpendWarning(check.look_alike_warning);
+    setExtraConfirmDelay(check.requires_extra_confirmation);
 
     const gated = await twoFactorIsGated("send", coin, total);
     if (gated) {
@@ -441,6 +463,7 @@ export function SendPanel({
         feeRatePerKb={feeRate}
         subtractFeeFromAmount={subtractFee}
         confirming={send.isPending}
+        extraConfirmDelay={extraConfirmDelay}
         onConfirm={() => send.mutate()}
         onCancel={() => {
           if (!send.isPending) setConfirmOpen(false);

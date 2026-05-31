@@ -34,10 +34,9 @@ export function useAutoLock() {
 
     const onBlur = async () => {
       const config = await autoLockGetConfig();
-      if (config.lock_on_blur) {
-        const should = await autoLockShouldLock();
-        if (should) lock.mutate();
-      }
+      if (!config.enabled || !config.lock_on_blur) return;
+      const should = await autoLockShouldLock();
+      if (should) lock.mutate();
     };
     window.addEventListener("blur", () => void onBlur());
 

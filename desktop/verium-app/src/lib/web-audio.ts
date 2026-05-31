@@ -15,8 +15,15 @@ export function getSharedAudioContext(): AudioContext | null {
 export async function resumeWebAudioContext(ctx: AudioContext): Promise<boolean> {
   try {
     if (ctx.state === "closed") return false;
-    if (ctx.state === "suspended") {
-      await ctx.resume();
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
+      if (ctx.state === "running") break;
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 50);
+      });
     }
     if (ctx.state !== "running") return false;
 
@@ -54,11 +61,21 @@ export function useWebAudioGestureUnlock(enabled: boolean): void {
       void unlockSharedWebAudio();
     };
 
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void unlockSharedWebAudio();
+      }
+    };
+
     window.addEventListener("pointerdown", onGesture, true);
     window.addEventListener("keydown", onGesture, true);
+    window.addEventListener("focus", onGesture, true);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.removeEventListener("pointerdown", onGesture, true);
       window.removeEventListener("keydown", onGesture, true);
+      window.removeEventListener("focus", onGesture, true);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [enabled]);
 }

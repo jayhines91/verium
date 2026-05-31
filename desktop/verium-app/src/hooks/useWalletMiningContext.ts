@@ -12,14 +12,14 @@ export function useWalletMiningContext() {
   const addresses = useQuery({
     queryKey: coinQueryKey(VERIUM, "listaddressgroupings"),
     queryFn: () => rpcListAddressGroupings(VERIUM),
-    refetchInterval: 60_000,
+    refetchInterval: 10_000,
     retry: 0,
   });
 
   const txs = useQuery({
     queryKey: coinQueryKey(VERIUM, "listtransactions", "wallet-mining-context"),
     queryFn: () => rpcListTransactions(VERIUM, 100, 0),
-    refetchInterval: 30_000,
+    refetchInterval: 10_000,
   });
 
   return useMemo(() => {
