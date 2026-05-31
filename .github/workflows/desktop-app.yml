@@ -339,7 +339,8 @@ jobs:
             libudev-dev \
             libxdo-dev \
             libayatana-appindicator3-dev \
-            libfuse2
+            libfuse2 \
+            xdg-utils
 
       - name: Install npm dependencies
         run: npm ci || npm install

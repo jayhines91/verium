@@ -133,7 +133,7 @@ install_wallet_deps_linux() {
   sudo apt-get update
   sudo apt-get install -y \
     libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
-    build-essential curl wget file libssl-dev libgtk-3-dev libfuse2
+    build-essential curl wget file libssl-dev libgtk-3-dev libfuse2 xdg-utils
 }
 
 install_node_rust_wsl() {

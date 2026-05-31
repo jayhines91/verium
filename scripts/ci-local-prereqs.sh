@@ -44,7 +44,7 @@ sudo apt-get update && sudo apt-get install -y \
   gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
   g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 \
   libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
-  libssl-dev libgtk-3-dev libfuse2
+  libssl-dev libgtk-3-dev libfuse2 xdg-utils
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
