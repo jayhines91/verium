@@ -376,6 +376,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: npm
+          cache-dependency-path: desktop/verium-app/package-lock.json
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -419,9 +421,6 @@ jobs:
       - name: Frontend unit tests
         run: npm test
 
-      - name: Frontend build
-        run: npm run build
-
       - name: Download Vericonomy daemon sidecar
         uses: actions/download-artifact@v4
         with:
@@ -445,7 +444,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: vericoind-sidecar-${{ matrix.target }}
-          path: src-tauri/binaries
+          path: desktop/verium-app/src-tauri/binaries
 
       - name: Mark vericoind sidecar executable
         if: runner.os != 'Windows'
@@ -453,9 +452,6 @@ jobs:
 
       - name: Assert real daemon sidecars (no build placeholders)
         run: npm run assert:sidecars
-
-      - name: Cargo check (Tauri backend)
-        run: cargo check --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
 
       - name: Backend unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
@@ -497,32 +493,24 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import hashlib, json, glob, os, datetime
-          os.chdir("artifacts")
-          files = glob.glob("*")
+          import datetime
+          import glob
+          import hashlib
+          import json
+          import os
+
           hashes = {"generated_at": datetime.datetime.utcnow().isoformat() + "Z"}
-          for f in files:
-              if f.endswith(".exe") or f.endswith(".msi"):
-                  with open(f, "rb") as fh:
-                      h = hashlib.sha256(fh.read()).hexdigest()
-                  if "setup" in f.lower() or f.endswith(".exe"):
-                      hashes["app"] = h
-          sidecar = f"../src-tauri/binaries/veriumd-${{ matrix.target }}"
-          if [ -f "$sidecar" ] || [ -f "${sidecar}.exe" ]; then
-              true
-          fi
+          if os.path.isdir("artifacts"):
+              for f in glob.glob("artifacts/*"):
+                  if os.path.isfile(f):
+                      with open(f, "rb") as fh:
+                          digest = hashlib.sha256(fh.read()).hexdigest()
+                      hashes[os.path.basename(f)] = digest
+          with open("release-hashes.json", "w", encoding="utf-8") as fh:
+              json.dump(hashes, fh, indent=2)
           PY
-          # Hash sidecar if present
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            SC="src-tauri/binaries/veriumd-${{ matrix.target }}.exe"
-          else
-            SC="src-tauri/binaries/veriumd-${{ matrix.target }}"
-          fi
-          if [ -f "$SC" ]; then
-            SIDE_HASH=$(sha256sum "$SC" | awk '{print $1}')
-            python3 -c "import json; d=json.load(open('release-hashes.json')); d['veriumd']='$SIDE_HASH'; json.dump(d, open('release-hashes.json','w'), indent=2)"
-          fi
-          cp release-hashes.json artifacts/ 2>/dev/null || cp ../release-hashes.json artifacts/ || true
+          mkdir -p artifacts
+          cp release-hashes.json artifacts/
 
       - name: Install cosign (optional signing)
         if: startsWith(github.ref, 'refs/tags/desktop-v')
