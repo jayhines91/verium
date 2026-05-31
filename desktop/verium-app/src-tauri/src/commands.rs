@@ -22,6 +22,7 @@ use crate::config::{
     promote_subdir_chain_data_for_legacy, resolve_legacy_wallet_outside_cfg,
     verium_uses_legacy_flat,
     prepare_chain_for_reindex, legacy_subdir_chain_ahead,
+    clear_stale_datadir_lock_for_spawn,
     node_conf_dir, refresh_config_paths,
     rpc_auth_diagnostics, save_app_daemon_config, is_live_wallet_destination,
     path_for_veriumd_rpc, resolve_wallet_dat_path, suggested_wallet_backup_path,
@@ -388,8 +389,19 @@ pub(crate) async fn daemon_boot_in_progress(
     false
 }
 
-/// Log-only hint for warming UX; does not block managed auto-start.
-pub(crate) async fn daemon_log_suggests_loading(coin: CoinId, cfg: &DaemonConfig) -> bool {
+/// Log-only hint for warming UX; requires a live process so stale debug.log lines
+/// cannot keep the UI in "Opening chain data" after veriumd exits.
+pub(crate) async fn daemon_log_suggests_loading(
+    state: &AppState,
+    coin: CoinId,
+    cfg: &DaemonConfig,
+) -> bool {
+    let process_up = native_daemon_image_running(coin)
+        || daemon_process_live(state, coin, cfg).await
+        || !pids_listening_on_port(cfg.rpc_port).is_empty();
+    if !process_up {
+        return false;
+    }
     let log_path = expected_debug_log_path(coin, cfg);
     if !log_recently_modified(&log_path, Duration::from_secs(90)) {
         return false;
@@ -723,7 +735,7 @@ pub async fn get_node_status(
             }
             Err(AppError::DaemonUnreachable(msg)) => {
                 if daemon_boot_in_progress(state.inner(), coin, &cfg).await
-                    || daemon_log_suggests_loading(coin, &cfg).await
+                    || daemon_log_suggests_loading(state.inner(), coin, &cfg).await
                 {
                     warming_up(format!(
                         "{} is loading the chain index. This may take several minutes.",
@@ -740,7 +752,7 @@ pub async fn get_node_status(
         },
         Err(AppError::DaemonUnreachable(msg)) => {
             if daemon_boot_in_progress(state.inner(), coin, &cfg).await
-                || daemon_log_suggests_loading(coin, &cfg).await
+                || daemon_log_suggests_loading(state.inner(), coin, &cfg).await
             {
                 warming_up(format!(
                     "{} is loading the chain index. This may take several minutes.",
@@ -2843,6 +2855,14 @@ pub fn get_explorer_logo_url(coin: String) -> AppResult<String> {
 
 /// Start the managed daemon when RPC is down.
 pub(crate) async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &DaemonConfig) {
+    let Ok(runtime) = state.runtime(coin) else {
+        return;
+    };
+    let _guard = runtime.ensure_lock.lock().await;
+    ensure_daemon_running_locked(state, coin, cfg).await;
+}
+
+async fn ensure_daemon_running_locked(state: &AppState, coin: CoinId, cfg: &DaemonConfig) {
     if state.bootstrap_session_active() {
         tracing::debug!(
             "ensure ({}): skipped while bootstrap import is running",
@@ -2992,6 +3012,13 @@ pub(crate) async fn ensure_daemon_running(state: &AppState, coin: CoinId, cfg: &
     }
 
     if detect_binary(coin).manageable {
+        if !native_daemon_image_running(coin) && !pids_listening_on_port(cfg.rpc_port).is_empty() {
+            kill_port_listeners(cfg.rpc_port);
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        if !native_daemon_image_running(coin) {
+            clear_stale_datadir_lock_for_spawn(coin, cfg);
+        }
         state.set_daemon_phase(coin, "starting");
         if let Err(e) = start_inner_impl(state, coin, false).await {
             tracing::warn!("ensure ({}): failed to start daemon: {e}", coin.as_str());

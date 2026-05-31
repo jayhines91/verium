@@ -7,7 +7,7 @@ use tokio::time::sleep;
 
 use crate::coin_profile::CoinId;
 use crate::commands::{
-    ensure_daemon_running, start_inner_impl, startup_prepare_chain_data, wait_for_rpc,
+    ensure_daemon_running, startup_prepare_chain_data, wait_for_rpc,
 };
 use crate::commands::{heal_invalid_blocks_silently, rpc_reachable};
 use crate::node::constants::{INVALID_BLOCK_HEAL_TICK, STARTUP_RPC_WAIT, SUPERVISOR_TICK};
@@ -106,13 +106,8 @@ pub async fn startup(app: AppHandle, state: &AppState) {
                     "startup ({}): daemon not reachable after {wait_secs}s — retrying spawn",
                     coin.as_str()
                 );
-                if state.config_fresh(coin).await.is_ok() {
-                    if let Err(e) = start_inner_impl(state, coin, true).await {
-                        tracing::warn!(
-                            "startup ({}): forced restart failed: {e}",
-                            coin.as_str()
-                        );
-                    }
+                if let Ok(cfg) = state.config_fresh(coin).await {
+                    ensure_daemon_running(&state, coin, &cfg).await;
                 }
             }
         }

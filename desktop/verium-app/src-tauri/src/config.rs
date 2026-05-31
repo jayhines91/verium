@@ -386,6 +386,11 @@ fn clear_datadir_stale_lock(datadir: &Path) {
     }
 }
 
+/// Remove a stale `.lock` left after a crashed node so the next spawn can open the datadir.
+pub fn clear_stale_datadir_lock_for_spawn(coin: CoinId, cfg: &DaemonConfig) {
+    clear_datadir_stale_lock(&effective_chain_datadir(coin, cfg));
+}
+
 /// Pre-unified / mis-targeted bootstrap layouts stored `blocks/` and `chainstate/`
 /// directly under the parent `-datadir` (`…/Verium/blocks`) instead of the
 /// network subfolder veriumd actually uses (`…/Verium/verium/blocks`).
@@ -496,6 +501,13 @@ pub fn legacy_subdir_chain_ahead(coin: CoinId, cfg: &DaemonConfig) -> bool {
     if sub_blocks.join("blk00000.dat").is_file()
         && sub_blk_bytes >= MIN_BOOTSTRAP_BLOCKS_BYTES
         && root_bytes + 50_000_000 < sub_blk_bytes
+    {
+        return true;
+    }
+    // Unified-era bootstrap landed under `verium/` while legacy veriumd reads the root.
+    if !root_blocks.join("blk00000.dat").is_file()
+        && sub_blocks.join("blk00000.dat").is_file()
+        && sub_blk_bytes >= MIN_BOOTSTRAP_BLOCKS_BYTES
     {
         return true;
     }
@@ -943,6 +955,7 @@ pub fn ensure_daemon_conf_complete(coin: CoinId, cfg: &mut DaemonConfig) -> AppR
         cfg.rpc_password = Some(pass);
     }
     write_node_conf_overrides(coin, &node_conf_dir(cfg), cfg, &overrides)?;
+    sync_legacy_verium_conf(coin, cfg)?;
     refresh_config_paths(coin, cfg)?;
     Ok(())
 }
@@ -1332,6 +1345,64 @@ pub fn resolve_cookie_path(coin: CoinId, cfg: &DaemonConfig) -> Option<PathBuf> 
     None
 }
 
+/// Legacy verium-only v1.x reads flat `verium.conf`, not sectioned `vericonomy.conf`.
+/// Mirror the active `[verium]` section so a restarted node picks up RPC settings.
+pub fn sync_legacy_verium_conf(coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {
+    if coin != CoinId::Verium || !verium_uses_legacy_flat(cfg) {
+        return Ok(());
+    }
+    let vericonomy = node_conf_path(coin, cfg);
+    if !vericonomy.is_file() {
+        return Ok(());
+    }
+    let section = daemon_config_section(coin, cfg);
+    let content = fs::read_to_string(&vericonomy)?;
+    let mut flat: Vec<String> = Vec::new();
+    let mut in_section = false;
+    for raw in content.lines() {
+        let line = strip_comment(raw).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .map(str::trim)
+        {
+            in_section = name == section;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+            if !key.is_empty() && !value.is_empty() {
+                flat.push(format!("{key}={value}"));
+            }
+        }
+    }
+    if flat.is_empty() {
+        return Ok(());
+    }
+    let legacy_path = node_conf_dir(cfg).join("verium.conf");
+    let joined = format!("{}\n", flat.join("\n"));
+    if legacy_path.is_file() {
+        if fs::read_to_string(&legacy_path).unwrap_or_default().trim() == joined.trim() {
+            return Ok(());
+        }
+    }
+    fs::write(&legacy_path, joined)?;
+    let _ = restrict_conf_permissions(&legacy_path);
+    tracing::info!(
+        "synced legacy verium.conf from vericonomy [{}] at {}",
+        section,
+        legacy_path.display()
+    );
+    Ok(())
+}
+
 /// One-time migration reads legacy flat `verium.conf` into `vericonomy.conf` sections.
 /// Ongoing writes go to `vericonomy.conf` only — see `migrate_legacy_verium_conf`.
 pub fn refresh_config_paths(coin: CoinId, cfg: &mut DaemonConfig) -> AppResult<()> {
@@ -1339,6 +1410,7 @@ pub fn refresh_config_paths(coin: CoinId, cfg: &mut DaemonConfig) -> AppResult<(
     migrate_conf_section(coin, cfg)?;
     let conf_dir = node_conf_dir(cfg);
     parse_node_conf_into(coin, &conf_dir, cfg)?;
+    sync_legacy_verium_conf(coin, cfg)?;
     cfg.cookie_path = resolve_cookie_path(coin, cfg);
     cfg.rpc_password_set = cfg.rpc_password.is_some();
     Ok(())
@@ -1561,6 +1633,7 @@ pub fn clear_wallet_bdb_environment(wallet_dat: &Path) -> AppResult<()> {
 #[cfg(test)]
 mod config_tests {
     use super::*;
+    use crate::coin_profile::CoinId;
 
     #[test]
     fn generate_rpc_user_has_wallet_prefix() {
@@ -1574,6 +1647,59 @@ mod config_tests {
         let pass = generate_rpc_password();
         assert!(!pass.is_empty());
         assert!(pass.len() >= 32);
+    }
+
+    #[test]
+    fn legacy_subdir_promotes_when_root_blocks_missing() {
+        let tmp = std::env::temp_dir().join(format!("legacy-promote-{}", uuid::Uuid::new_v4()));
+        let root = tmp.join("Verium");
+        let sub = root.join("verium");
+        let blocks = sub.join("blocks");
+        let chainstate = sub.join("chainstate");
+        std::fs::create_dir_all(&blocks).unwrap();
+        std::fs::create_dir_all(&chainstate).unwrap();
+        std::fs::write(blocks.join("blk00000.dat"), vec![0u8; 1024]).unwrap();
+        std::fs::write(chainstate.join("CURRENT"), b"manifest").unwrap();
+
+        let cfg = DaemonConfig {
+            datadir: root.clone(),
+            rpc_host: "127.0.0.1".into(),
+            rpc_port: 33987,
+            chain: "main".into(),
+            rpc_user: None,
+            rpc_password: None,
+            rpc_password_set: false,
+            cookie_path: None,
+        };
+        assert!(legacy_subdir_chain_ahead(CoinId::Verium, &cfg));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sync_legacy_verium_conf_writes_flat_keys() {
+        let tmp = std::env::temp_dir().join(format!("legacy-conf-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("vericonomy.conf"),
+            "[verium]\nrpcuser=testuser\nrpcpassword=testpass\nrpcport=33987\n",
+        )
+        .unwrap();
+        let cfg = DaemonConfig {
+            datadir: tmp.clone(),
+            rpc_host: "127.0.0.1".into(),
+            rpc_port: 33987,
+            chain: "main".into(),
+            rpc_user: None,
+            rpc_password: None,
+            rpc_password_set: false,
+            cookie_path: None,
+        };
+        sync_legacy_verium_conf(CoinId::Verium, &cfg).unwrap();
+        let legacy = fs::read_to_string(tmp.join("verium.conf")).unwrap();
+        assert!(legacy.contains("rpcuser=testuser"));
+        assert!(legacy.contains("rpcpassword=testpass"));
+        assert!(!legacy.contains('['));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

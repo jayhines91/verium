@@ -46,6 +46,9 @@ pub struct DaemonManager {
     _app: AppHandle,
     child: Arc<Mutex<Option<Child>>>,
     managed: Arc<Mutex<bool>>,
+    /// One resolved + staged binary path per wallet session (avoids flip-flopping between
+    /// `veriumd.exe`, `veriumd-legacy.exe`, and triple-suffixed dev sidecars).
+    spawn_binary: Arc<Mutex<Option<PathBuf>>>,
 }
 
 impl DaemonManager {
@@ -55,6 +58,7 @@ impl DaemonManager {
             _app: app,
             child: Arc::new(Mutex::new(None)),
             managed: Arc::new(Mutex::new(false)),
+            spawn_binary: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -63,28 +67,44 @@ impl DaemonManager {
     }
 
     pub async fn start(&self, cfg: &DaemonConfig, extra_args: &[&str]) -> AppResult<u32> {
-        if self.child.lock().await.is_some() {
-            tracing::debug!(
-                "{}: child process already tracked for this session",
-                self.coin.binary_base()
-            );
-            return Ok(0);
+        {
+            let mut child = self.child.lock().await;
+            if let Some(ref mut process) = *child {
+                match process.try_wait() {
+                    Ok(None) => {
+                        tracing::debug!(
+                            "{}: child process already tracked for this session",
+                            self.coin.binary_base()
+                        );
+                        return Ok(0);
+                    }
+                    Ok(Some(_)) => {
+                        *child = None;
+                        *self.managed.lock().await = false;
+                    }
+                    Err(_) => {
+                        *child = None;
+                        *self.managed.lock().await = false;
+                    }
+                }
+            }
         }
 
-        let bin = resolve_daemon_binary(self.coin)
-            .ok_or_else(|| AppError::other(binary_missing_hint(self.coin).unwrap_or_else(|| {
-                format!("could not locate {} binary", self.coin.binary_base())
-            })))?;
-        if !is_real_sidecar(&bin) {
-            return Err(AppError::other(binary_missing_hint(self.coin).unwrap_or_else(|| {
-                format!(
-                    "refusing to run build placeholder at {} — install a real {} binary",
-                    bin.display(),
-                    self.coin.binary_base()
-                )
-            })));
-        }
-        let bin = stage_sidecar_for_spawn(&bin)?;
+        let bin = {
+            let mut cache = self.spawn_binary.lock().await;
+            if let Some(path) = cache.as_ref() {
+                if path.is_file() && is_real_sidecar(path) {
+                    path.clone()
+                } else {
+                    cache.take();
+                    self.resolve_and_stage_binary(cfg).await?
+                }
+            } else {
+                let path = self.resolve_and_stage_binary(cfg).await?;
+                *cache = Some(path.clone());
+                path
+            }
+        };
         let legacy_flat = self.coin == CoinId::Verium && verium_uses_legacy_flat(&cfg);
         if legacy_flat && binary_supports_unified_chain_selector(&bin, self.coin) {
             return Err(AppError::other(format!(
@@ -98,6 +118,9 @@ impl DaemonManager {
 
         let mut spawn_cfg = cfg.clone();
         sync_cfg_rpc_credentials_from_conf(self.coin, &mut spawn_cfg)?;
+        if legacy_flat {
+            let _ = crate::config::sync_legacy_verium_conf(self.coin, &spawn_cfg);
+        }
 
         let mut std_cmd = std::process::Command::new(&bin);
         std_cmd
@@ -111,6 +134,9 @@ impl DaemonManager {
             // on the network/explorer peer list (e.g. /Vericonomy:1.0.0(alpha1)/).
             .arg(format!("-uacomment={}", DAEMON_UACOMMENT))
             .arg("-printtoconsole=0");
+        if legacy_flat {
+            std_cmd.arg("-conf=verium.conf");
+        }
         for (key, value) in sync_performance_overrides() {
             std_cmd.arg(format!("-{key}={value}"));
         }
@@ -214,6 +240,23 @@ impl DaemonManager {
     pub async fn clear_tracking(&self) {
         *self.managed.lock().await = false;
         *self.child.lock().await = None;
+    }
+
+    async fn resolve_and_stage_binary(&self, _cfg: &DaemonConfig) -> AppResult<PathBuf> {
+        let bin = resolve_daemon_binary(self.coin)
+            .ok_or_else(|| AppError::other(binary_missing_hint(self.coin).unwrap_or_else(|| {
+                format!("could not locate {} binary", self.coin.binary_base())
+            })))?;
+        if !is_real_sidecar(&bin) {
+            return Err(AppError::other(binary_missing_hint(self.coin).unwrap_or_else(|| {
+                format!(
+                    "refusing to run build placeholder at {} — install a real {} binary",
+                    bin.display(),
+                    self.coin.binary_base()
+                )
+            })));
+        }
+        stage_sidecar_for_spawn(&bin)
     }
 
     pub async fn record_pid(&self, pid: Option<u32>) {
@@ -350,6 +393,63 @@ pub async fn wait_for_native_daemon_exit(coin: CoinId, timeout: Duration) {
     }
 }
 
+#[cfg(windows)]
+fn windows_pids_with_image_prefix(prefix: &str) -> Vec<u32> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let output = match std::process::Command::new("tasklist")
+        .args(["/NH", "/FO", "TABLE"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let prefix_lower = prefix.to_ascii_lowercase();
+    let mut pids = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("INFO:") {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let Some(image) = parts.next() else { continue };
+        if !image.to_ascii_lowercase().starts_with(&prefix_lower) {
+            continue;
+        }
+        let Some(pid_str) = parts.next() else { continue };
+        if let Ok(pid) = pid_str.parse::<u32>() {
+            if pid > 0 {
+                pids.push(pid);
+            }
+        }
+    }
+    pids
+}
+
+#[cfg(windows)]
+fn windows_kill_pids(pids: &[u32]) {
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    for pid in pids {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 /// Stop stray veriumd/vericoind processes holding this coin's RPC port.
 /// Used for explicit stop/restart flows, not during auto-ensure warmup.
 pub fn free_rpc_port(coin: CoinId, cfg: &DaemonConfig) {
@@ -359,42 +459,21 @@ pub fn free_rpc_port(coin: CoinId, cfg: &DaemonConfig) {
 
 #[cfg(windows)]
 pub fn force_stop_native_daemon(coin: CoinId) {
-    use std::os::windows::process::CommandExt;
-    use std::process::Stdio;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let image = format!("{}.exe", coin.binary_base());
-    let _ = std::process::Command::new("taskkill")
-        .args(["/F", "/IM", &image])
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    let pids = windows_pids_with_image_prefix(coin.binary_base());
+    if !pids.is_empty() {
+        windows_kill_pids(&pids);
+    }
 }
 
 #[cfg(not(windows))]
 pub fn force_stop_native_daemon(_coin: CoinId) {}
 
 /// True when a native daemon process for this coin is running (any datadir).
+/// Matches `veriumd.exe`, `veriumd-legacy.exe`, `veriumd-x86_64-pc-windows-msvc.exe`, etc.
 pub fn native_daemon_image_running(coin: CoinId) -> bool {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let filter = format!("IMAGENAME eq {}.exe", coin.binary_base());
-        let output = match std::process::Command::new("tasklist")
-            .args(["/FI", &filter, "/NH"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-        {
-            Ok(o) => o,
-            Err(_) => return false,
-        };
-        if !output.status.success() {
-            return false;
-        }
-        let text = String::from_utf8_lossy(&output.stdout);
-        return text.contains(&format!("{}.exe", coin.binary_base()));
+        !windows_pids_with_image_prefix(coin.binary_base()).is_empty()
     }
     #[cfg(not(windows))]
     {
@@ -505,6 +584,12 @@ fn pick_preferred_sidecar(coin: CoinId, mut candidates: Vec<PathBuf>) -> Option<
     if candidates.is_empty() {
         return None;
     }
+    let staged = staged_sidecar_path(coin);
+    if staged.is_file() && is_real_sidecar(&staged) {
+        if coin != CoinId::Verium || !binary_supports_unified_chain_selector(&staged, coin) {
+            return Some(staged);
+        }
+    }
     // Verium mainnet: legacy flat verium-only binary (no `-verium` selector). Unified
     // vericoin/veriumd builds use a `verium/` subdir and incompatible bootstrap index.
     if coin == CoinId::Verium {
@@ -515,7 +600,21 @@ fn pick_preferred_sidecar(coin: CoinId, mut candidates: Vec<PathBuf>) -> Option<
         if legacy.is_empty() {
             return None;
         }
-        legacy.sort_by(|a, b| rank_sidecar_candidate(b, coin).cmp(&rank_sidecar_candidate(a, coin)));
+        legacy.sort_by(|a, b| {
+            let a_legacy = a
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.contains("legacy"))
+                .unwrap_or(false);
+            let b_legacy = b
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.contains("legacy"))
+                .unwrap_or(false);
+            b_legacy
+                .cmp(&a_legacy)
+                .then_with(|| rank_sidecar_candidate(b, coin).cmp(&rank_sidecar_candidate(a, coin)))
+        });
         return legacy.into_iter().next();
     }
     if let Some(path) = candidates
@@ -852,6 +951,13 @@ pub fn detect_binary(coin: CoinId) -> DaemonBinaryStatus {
     unavailable_binary_status(coin)
 }
 
+fn legacy_sidecar_acceptable(coin: CoinId, path: &Path) -> bool {
+    if coin != CoinId::Verium {
+        return true;
+    }
+    !binary_supports_unified_chain_selector(path, coin)
+}
+
 fn detect_native_binary(coin: CoinId) -> DaemonBinaryStatus {
     let name = binary_name(coin);
     let env_var = match coin {
@@ -861,7 +967,7 @@ fn detect_native_binary(coin: CoinId) -> DaemonBinaryStatus {
 
     if let Ok(p) = std::env::var(env_var) {
         let path = PathBuf::from(p);
-        if is_real_sidecar(&path) {
+        if is_real_sidecar(&path) && legacy_sidecar_acceptable(coin, &path) {
             return DaemonBinaryStatus {
                 found: true,
                 path: Some(path.display().to_string()),
@@ -878,7 +984,7 @@ fn detect_native_binary(coin: CoinId) -> DaemonBinaryStatus {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             let candidate = parent.join(&name);
-            if is_real_sidecar(&candidate) {
+            if is_real_sidecar(&candidate) && legacy_sidecar_acceptable(coin, &candidate) {
                 return DaemonBinaryStatus {
                     found: true,
                     path: Some(candidate.display().to_string()),
@@ -894,7 +1000,7 @@ fn detect_native_binary(coin: CoinId) -> DaemonBinaryStatus {
     }
 
     if let Ok(p) = which::which(&name) {
-        if is_real_sidecar(&p) {
+        if is_real_sidecar(&p) && legacy_sidecar_acceptable(coin, &p) {
             return DaemonBinaryStatus {
                 found: true,
                 path: Some(p.display().to_string()),
