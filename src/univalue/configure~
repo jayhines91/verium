@@ -16801,7 +16801,7 @@ case $build in
   ;;
 esac
 
-ac_config_files="$ac_config_files  Makefile pc/libunivalue.pc pc/libunivalue-uninstalled.pc"
+ac_config_files="$ac_config_files Makefile pc/libunivalue.pc pc/libunivalue-uninstalled.pc"
 
 
 
@@ -17916,9 +17916,8 @@ do
     "univalue-config.h") CONFIG_HEADERS="$CONFIG_HEADERS univalue-config.h" ;;
     "depfiles") CONFIG_COMMANDS="$CONFIG_COMMANDS depfiles" ;;
     "libtool") CONFIG_COMMANDS="$CONFIG_COMMANDS libtool" ;;
-    "") CONFIG_FILES="$CONFIG_FILES " ;;
-    "Makefile") CONFIG_FILES="$CONFIG_FILES Makefile" ;;
-    "pc/libunivalue.pc") CONFIG_FILES="$CONFIG_FILES pc/libunivalue.pc" ;;
+    "Makefile") CONFIG_FILES="$CONFIG_FILES Makefile" ;;
+    "pc/libunivalue.pc") CONFIG_FILES="$CONFIG_FILES pc/libunivalue.pc" ;;
     "pc/libunivalue-uninstalled.pc") CONFIG_FILES="$CONFIG_FILES pc/libunivalue-uninstalled.pc" ;;
 
   *) as_fn_error $? "invalid argument: \`$ac_config_target'" "$LINENO" 5;;
