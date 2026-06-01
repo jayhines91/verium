@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Check, ChevronDown } from "lucide-react";
 import { ALL_COINS, COIN_LOGO_URLS, COIN_PROFILES } from "@/lib/coin/profile";
 import {
@@ -13,6 +13,7 @@ import { isCoinSetupComplete } from "@/lib/setup";
 
 export function CoinSwitcher() {
   const navigate = useNavigate();
+  const location = useLocation();
   const activeCoin = useActiveCoin();
   const setActiveCoin = useSetActiveCoin();
   const enabledCoins = useEnabledCoins();
@@ -108,6 +109,18 @@ export function CoinSwitcher() {
                   setOpen(false);
                   if (!isCoinSetupComplete(coin, prefs)) {
                     navigate("/setup");
+                    return;
+                  }
+                  if (
+                    location.pathname === "/staking" &&
+                    coin === "verium"
+                  ) {
+                    navigate("/mining");
+                  } else if (
+                    location.pathname === "/mining" &&
+                    coin === "vericoin"
+                  ) {
+                    navigate("/staking");
                   }
                 }}
                 className={cn(

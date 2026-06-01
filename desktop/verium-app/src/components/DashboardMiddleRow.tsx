@@ -252,9 +252,9 @@ export function DashboardMiddleRow({ coin }: { coin: CoinId }) {
 
               value={
 
-                wallet.data
+                vrcMining.data?.stakeweight?.combined != null
 
-                  ? formatCoinAmount(wallet.data.stake ?? 0, coin, 4)
+                  ? formatNumber(vrcMining.data.stakeweight.combined, 0)
 
                   : "—"
 

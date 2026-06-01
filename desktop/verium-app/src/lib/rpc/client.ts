@@ -98,8 +98,10 @@ export interface WalletInfo {
   unlocked_until?: number;
   keypoolsize?: number;
   scanning?: false | { duration: number; progress: number };
+  /** Immature stake-mint balance (not stake weight). */
   stake?: number;
   newmint?: number;
+  /** While staking: estimated hours until a reward (`GetTimeToStake` / Qt), not seconds. */
   staketime?: number;
   unlocked_minting_only?: boolean;
 }

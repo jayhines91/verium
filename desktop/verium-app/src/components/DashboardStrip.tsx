@@ -88,8 +88,8 @@ export function DashboardStrip({ coin }: { coin: CoinId }) {
             <div className="col-span-2">
               <div className="text-xs text-fg-subtle">Stake weight</div>
               <div className="font-semibold tabular-nums">
-                {wallet.data
-                  ? formatCoinAmount(wallet.data.stake ?? 0, coin, 4)
+                {vrcMining.data?.stakeweight?.combined != null
+                  ? formatNumber(vrcMining.data.stakeweight.combined, 0)
                   : "—"}
               </div>
             </div>
@@ -172,8 +172,8 @@ export function DashboardStrip({ coin }: { coin: CoinId }) {
             <div>
               <div className="text-xs text-fg-subtle">Your weight</div>
               <div className="font-semibold tabular-nums">
-                {wallet.data
-                  ? formatCoinAmount(wallet.data.stake ?? 0, coin, 2)
+                {vrcMining.data?.stakeweight?.combined != null
+                  ? formatNumber(vrcMining.data.stakeweight.combined, 0)
                   : "—"}
               </div>
             </div>

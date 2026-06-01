@@ -566,8 +566,8 @@ function VericoinSummaryCard() {
             icon={<Coins />}
             label="Staking"
             value={
-              data.wallet.data
-                ? formatCoinAmount(data.wallet.data.stake ?? 0, coin, 4)
+              data.vrcMining.data?.stakeweight?.combined != null
+                ? formatNumber(data.vrcMining.data.stakeweight.combined, 0)
                 : "—"
             }
             sub={stakingActive ? "On" : "Off"}

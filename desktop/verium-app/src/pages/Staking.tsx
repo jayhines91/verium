@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Navigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Coins, Loader2, TrendingUp } from "lucide-react";
 import {
@@ -13,10 +14,12 @@ import { Badge } from "@/components/ui/Badge";
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { ExplorerMarketCard } from "@/components/ExplorerMarketCard";
 import { WalletUnlockGate } from "@/components/WalletUnlockGate";
+import { useActiveCoin } from "@/lib/coin/context";
 import { coinQueryKey, getCoinProfile } from "@/lib/coin/profile";
 import { fetchExplorerStats } from "@/lib/explorer-api";
 import { useExplorerQueriesEnabled } from "@/lib/network-mode";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { useWalletTransactions } from "@/hooks/useWalletTransactions";
 import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { useUserPreferences } from "@/lib/user-preferences";
 import {
@@ -37,6 +40,9 @@ import {
 } from "@/lib/rpc/client";
 import { formatCoinAmount } from "@/lib/units";
 import {
+  buildPostReadinessSummary,
+  estimateExpectedStakeReward,
+  findYoungestStakeReceive,
   formatSessionDuration,
   mergeStakingNetworkKpis,
   networkCoinsStakingPercent,
@@ -71,6 +77,7 @@ function BalanceCard({
 }
 
 export function Staking() {
+  const activeCoin = useActiveCoin();
   const queryClient = useQueryClient();
   const prefs = useUserPreferences((s) => s.prefs);
   const updatePrefs = useUserPreferences((s) => s.update);
@@ -98,6 +105,7 @@ export function Staking() {
     queryFn: () => rpcGetWalletInfo(VERICOIN),
     refetchInterval: visible ? 10_000 : false,
   });
+  const walletTxs = useWalletTransactions(VERICOIN);
   const daemonStatus = useDaemonStatus(VERICOIN);
   const explorerEnabled = useExplorerQueriesEnabled();
   const explorerStats = useQuery({
@@ -158,6 +166,21 @@ export function Staking() {
     walletStakeWeight,
     network.netStakeWeight,
   );
+  const youngestReceive = findYoungestStakeReceive(walletTxs.data ?? []);
+  const postReadiness = buildPostReadinessSummary({
+    receive: youngestReceive,
+    walletStakeWeight,
+  });
+  const rewardEstimate = estimateExpectedStakeReward({
+    stakeTimeHours: wallet.data?.staketime,
+    walletStakeWeight,
+    netStakeWeight: network.netStakeWeight,
+    stakingActive: active,
+  });
+
+  if (activeCoin !== VERICOIN) {
+    return <Navigate to="/mining" replace />;
+  }
 
   return (
     <WalletUnlockGate
@@ -188,7 +211,7 @@ export function Staking() {
             value={formatCoinAmount(unconfirmed, VERICOIN, 4)}
           />
           <BalanceCard
-            label="Staking"
+            label="Immature rewards"
             value={formatCoinAmount(stake, VERICOIN, 4)}
           />
           <BalanceCard
@@ -338,7 +361,16 @@ export function Staking() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-semibold tabular-nums">
-                {formatCoinAmount(stake, VERICOIN, 4)}
+                {walletStakeWeight != null && walletStakeWeight > 0
+                  ? formatNumber(walletStakeWeight, 0)
+                  : "—"}
+              </div>
+              <div className="mt-1 text-xs text-fg-subtle">
+                PoST coin-age units from{" "}
+                {miningInfo.data ? "getmininginfo" : "your node"}
+                {stake > 0
+                  ? ` · immature rewards ${formatCoinAmount(stake, VERICOIN, 2)}`
+                  : ""}
               </div>
               {newmint > 0 && (
                 <div className="mt-1 text-xs text-fg-subtle">
@@ -348,6 +380,44 @@ export function Staking() {
             </CardContent>
           </Card>
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>PoST readiness</CardTitle>
+            <CardDescription>
+              When your coins can stake and how PoST weight builds over time.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 text-sm md:grid-cols-3">
+            <div>
+              <div className="text-xs text-fg-subtle">Minimum coin age (8h)</div>
+              <div className="font-semibold tabular-nums">
+                {postReadiness.minAgeLabel}
+              </div>
+              <p className="mt-1 text-xs text-fg-subtle">
+                {postReadiness.minAgeDetail}
+              </p>
+            </div>
+            <div>
+              <div className="text-xs text-fg-subtle">Wallet maturity</div>
+              <div className="font-semibold tabular-nums">
+                {postReadiness.maturityLabel}
+              </div>
+              <p className="mt-1 text-xs text-fg-subtle">
+                {postReadiness.maturityDetail}
+              </p>
+            </div>
+            <div>
+              <div className="text-xs text-fg-subtle">Weight ramp</div>
+              <div className="font-semibold tabular-nums">
+                {postReadiness.weightRampLabel}
+              </div>
+              <p className="mt-1 text-xs text-fg-subtle">
+                {postReadiness.weightRampDetail}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
         {stakeShare != null && stakeShare > 0 && (
           <div className="rounded-lg border border-border bg-bg-subtle/50 px-4 py-3">
@@ -383,15 +453,28 @@ export function Staking() {
                 <div className="font-semibold text-success">Staking active</div>
               </div>
               <div>
-                <div className="text-xs text-fg-subtle">Expected stake time</div>
-                <div className="font-semibold tabular-nums">
-                  {wallet.data?.staketime != null && wallet.data.staketime > 0
-                    ? `~${formatNumber(wallet.data.staketime, 0)}s`
-                    : "—"}
+                <div className="text-xs text-fg-subtle">
+                  Est. time to stake reward
                 </div>
+                <div className="font-semibold tabular-nums">
+                  {rewardEstimate?.label ?? "—"}
+                </div>
+                {rewardEstimate ? (
+                  <p className="mt-1 text-xs text-fg-subtle">
+                    {rewardEstimate.disclaimer}
+                  </p>
+                ) : null}
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {!active && rewardEstimate && (
+          <div className="rounded-lg border border-border bg-bg-subtle/50 px-4 py-3 text-sm text-fg-muted">
+            <span className="font-medium text-fg">If you start staking: </span>
+            {rewardEstimate.label} to expected reward ({rewardEstimate.source}{" "}
+            estimate). {rewardEstimate.disclaimer}
+          </div>
         )}
 
         {immature > 0 && (

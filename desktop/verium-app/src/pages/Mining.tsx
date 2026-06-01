@@ -1,6 +1,7 @@
 import { useActiveCoin } from "@/lib/coin/context";
 import { coinQueryKey } from "@/lib/coin/profile";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Navigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock, Cpu, Globe, Target } from "lucide-react";
 import { WalletUnlockGate } from "@/components/WalletUnlockGate";
@@ -281,6 +282,10 @@ export function Mining() {
     minerBooting,
     active,
   };
+
+  if (coin !== "verium") {
+    return <Navigate to="/staking" replace />;
+  }
 
   return (
     <WalletUnlockGate
