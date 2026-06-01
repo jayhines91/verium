@@ -94,18 +94,24 @@ export function NetworkChainStats({
           value={
             typeof networkKhm === "number"
               ? formatNumber(networkKhm, 2)
-              : networkKhm ?? "—"
+              : (networkKhm ?? "—")
           }
-          unit={explorer?.network_hash != null ? "kH/m" : localHashrate != null ? "H/m" : undefined}
+          unit={
+            explorer?.network_hash != null
+              ? "kH/m"
+              : localHashrate != null
+                ? "H/m"
+                : undefined
+          }
         />
         <MiningStatTile
           icon={Cpu}
           label="Difficulty"
           value={
             explorer?.difficulty != null
-              ? formatNumber(explorer.difficulty, 4)
+              ? formatNumber(explorer.difficulty, 7)
               : blockchain?.difficulty != null
-                ? formatNumber(blockchain.difficulty, 4)
+                ? formatNumber(blockchain.difficulty, 7)
                 : "—"
           }
         />
@@ -204,9 +210,7 @@ export function NetworkChainStats({
       <MiningStatTile
         icon={Coins}
         label="Supply"
-        value={
-          staking.supply != null ? formatNumber(staking.supply, 2) : "—"
-        }
+        value={staking.supply != null ? formatNumber(staking.supply, 2) : "—"}
         unit="VRC"
       />
       <MiningStatTile

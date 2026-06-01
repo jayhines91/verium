@@ -111,7 +111,7 @@ export function ExplorerMarketCard({ coin: coinProp }: { coin?: CoinId }) {
               label="Difficulty"
               value={
                 stats.data?.difficulty !== undefined
-                  ? formatNumber(stats.data.difficulty, 6)
+                  ? formatNumber(stats.data.difficulty, 7)
                   : "—"
               }
             />
