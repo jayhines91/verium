@@ -163,9 +163,7 @@ export function ExplorerPeersPanel() {
 
   const addAllTargets = useMemo(
     () =>
-      filtered.filter((p) =>
-        peerEligibleToAdd(p, connectedAddrs, addedSet),
-      ),
+      filtered.filter((p) => peerEligibleToAdd(p, connectedAddrs, addedSet)),
     [filtered, connectedAddrs, addedSet],
   );
 
@@ -177,16 +175,6 @@ export function ExplorerPeersPanel() {
         <div className="min-w-0 flex-1">
           <CardTitle>Known network peers</CardTitle>
           <CardDescription>
-            Peers seen by the official explorer in the last 24 hours.{" "}
-            <span className="font-medium text-fg-muted">Try once</span> and{" "}
-            <span className="font-medium text-fg-muted">Add</span> dial{" "}
-            <span className="font-mono">IP:{profile.defaultP2pPort}</span> on your
-            local <span className="font-mono">{profile.binaryName}</span> (
-            <span className="font-mono">addnode</span> RPC, runtime only — not
-            written to <span className="font-mono">{profile.confFilename}</span>
-            ). Explorer reports ephemeral ports that cannot be dialed; the wallet
-            uses the chain P2P port instead. Use the copy icon for a conf line.
-            Same list as{" "}
             <ExplorerLink
               coin={coin}
               target={{ kind: "raw", url: explorerPeersHash(coin) }}
@@ -268,9 +256,9 @@ export function ExplorerPeersPanel() {
             {staleAddedNodes.length} addnode target
             {staleAddedNodes.length === 1 ? " uses" : "s use"} a non-P2P port
             (for example <span className="font-mono">:46816</span> instead of{" "}
-            <span className="font-mono">:{profile.defaultP2pPort}</span>). Restart{" "}
-            {profile.displayName} to clear them, then Add peers again from this
-            list.
+            <span className="font-mono">:{profile.defaultP2pPort}</span>).
+            Restart {profile.displayName} to clear them, then Add peers again
+            from this list.
           </div>
         )}
 
@@ -294,7 +282,8 @@ export function ExplorerPeersPanel() {
                   const addedIsConnected =
                     addedConnected.get(p.address.toLowerCase()) === true;
                   const pending =
-                    (addNode.isPending && addNode.variables?.node === p.address) ||
+                    (addNode.isPending &&
+                      addNode.variables?.node === p.address) ||
                     (addAllNodes.isPending &&
                       addAllTargets.some((t) => t.address === p.address));
                   const canAdd = peerEligibleToAdd(p, connectedAddrs, addedSet);
@@ -351,9 +340,7 @@ export function ExplorerPeersPanel() {
                           <Button
                             size="sm"
                             variant="ghost"
-                            disabled={
-                              !daemonConnected || pending || connected
-                            }
+                            disabled={!daemonConnected || pending || connected}
                             title="addnode … onetry — attempt one outbound connection, then drop from the fixed-node list"
                             onClick={() =>
                               addNode.mutate({
@@ -367,9 +354,7 @@ export function ExplorerPeersPanel() {
                           <Button
                             size="sm"
                             variant="secondary"
-                            disabled={
-                              !daemonConnected || pending || !canAdd
-                            }
+                            disabled={!daemonConnected || pending || !canAdd}
                             title="addnode … add — keep retrying this peer while the daemon runs"
                             onClick={() =>
                               addNode.mutate({

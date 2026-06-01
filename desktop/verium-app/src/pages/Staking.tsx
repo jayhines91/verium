@@ -20,6 +20,10 @@ import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { useUserPreferences } from "@/lib/user-preferences";
 import {
+  playStakeRewardSound,
+  unlockBlockMinedAudio,
+} from "@/lib/block-mined-sound";
+import {
   clearStakingStoppedByUser,
   markStakingStoppedByUser,
 } from "@/hooks/useAutoStake";
@@ -225,6 +229,20 @@ export function Staking() {
               />
               Auto-stake on open
             </label>
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-fg-muted">
+              <input
+                type="checkbox"
+                checked={prefs.play_sound_on_stake_reward === true}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  void unlockBlockMinedAudio();
+                  void updatePrefs({ play_sound_on_stake_reward: checked });
+                  if (checked) void playStakeRewardSound();
+                }}
+                className="h-3.5 w-3.5 rounded accent-accent"
+              />
+              Play chime on stake reward
+            </label>
             {(start.error || stop.error) && (
               <div className="max-w-[calc(100%-12rem)] text-xs text-danger">
                 {String(start.error ?? stop.error)}
@@ -420,10 +438,10 @@ export function Staking() {
               </div>
             </div>
             <div>
-              <div className="text-xs text-fg-subtle">Block reward</div>
+              <div className="text-xs text-fg-subtle">Network staked</div>
               <div className="font-semibold tabular-nums">
-                {network.blockReward != null
-                  ? `${formatNumber(network.blockReward, 4)} VRC`
+                {networkCoinsStakingPercent(network.netStakeWeight) != null
+                  ? `${formatNumber(networkCoinsStakingPercent(network.netStakeWeight)!, 2)}%`
                   : "—"}
               </div>
             </div>

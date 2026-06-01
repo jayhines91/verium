@@ -1,5 +1,5 @@
 import { useActiveCoin } from "@/lib/coin/context";
-import { coinQueryKey } from "@/lib/coin/profile";
+import { coinQueryKey, getCoinProfile } from "@/lib/coin/profile";
 import { useQuery } from "@tanstack/react-query";
 import {
   Card,
@@ -11,6 +11,7 @@ import {
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { YourMiningPanel } from "@/components/YourMiningPanel";
 import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
+import { miningInfoRefetchMs } from "@/lib/mining-boot";
 import { networkHashToKhm } from "@/lib/mining-revenue";
 import { rpcGetMiningInfo, rpcGetWalletInfo } from "@/lib/rpc/client";
 import { formatCoinAmount } from "@/lib/units";
@@ -30,6 +31,7 @@ interface DashboardSidebarProps {
 
 export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
   const coin = useActiveCoin();
+  const profile = getCoinProfile(coin);
   const visible = useWindowVisible();
   const wallet = useQuery({
     queryKey: coinQueryKey(coin, "getwalletinfo"),
@@ -39,7 +41,8 @@ export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
   const mining = useQuery({
     queryKey: coinQueryKey(coin, "getmininginfo"),
     queryFn: () => rpcGetMiningInfo(coin),
-    refetchInterval: visible ? 10_000 : false,
+    refetchInterval: () =>
+      visible && coin === "verium" ? miningInfoRefetchMs() : false,
   });
   const explorerEnabled = useQuery({
     queryKey: ["explorer-api-enabled"],
@@ -72,7 +75,9 @@ export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
         <CardContent className="grid grid-cols-2 gap-3 text-sm">
           <MiniStat
             label="Balance"
-            value={wallet.data ? formatCoinAmount(wallet.data.balance, coin, 4) : "—"}
+            value={
+              wallet.data ? formatCoinAmount(wallet.data.balance, coin, 4) : "—"
+            }
           />
           <MiniStat
             label="Unconfirmed"
@@ -85,14 +90,14 @@ export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
           <MiniStat
             label="Immature"
             value={
-              wallet.data ? formatCoinAmount(wallet.data.immature_balance, coin, 4) : "—"
+              wallet.data
+                ? formatCoinAmount(wallet.data.immature_balance, coin, 4)
+                : "—"
             }
           />
           <MiniStat
             label="Transactions"
-            value={
-              wallet.data ? formatNumber(wallet.data.txcount, 0) : "—"
-            }
+            value={wallet.data ? formatNumber(wallet.data.txcount, 0) : "—"}
           />
         </CardContent>
       </Card>
@@ -101,20 +106,31 @@ export function DashboardSidebar({ localHeight }: DashboardSidebarProps) {
         <Card>
           <CardHeader className="flex-row items-start justify-between pb-2">
             <CardTitle className="text-base">Market</CardTitle>
-            <ExplorerLink coin={coin} target={{ kind: "home" }} label="Explorer" />
+            <ExplorerLink
+              coin={coin}
+              target={{ kind: "home" }}
+              label="Explorer"
+            />
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-2 text-sm">
-            <MiniStat label="VRM" value={formatUsd(stats.data?.price_usd)} />
+            <MiniStat
+              label={profile.symbol}
+              value={formatUsd(stats.data?.price_usd)}
+            />
             <MiniStat
               label="24h vol"
               value={formatUsd(stats.data?.volume_24h_usd)}
             />
             <MiniStat
-              label="Reward"
+              label={coin === "vericoin" ? "Interest rate" : "Block reward"}
               value={
-                stats.data?.block_reward != null
-                  ? `${formatNumber(stats.data.block_reward, 4)} VRM`
-                  : "—"
+                coin === "vericoin"
+                  ? stats.data?.stake_interest != null
+                    ? `${formatNumber(stats.data.stake_interest, 2)}%`
+                    : "—"
+                  : stats.data?.block_reward != null
+                    ? `${formatNumber(stats.data.block_reward, 4)} ${profile.symbol}`
+                    : "—"
               }
             />
             <MiniStat

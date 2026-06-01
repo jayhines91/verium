@@ -1,8 +1,7 @@
 import { useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { coinQueryKey } from "@/lib/coin/profile";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
-import { rpcListTransactions, type TransactionItem } from "@/lib/rpc/client";
+import { useWalletTransactions } from "@/hooks/useWalletTransactions";
+import { type TransactionItem } from "@/lib/rpc/client";
 
 export interface IncomingVrmEvent {
   txid: string;
@@ -34,7 +33,6 @@ function emitIncomingVrm(batch: IncomingVrmBatch): void {
   }
 }
 
-const POLL_MS = 10_000;
 const BATCH_DEBOUNCE_MS = 800;
 const SEEN_STORAGE_KEY = "verium-notified-receive-txids";
 const MAX_SEEN_TXIDS = 2_000;
@@ -96,11 +94,7 @@ export function useIncomingVrmWatcher(): void {
   const pending = useRef<IncomingVrmEvent[]>([]);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const txs = useQuery({
-    queryKey: coinQueryKey(VERIUM, "listtransactions", "incoming-vrm-watcher"),
-    queryFn: () => rpcListTransactions(VERIUM, 200, 0),
-    refetchInterval: POLL_MS,
-    retry: 0,
+  const txs = useWalletTransactions(VERIUM, {
     enabled: status?.connected === true,
   });
 

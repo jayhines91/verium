@@ -21,7 +21,7 @@ export function AppShell() {
         <NetworkModeBanner />
         <TopBar />
         <main className="flex-1 overflow-y-auto px-8 py-6">
-          <div className="mx-auto flex max-w-7xl flex-col gap-4">
+          <div className="mx-auto flex flex-col gap-4">
             <DashboardNodeActivity coin={coin} />
             <NodeRecoveryBanner />
             <SyncStallBanner />

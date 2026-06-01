@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
+use serde_json::{json, Value};
 use tauri::AppHandle;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -22,8 +23,22 @@ use crate::error::{AppError, AppResult};
 
 /// BIP14 user-agent comment appended to the bundled daemons' P2P subversion
 /// string. Lets the network and block explorer peer lists identify nodes
-/// running this alpha build (e.g. `/Vericonomy:1.0.0(alpha1)/`).
+/// running this alpha build (e.g. `/Vericonomy:1.0.0.0(alpha1)/`).
 const DAEMON_UACOMMENT: &str = "alpha1";
+
+/// User agent string shown for wallet-managed nodes and advertised on P2P once
+/// bundled daemons are built from Vericonomy-tagged sources. Legacy CDN sidecars
+/// may still report `/Verium:1.3.5(alpha1)/` on the wire until replaced.
+pub fn wallet_p2p_subversion() -> &'static str {
+    "/Vericonomy:1.0.0.0(alpha1)/"
+}
+
+/// Replace `subversion` in a `getnetworkinfo` payload for UI and status surfaces.
+pub fn apply_wallet_p2p_subversion(network_info: &mut Value) {
+    if let Some(obj) = network_info.as_object_mut() {
+        obj.insert("subversion".into(), json!(wallet_p2p_subversion()));
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -140,7 +155,7 @@ impl DaemonManager {
             .arg(format!("-rpcbind={}", spawn_cfg.rpc_host))
             .arg("-rpcallowip=127.0.0.1")
             // Tag this build's P2P user agent so alpha nodes are identifiable
-            // on the network/explorer peer list (e.g. /Vericonomy:1.0.0(alpha1)/).
+            // on the network/explorer peer list (e.g. /Vericonomy:1.0.0.0(alpha1)/).
             .arg(format!("-uacomment={}", DAEMON_UACOMMENT))
             .arg("-printtoconsole=0");
         if legacy_flat {
@@ -195,16 +210,37 @@ impl DaemonManager {
                 }
             }
         } else {
-            if unified_chain {
-                if let Some(chain_arg) = self.coin.chain_cli_arg() {
-                    std_cmd.arg(chain_arg);
+            // Unified veriumd defaults to Verium unless `-vericoin` is set. Always
+            // pass the chain selector for Vericoin — legacy vericoind accepts it too.
+            match self.coin {
+                CoinId::Vericoin => {
+                    if binary_supports_unified_chain_selector(&bin, CoinId::Verium)
+                        && !binary_supports_unified_chain_selector(&bin, CoinId::Vericoin)
+                    {
+                        return Err(AppError::other(format!(
+                            "Refusing to start verium-only {} for Vericoin — the node would \
+                             mint Verium (VRM) addresses on the Vericoin RPC port. Build \
+                             vericoind from the Vericoin repo and run npm run fetch:vericoind.",
+                            bin.display()
+                        )));
+                    }
+                    std_cmd.arg("-vericoin");
                 }
-            } else {
-                tracing::debug!(
-                    "{}: legacy single-chain binary — omitting {}",
-                    self.coin.binary_base(),
-                    self.coin.chain_cli_arg().unwrap_or("-chain")
-                );
+                CoinId::Verium if unified_chain => {
+                    std_cmd.arg("-verium");
+                }
+                _ if unified_chain => {
+                    if let Some(chain_arg) = self.coin.chain_cli_arg() {
+                        std_cmd.arg(chain_arg);
+                    }
+                }
+                _ => {
+                    tracing::debug!(
+                        "{}: legacy single-chain binary — omitting {}",
+                        self.coin.binary_base(),
+                        self.coin.chain_cli_arg().unwrap_or("-chain")
+                    );
+                }
             }
             if spawn_cfg.chain == "test" {
                 std_cmd.arg("-testnet");

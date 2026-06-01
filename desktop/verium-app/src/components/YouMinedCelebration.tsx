@@ -1,5 +1,4 @@
-import { PartyPopper, Trophy, X } from "lucide-react";
-import { EXPLORER_LOGO_URL } from "@/lib/verium-links";
+import { Pickaxe, PartyPopper, Trophy, X } from "lucide-react";
 import { cn, formatNumber } from "@/lib/utils";
 
 /** Blocks mined within this window get extra shimmer in the feed. */
@@ -17,14 +16,17 @@ export function youMinedRowClassName(options: {
 }): string {
   const { isYours, isFresh, isTip } = options;
   if (!isYours) {
-    return isTip ? "bg-accent/10" : "odd:bg-bg-subtle/30";
+    return cn(
+      "hover:bg-bg-subtle/40",
+      isTip ? "bg-accent/8" : "odd:bg-bg-subtle/25",
+    );
   }
   return cn(
-    "you-mined-row border-l-[3px] border-l-accent",
-    !isFresh &&
-      "bg-gradient-to-r from-accent/14 via-bg-panel/40 to-transparent",
-    isFresh && "you-mined-row-fresh",
-    isTip && "ring-1 ring-inset ring-accent/20",
+    "you-mined-row border-l-[3px] border-l-success/70",
+    "bg-gradient-to-r from-success/[0.14] via-success/[0.05] to-transparent",
+    "hover:from-success/[0.18] hover:via-success/[0.07]",
+    isFresh && "you-mined-row-fresh border-l-success",
+    isTip && !isFresh && "ring-1 ring-inset ring-success/20",
   );
 }
 
@@ -38,18 +40,12 @@ export function YouMinedBadge({ fresh, className }: YouMinedBadgeProps) {
     <span
       className={cn(
         "you-mined-badge inline-flex items-center gap-1 rounded-full border px-2 py-0.5",
-        "border-accent/40 bg-gradient-to-r from-accent/20 via-bg-panel/80 to-accent/10",
-        "text-[10px] font-bold uppercase tracking-wider text-accent shadow-sm",
-        fresh && "you-mined-badge-fresh",
+        "border-success/30 bg-success/10 text-[10px] font-semibold uppercase tracking-wide text-success",
+        fresh && "you-mined-badge-fresh border-success/45 bg-success/15",
         className,
       )}
     >
-      <img
-        src={EXPLORER_LOGO_URL}
-        alt=""
-        aria-hidden
-        className="h-3.5 w-3.5 shrink-0 rounded-sm object-contain"
-      />
+      <Pickaxe className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
       You mined
     </span>
   );
@@ -68,7 +64,7 @@ export function BlockFoundBanner({
 }: BlockFoundBannerProps) {
   return (
     <div
-      className="you-mined-banner relative mx-4 mb-3 overflow-hidden rounded-xl border border-accent/35 bg-gradient-to-br from-accent/18 via-bg-panel/90 to-bg-subtle/80 px-4 py-3.5 shadow-lg shadow-accent/10"
+      className="you-mined-banner relative mx-4 mb-3 overflow-hidden rounded-xl border border-success/35 bg-gradient-to-br from-success/16 via-bg-panel/90 to-bg-subtle/80 px-4 py-3.5 shadow-lg shadow-success/10"
       role="status"
       aria-live="polite"
     >
@@ -77,23 +73,24 @@ export function BlockFoundBanner({
         aria-hidden
       />
       <div className="relative flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 ring-2 ring-accent/25">
-          <Trophy className="h-5 w-5 text-accent you-mined-trophy-bounce" />
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-success/15 ring-2 ring-success/25">
+          <Trophy className="h-5 w-5 text-success you-mined-trophy-bounce" />
         </div>
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="flex flex-wrap items-center gap-2">
-            <PartyPopper className="h-4 w-4 text-accent" aria-hidden />
+            <PartyPopper className="h-4 w-4 text-success" aria-hidden />
             <span className="text-sm font-semibold text-fg">Block found!</span>
           </div>
           <p className="mt-0.5 text-sm text-fg-muted">
             You mined{" "}
-            <span className="font-semibold tabular-nums text-accent">
+            <span className="font-semibold tabular-nums text-success">
               #{formatNumber(height)}
             </span>
             {reward !== "—" && (
               <>
                 {" "}
-                · <span className="font-medium text-fg">{reward}</span>
+                ·{" "}
+                <span className="font-medium text-success/90">{reward}</span>
               </>
             )}
           </p>

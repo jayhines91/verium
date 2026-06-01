@@ -35,7 +35,7 @@ import { useUserPreferences } from "@/lib/user-preferences";
 import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { coinSymbol, formatCoinAmount } from "@/lib/units";
 import { cn } from "@/lib/utils";
-import { listAddressBookEntries } from "@/lib/address-book";
+import { listAddressBookEntries, upsertAddressBookEntry } from "@/lib/address-book";
 import {
   auditLogRecord,
   spendingControlsCheckAllowlist,
@@ -363,6 +363,15 @@ export function SendPanel({
       setCoinControl([]);
       for (const row of result.recipients) {
         await spendingControlsRecordSend(row.amount, coin, row.address);
+        if (row.label?.trim()) {
+          await upsertAddressBookEntry(coin, {
+            id: "",
+            address: row.address,
+            label: row.label,
+            notes: "",
+            category: "send",
+          });
+        }
         await auditLogRecord(
           "send",
           `Sent ${formatCoinAmount(row.amount, coin, 8)} to ${row.address} tx ${result.txids[0] ?? ""}`,
@@ -372,6 +381,8 @@ export function SendPanel({
       queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "listtransactions") });
       queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getwalletinfo") });
       queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "listunspent") });
+      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "address-book") });
+      queryClient.invalidateQueries({ queryKey: ["spending-controls"] });
     },
     onError: () => {
       setConfirmOpen(false);
@@ -396,8 +407,6 @@ export function SendPanel({
       }
     }
 
-    const total = validRows.reduce((s, r) => s + parseAmount(r.amount)!, 0);
-
     if (spendingCfg.data?.allowlist_only) {
       const book = await listAddressBookEntries(coin);
       const allowlist = book
@@ -415,13 +424,31 @@ export function SendPanel({
       }
     }
 
-    const check = await spendingControlsCheckSend(total, coin, validRows[0]!.address.trim());
-    if (!check.allowed) {
-      setSpendWarning(check.reason ?? "Send blocked by spending controls.");
+    const total = validRows.reduce((s, r) => s + parseAmount(r.amount)!, 0);
+
+    const capCheck = await spendingControlsCheckSend(
+      total,
+      coin,
+      validRows[0]!.address.trim(),
+    );
+    if (!capCheck.allowed) {
+      setSpendWarning(capCheck.reason ?? "Send blocked by spending controls.");
       return;
     }
-    if (check.look_alike_warning) setSpendWarning(check.look_alike_warning);
-    setExtraConfirmDelay(check.requires_extra_confirmation);
+
+    let extraDelay = false;
+    let lookAlikeWarning = capCheck.look_alike_warning ?? null;
+
+    for (const row of validRows) {
+      const check = await spendingControlsCheckSend(0, coin, row.address.trim());
+      if (check.requires_extra_confirmation) extraDelay = true;
+      if (check.look_alike_warning && !lookAlikeWarning) {
+        lookAlikeWarning = check.look_alike_warning;
+      }
+    }
+
+    if (lookAlikeWarning) setSpendWarning(lookAlikeWarning);
+    setExtraConfirmDelay(extraDelay);
 
     const gated = await twoFactorIsGated("send", coin, total);
     if (gated) {
@@ -619,14 +646,7 @@ export function SendPanel({
                     }
                     className="h-10 w-36 rounded-md border border-border bg-bg-panel px-3 text-sm tabular-nums outline-none focus:border-accent"
                   />
-                  <select
-                    className="h-10 rounded-md border border-border bg-bg-panel px-2 text-sm outline-none focus:border-accent"
-                    value={symbol}
-                    disabled
-                    aria-label="Coin unit"
-                  >
-                    <option value={symbol}>{symbol}</option>
-                  </select>
+             
                   {index === 0 && (
                     <label className="flex cursor-pointer items-center gap-2 text-sm text-fg-muted">
                       <input

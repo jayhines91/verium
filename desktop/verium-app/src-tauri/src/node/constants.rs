@@ -30,6 +30,27 @@ pub const TXINDEX_PAUSE_BLOCK_LAG: u64 = 5_000;
 /// Vericoin: resume P2P when txindex is within this many blocks of the chain tip.
 pub const TXINDEX_RESUME_BLOCK_LAG: u64 = 2_000;
 
+/// Whether it is safe to turn Vericoin P2P back on after a txindex stall pause.
+pub fn vericoin_should_resume_p2p(
+    coin_age_fail: bool,
+    stall_active: bool,
+    txindex_complete: bool,
+    index_at_tip: bool,
+    block_lag: u64,
+    synced_at_tip: bool,
+) -> bool {
+    if coin_age_fail {
+        return false;
+    }
+    if txindex_complete || index_at_tip {
+        return true;
+    }
+    if block_lag != u64::MAX && block_lag <= TXINDEX_RESUME_BLOCK_LAG {
+        return true;
+    }
+    !stall_active && synced_at_tip
+}
+
 /// Supervisor polling interval.
 pub const SUPERVISOR_TICK: Duration = Duration::from_secs(30);
 
@@ -41,3 +62,44 @@ pub const RPC_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Auth mismatch auto-restart attempts before surfacing failure.
 pub const AUTH_RETRY_MAX: u32 = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vericoin_resume_when_synced_without_stall_markers() {
+        assert!(vericoin_should_resume_p2p(
+            false,
+            false,
+            false,
+            false,
+            u64::MAX,
+            true,
+        ));
+    }
+
+    #[test]
+    fn vericoin_no_resume_while_coin_age_fails() {
+        assert!(!vericoin_should_resume_p2p(
+            true,
+            false,
+            true,
+            true,
+            0,
+            true,
+        ));
+    }
+
+    #[test]
+    fn vericoin_resume_when_txindex_complete() {
+        assert!(vericoin_should_resume_p2p(
+            false,
+            true,
+            true,
+            false,
+            u64::MAX,
+            false,
+        ));
+    }
+}

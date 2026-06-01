@@ -16,9 +16,14 @@ import { useAutoStake } from "@/hooks/useAutoStake";
 import { useBlockMinedSound } from "@/hooks/useBlockMinedSound";
 import { useBlockMinedWatcher } from "@/hooks/useBlockMinedWatcher";
 import { useBlockMinedDashboardSync } from "@/hooks/useBlockMinedDashboardSync";
+import { useStakeRewardSound } from "@/hooks/useStakeRewardSound";
+import { useStakeRewardWatcher } from "@/hooks/useStakeRewardWatcher";
+import { useStakeRewardDashboardSync } from "@/hooks/useStakeRewardDashboardSync";
 import { useChainTipWatcher } from "@/hooks/useChainTipWatcher";
 import { useIncomingVrmNotifications } from "@/hooks/useIncomingVrmNotifications";
 import { useIncomingVrmWatcher } from "@/hooks/useIncomingVrmWatcher";
+import { useIncomingVrcNotifications } from "@/hooks/useIncomingVrcNotifications";
+import { useIncomingVrcWatcher } from "@/hooks/useIncomingVrcWatcher";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import { isCoinSetupComplete } from "@/lib/setup";
 import { useTheme } from "@/hooks/useTheme";
@@ -106,10 +111,16 @@ function AppHooks() {
   useBlockMinedWatcher();
   useBlockMinedDashboardSync();
   useBlockMinedSound();
+  useStakeRewardWatcher();
+  useStakeRewardDashboardSync();
+  useStakeRewardSound();
   useIncomingVrmWatcher();
   useIncomingVrmNotifications();
+  useIncomingVrcWatcher();
+  useIncomingVrcNotifications();
   useWebAudioGestureUnlock(
     prefs.play_sound_on_block_mined === true ||
+      prefs.play_sound_on_stake_reward === true ||
       prefs.notify_on_vrm_received !== false ||
       prefs.notify_on_vrc_received !== false,
   );

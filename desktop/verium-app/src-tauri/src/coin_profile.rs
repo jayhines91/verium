@@ -83,7 +83,22 @@ impl CoinId {
     pub fn chain_cli_arg(self) -> Option<&'static str> {
         match self {
             CoinId::Verium => Some("-verium"),
-            CoinId::Vericoin => Some("-chain=vericoin"),
+            CoinId::Vericoin => Some("-vericoin"),
+        }
+    }
+
+    /// True when `getblockchaininfo.chain` matches the requested coin.
+    pub fn rpc_chain_matches(self, rpc_chain: &str, cfg_chain: &str) -> bool {
+        match self {
+            CoinId::Vericoin => {
+                rpc_chain == "vericoin" || rpc_chain == "binarytest-vericoin"
+            }
+            CoinId::Verium => {
+                rpc_chain == "verium"
+                    || rpc_chain == "binarytest-verium"
+                    || rpc_chain == "main"
+                    || (cfg_chain == "main" && rpc_chain == "main")
+            }
         }
     }
 
@@ -377,4 +392,25 @@ pub fn coin_map<T: Clone>(value_fn: impl Fn(CoinId) -> T) -> HashMap<String, T> 
         .iter()
         .map(|coin| (coin.as_str().to_string(), value_fn(*coin)))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rpc_chain_match_vericoin() {
+        assert!(CoinId::Vericoin.rpc_chain_matches("vericoin", "vericoin"));
+        assert!(CoinId::Vericoin.rpc_chain_matches("binarytest-vericoin", "binarytest-vericoin"));
+        assert!(!CoinId::Vericoin.rpc_chain_matches("verium", "vericoin"));
+        assert!(!CoinId::Vericoin.rpc_chain_matches("main", "vericoin"));
+    }
+
+    #[test]
+    fn rpc_chain_match_verium() {
+        assert!(CoinId::Verium.rpc_chain_matches("verium", "main"));
+        assert!(CoinId::Verium.rpc_chain_matches("main", "main"));
+        assert!(CoinId::Verium.rpc_chain_matches("binarytest-verium", "binarytest-verium"));
+        assert!(!CoinId::Verium.rpc_chain_matches("vericoin", "main"));
+    }
 }

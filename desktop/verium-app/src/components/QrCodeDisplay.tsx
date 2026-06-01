@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { Copy, Download } from "lucide-react";
+import { Check, Copy, Download } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { buildPaymentUri } from "@/lib/security/client";
 import type { CoinId } from "@/lib/coin/profile";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { cn } from "@/lib/utils";
 
 interface QrCodeDisplayProps {
   coin: CoinId;
@@ -23,6 +25,8 @@ export function QrCodeDisplay({
   size = 200,
 }: QrCodeDisplayProps) {
   const [uri, setUri] = useState(address);
+  const { copied: uriCopied, copy, reset: resetCopyFeedback } =
+    useCopyToClipboard();
 
   useEffect(() => {
     void buildPaymentUri(
@@ -33,6 +37,10 @@ export function QrCodeDisplay({
       message,
     ).then(setUri);
   }, [coin, address, amount, label, message]);
+
+  useEffect(() => {
+    resetCopyFeedback();
+  }, [uri, resetCopyFeedback]);
 
   return (
     <div className="flex flex-col items-center gap-3">
@@ -46,10 +54,24 @@ export function QrCodeDisplay({
         <Button
           size="sm"
           variant="secondary"
-          onClick={() => void navigator.clipboard.writeText(uri)}
+          onClick={() => void copy(uri)}
+          className={cn(
+            uriCopied &&
+              "border-success/40 bg-success/10 text-success hover:bg-success/15",
+          )}
+          aria-live="polite"
         >
-          <Copy className="h-3.5 w-3.5" />
-          Copy URI
+          {uriCopied ? (
+            <>
+              <Check className="h-3.5 w-3.5" />
+              Copied!
+            </>
+          ) : (
+            <>
+              <Copy className="h-3.5 w-3.5" />
+              Copy URI
+            </>
+          )}
         </Button>
         <Button
           size="sm"

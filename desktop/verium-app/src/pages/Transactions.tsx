@@ -1,9 +1,9 @@
 import { useActiveCoin, useCoinProfile } from "@/lib/coin/context";
 import { coinQueryKey } from "@/lib/coin/profile";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useWindowVisible } from "@/hooks/useWindowVisible";
-import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { ConfirmationProgress } from "@/components/ConfirmationProgress";
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { ReceivePanel } from "@/components/ReceivePanel";
@@ -21,9 +22,23 @@ import { WalletUnlockGate } from "@/components/WalletUnlockGate";
 import {
   fetchExplorerTransactions,
   isExplorerApiEnabled,
+  type ExplorerTransaction,
 } from "@/lib/explorer-api";
-import { rpcListTransactions, type TransactionItem } from "@/lib/rpc/client";
+import { rpcGetWalletInfo, rpcListTransactions, type TransactionItem } from "@/lib/rpc/client";
+import {
+  listTransactionsFetchParams,
+  paginateItems,
+  paginateTransactions,
+  sortTransactionsNewestFirst,
+  TRANSACTIONS_LIST_CAP,
+  TRANSACTIONS_PAGE_SIZE,
+  transactionPageCount,
+} from "@/lib/transactions-list";
 import { formatCoinAmount } from "@/lib/units";
+import {
+  transactionCategoryLabel,
+  transactionCategoryBadgeClass,
+} from "@/lib/transaction-category";
 import { cn, formatNumber } from "@/lib/utils";
 import { consumePendingPaymentUri } from "@/lib/payment-uri-pending";
 
@@ -80,26 +95,6 @@ function TransferModeToggle({
   );
 }
 
-function categoryTone(
-  category: string,
-): "success" | "danger" | "warning" | "neutral" {
-  switch (category) {
-    case "receive":
-    case "generate":
-    case "immature":
-      return "success";
-    case "send":
-      return "danger";
-    case "stake":
-    case "stake-mint":
-      return "success";
-    case "stake-orphan":
-      return "warning";
-    default:
-      return "neutral";
-  }
-}
-
 export function Transactions() {
   const coin = useActiveCoin();
   const profile = useCoinProfile();
@@ -124,12 +119,35 @@ export function Transactions() {
     });
   }, []);
   const visible = useWindowVisible();
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    setPage(0);
+  }, [coin]);
+
+  const wallet = useQuery({
+    queryKey: coinQueryKey(coin, "getwalletinfo"),
+    queryFn: () => rpcGetWalletInfo(coin),
+    refetchInterval: visible ? 10_000 : false,
+  });
+
+  const walletTxCount = wallet.data?.txcount ?? 0;
+  const historyCapped = walletTxCount > TRANSACTIONS_LIST_CAP;
+
   const txs = useQuery({
-    queryKey: coinQueryKey(coin, "listtransactions"),
-    queryFn: () => rpcListTransactions(coin, 50, 0),
+    queryKey: coinQueryKey(coin, "listtransactions", "history", walletTxCount),
+    queryFn: async () => {
+      const { count, skip } = listTransactionsFetchParams(walletTxCount);
+      if (count <= 0) return [];
+      const rows = await rpcListTransactions(coin, count, skip);
+      return sortTransactionsNewestFirst(rows);
+    },
+    enabled: wallet.isSuccess,
     refetchInterval: visible ? 10_000 : false,
     retry: 0,
   });
+
+  const sortedTxs = txs.data ?? [];
 
   const explorerEnabled = useQuery({
     queryKey: ["explorer-api-enabled"],
@@ -149,9 +167,90 @@ export function Transactions() {
 
   const showExplorerFallback =
     explorerEnabled.data === true &&
-    (txs.isError || !txs.data || txs.data.length === 0) &&
+    (txs.isError || sortedTxs.length === 0) &&
     explorerTxs.data &&
     explorerTxs.data.length > 0;
+
+  const explorerSorted = useMemo(
+    () => [...(explorerTxs.data ?? [])].sort((a, b) => b.time - a.time),
+    [explorerTxs.data],
+  );
+
+  const activeTotalItems = showExplorerFallback
+    ? explorerSorted.length
+    : sortedTxs.length;
+  const activeTotalPages = transactionPageCount(activeTotalItems);
+  const effectivePage = Math.min(page, Math.max(0, activeTotalPages - 1));
+  const pageRows = useMemo(
+    () => paginateTransactions(sortedTxs, effectivePage),
+    [sortedTxs, effectivePage],
+  );
+  const explorerPageRows = useMemo(
+    () => paginateItems(explorerSorted, effectivePage),
+    [explorerSorted, effectivePage],
+  );
+  const rangeFrom =
+    activeTotalItems === 0 ? 0 : effectivePage * TRANSACTIONS_PAGE_SIZE + 1;
+  const rangeTo = Math.min(
+    activeTotalItems,
+    (effectivePage + 1) * TRANSACTIONS_PAGE_SIZE,
+  );
+
+  function renderPagination({
+    totalItems,
+    totalPages: pages,
+    rangeFrom: from,
+    rangeTo: to,
+    cappedNote,
+  }: {
+    totalItems: number;
+    totalPages: number;
+    rangeFrom: number;
+    rangeTo: number;
+    cappedNote?: string;
+  }) {
+    if (totalItems === 0) return null;
+    return (
+      <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-xs text-fg-muted">
+          <span>
+            Showing {formatNumber(from)}–{formatNumber(to)} of{" "}
+            {formatNumber(totalItems)}
+          </span>
+          {cappedNote ? (
+            <span className="mt-1 block text-fg-subtle">{cappedNote}</span>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={effectivePage <= 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            aria-label="Previous page"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Previous
+          </Button>
+          <span className="min-w-28 text-center text-xs tabular-nums text-fg-muted">
+            Page {effectivePage + 1} of {pages}
+          </span>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={effectivePage >= pages - 1}
+            onClick={() => setPage((p) => p + 1)}
+            aria-label="Next page"
+          >
+            Next
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <WalletUnlockGate
@@ -189,12 +288,11 @@ export function Transactions() {
         <Card>
           <CardHeader>
             <CardTitle>Recent transactions</CardTitle>
-            {showExplorerFallback && (
-              <CardDescription>
-                Wallet RPC unavailable or empty — showing recent network
-                transactions from the explorer.
-              </CardDescription>
-            )}
+            <CardDescription>
+              {showExplorerFallback
+                ? "Wallet RPC unavailable or empty — showing recent network transactions from the explorer."
+                : "Newest first."}
+            </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             <div className="max-h-[480px] overflow-auto">
@@ -245,7 +343,7 @@ export function Transactions() {
                     </tr>
                   </thead>
                   <tbody>
-                    {explorerTxs.data!.map((tx) => (
+                    {explorerPageRows.map((tx: ExplorerTransaction) => (
                       <tr
                         key={tx.txid}
                         className="border-t border-border odd:bg-bg-subtle/30"
@@ -266,6 +364,7 @@ export function Transactions() {
                         </td>
                         <td className="px-4 py-2 text-right">
                           <ExplorerLink
+                            coin={coin}
                             target={{ kind: "tx", txid: tx.txid }}
                             label="View"
                           />
@@ -329,17 +428,19 @@ export function Transactions() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(txs.data ?? []).map((tx: TransactionItem) => (
+                    {pageRows.map((tx: TransactionItem) => (
                       <tr
-                        key={`${tx.txid}-${tx.category}-${tx.address ?? ""}`}
+                        key={`${tx.txid}-${tx.category}-${tx.address ?? ""}-${tx.time}`}
                         className="border-t border-border odd:bg-bg-subtle/30"
                       >
                         <td className="px-4 py-2 text-xs text-fg-muted">
                           {new Date(tx.time * 1000).toLocaleString()}
                         </td>
                         <td className="px-4 py-2">
-                          <Badge tone={categoryTone(tx.category)}>
-                            {tx.category}
+                          <Badge
+                            className={transactionCategoryBadgeClass(tx.category)}
+                          >
+                            {transactionCategoryLabel(tx.category)}
                           </Badge>
                         </td>
                         <td className="truncate px-4 py-2 text-xs">
@@ -356,6 +457,7 @@ export function Transactions() {
                         </td>
                         <td className="px-4 py-2 text-right">
                           <ExplorerLink
+                            coin={coin}
                             target={{ kind: "tx", txid: tx.txid }}
                             label="View"
                             title={`Open tx ${tx.txid} on the explorer`}
@@ -363,7 +465,7 @@ export function Transactions() {
                         </td>
                       </tr>
                     ))}
-                    {txs.data && txs.data.length === 0 && (
+                    {!txs.isLoading && sortedTxs.length === 0 && (
                       <tr>
                         <td
                           colSpan={6}
@@ -377,6 +479,22 @@ export function Transactions() {
                 </table>
               )}
             </div>
+            {showExplorerFallback
+              ? renderPagination({
+                  totalItems: explorerSorted.length,
+                  totalPages: activeTotalPages,
+                  rangeFrom,
+                  rangeTo,
+                })
+              : renderPagination({
+                  totalItems: sortedTxs.length,
+                  totalPages: activeTotalPages,
+                  rangeFrom,
+                  rangeTo,
+                  cappedNote: historyCapped
+                    ? `Showing the ${formatNumber(TRANSACTIONS_LIST_CAP)} most recent wallet entries.`
+                    : undefined,
+                })}
           </CardContent>
         </Card>
       </div>

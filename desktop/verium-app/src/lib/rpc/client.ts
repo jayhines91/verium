@@ -30,6 +30,8 @@ export interface NodeStatus {
   invalid_block_hash?: string;
   txindex_sync_height?: number;
   txindex_network_paused?: boolean;
+  /** False when the node is not relaying blocks or transactions (VRC txindex heal). */
+  network_active?: boolean;
   state?: string;
   recovery_hint?: string;
   needs_bootstrap?: boolean;

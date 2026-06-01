@@ -18,7 +18,7 @@ import {
 import { CoinSwitcher } from "@/components/CoinSwitcher";
 import { QuitWalletButton } from "@/components/QuitWalletButton";
 import { useActiveCoin, useEnabledCoins } from "@/lib/coin/context";
-import { coinQueryKey, getCoinProfile } from "@/lib/coin/profile";
+import { coinQueryKey } from "@/lib/coin/profile";
 import { BINARYTEST_ENABLED } from "@/lib/features";
 import { useIsTestNetwork } from "@/lib/network-mode";
 import { rpcGetWalletInfo } from "@/lib/rpc/client";
@@ -92,7 +92,6 @@ const APP_VERSION =
 export function Sidebar() {
   const activeCoin = useActiveCoin();
   const enabledCoins = useEnabledCoins();
-  const profile = getCoinProfile(activeCoin);
   const isTestNetwork = useIsTestNetwork();
   const visible = useWindowVisible();
 
@@ -155,9 +154,6 @@ export function Sidebar() {
         <QuitWalletButton />
         Vericonomy Wallet v{APP_VERSION}
         <div className="mt-0.5 text-[10px] uppercase tracking-wider flex items-center gap-2">
-          <span>
-            {profile.symbol} · {profile.displayName}
-          </span>
           <NetworkBadge />
         </div>
       </div>

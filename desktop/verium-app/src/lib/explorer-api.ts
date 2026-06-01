@@ -100,10 +100,12 @@ export function fetchExplorerTransactions(
 export function fetchExplorerExtraction(
   coin: CoinId,
   limit = 20,
+  period = "month",
 ): Promise<ExplorerExtractionEntry[]> {
   return invoke<ExplorerExtractionEntry[]>("fetch_explorer_extraction", {
     coin,
     limit,
+    period,
   });
 }
 

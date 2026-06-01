@@ -25,7 +25,7 @@ export function DaemonStatusBadge() {
     queryKey: coinQueryKey(coin, "explorer-stats"),
     queryFn: () => fetchExplorerStats(coin),
     enabled: data?.connected === true && !isTestNetwork,
-    refetchInterval: visible ? 5_000 : false,
+    refetchInterval: visible ? 30_000 : false,
     retry: 0,
   });
 
@@ -62,6 +62,7 @@ export function DaemonStatusBadge() {
   }
 
   const chain = data.chain ? `${data.chain}` : "main";
+  const chainLabel = chain.charAt(0).toUpperCase() + chain.slice(1);
   const blocks = data.blocks;
   const headers = data.headers ?? blocks;
   const networkTip = explorer.data?.height;
@@ -100,7 +101,7 @@ export function DaemonStatusBadge() {
   if (phase === "syncing" || phase === "catching-up") {
     return (
       <Badge tone="warning">
-        {phase === "syncing" ? "Syncing" : "Catching up"} ({chain}) · #
+        {phase === "syncing" ? "Syncing" : "Catching up"} ({chainLabel}) · #
         {formatNumber(blocks ?? 0, 0)}
         {target != null && target > (blocks ?? 0) && (
           <> / ~#{formatNumber(target, 0)}</>
@@ -115,10 +116,5 @@ export function DaemonStatusBadge() {
     );
   }
 
-  return (
-    <Badge tone="success">
-      Connected ({chain}) - Latest Block: #
-      {blocks != null ? formatNumber(blocks, 0) : "?"}
-    </Badge>
-  );
+  return <Badge tone="success">Connected To Network ({chainLabel})</Badge>;
 }

@@ -39,6 +39,9 @@ pub struct UserPreferences {
     /// Play a chime when the wallet receives a new coinbase (block found).
     #[serde(default)]
     pub play_sound_on_block_mined: bool,
+    /// Play a chime when the wallet mints a stake reward (Vericoin).
+    #[serde(default)]
+    pub play_sound_on_stake_reward: bool,
     /// Toast + chime when incoming VRM is received while the app is open.
     #[serde(default = "default_notify_on_vrm_received")]
     pub notify_on_vrm_received: bool,
@@ -149,6 +152,7 @@ impl Default for UserPreferences {
             auto_mine_on_open: false,
             auto_stake_on_open: false,
             play_sound_on_block_mined: false,
+            play_sound_on_stake_reward: false,
             notify_on_vrm_received: default_notify_on_vrm_received(),
             notify_on_vrc_received: default_notify_on_vrc_received(),
             auto_mine_threads: default_auto_mine_threads(),
@@ -184,6 +188,7 @@ pub struct PartialUserPreferences {
     pub auto_mine_on_open: Option<bool>,
     pub auto_stake_on_open: Option<bool>,
     pub play_sound_on_block_mined: Option<bool>,
+    pub play_sound_on_stake_reward: Option<bool>,
     pub notify_on_vrm_received: Option<bool>,
     pub notify_on_vrc_received: Option<bool>,
     pub auto_mine_threads: Option<u32>,
@@ -336,6 +341,9 @@ pub fn merge(current: UserPreferences, partial: PartialUserPreferences) -> UserP
         play_sound_on_block_mined: partial
             .play_sound_on_block_mined
             .unwrap_or(current.play_sound_on_block_mined),
+        play_sound_on_stake_reward: partial
+            .play_sound_on_stake_reward
+            .unwrap_or(current.play_sound_on_stake_reward),
         notify_on_vrm_received: partial
             .notify_on_vrm_received
             .unwrap_or(current.notify_on_vrm_received),

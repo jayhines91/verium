@@ -117,7 +117,7 @@ export function Security() {
   };
 
   const saveSpending = async (patch: Partial<SpendingControlsConfig>) => {
-    const current = { ...DEFAULT_SPENDING, ...spending.data };
+    const current = await spendingControlsGet();
     await spendingControlsSave({ ...current, ...patch });
     queryClient.invalidateQueries({ queryKey: ["spending-controls"] });
   };

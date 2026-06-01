@@ -194,6 +194,17 @@ pub fn load_config_for_network(coin: CoinId, mode: NetworkMode) -> AppResult<Dae
         );
         cfg.datadir = default_config_for_target(CoinTarget::new(coin, mode)).datadir;
     }
+    let expected_port = CoinTarget::new(coin, mode).rpc_port();
+    if cfg.rpc_port != expected_port {
+        tracing::warn!(
+            "daemon config ({}): rpc port {} != expected {} for {:?} — correcting",
+            coin.as_str(),
+            cfg.rpc_port,
+            expected_port,
+            mode
+        );
+        cfg.rpc_port = expected_port;
+    }
     refresh_config_paths(coin, &mut cfg)?;
     Ok(cfg)
 }

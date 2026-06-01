@@ -38,6 +38,9 @@ pub struct NodeStatus {
     pub txindex_sync_height: Option<u64>,
     /// Vericoin: wallet paused P2P until txindex nears chain tip.
     pub txindex_network_paused: bool,
+    /// From `getnetworkinfo.networkactive` — false means the node is not relaying blocks or txs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_active: Option<bool>,
 }
 
 pub fn warming_up(message: String) -> NodeStatus {
@@ -102,6 +105,7 @@ fn empty_base() -> NodeStatus {
         user_message: None,
         txindex_sync_height: None,
         txindex_network_paused: false,
+        network_active: None,
     }
 }
 

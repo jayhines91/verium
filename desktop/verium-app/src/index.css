@@ -98,18 +98,6 @@
   }
 }
 
-@keyframes you-mined-glow {
-  0%,
-  100% {
-    box-shadow: inset 3px 0 0 var(--accent), 0 0 0 transparent;
-  }
-  50% {
-    box-shadow:
-      inset 3px 0 0 var(--accent),
-      0 0 18px color-mix(in srgb, var(--accent) 14%, transparent);
-  }
-}
-
 @keyframes you-mined-badge-sparkle {
   0%,
   100% {
@@ -161,23 +149,22 @@
 .you-mined-row.you-mined-row-fresh {
   background-image: linear-gradient(
       105deg,
-      transparent 40%,
-      color-mix(in srgb, var(--accent) 10%, transparent) 50%,
-      transparent 60%
+      transparent 38%,
+      color-mix(in srgb, var(--success) 12%, transparent) 50%,
+      transparent 62%
     ),
     linear-gradient(
       to right,
-      color-mix(in srgb, var(--accent) 14%, transparent),
-      color-mix(in srgb, var(--bg-panel) 40%, transparent),
+      color-mix(in srgb, var(--success) 18%, transparent),
+      color-mix(in srgb, var(--success) 6%, transparent),
       transparent
     );
-  background-size: 200% 100%, 100% 100%;
-  animation: you-mined-shimmer 3.5s ease-in-out infinite;
+  background-size: 220% 100%, 100% 100%;
+  animation: you-mined-shimmer 4s ease-in-out infinite;
 }
 
-.you-mined-row-fresh > td {
+.you-mined-row-fresh > td:first-child {
   position: relative;
-  animation: you-mined-glow 2.8s ease-in-out infinite;
 }
 
 .you-mined-badge-fresh {
@@ -205,14 +192,14 @@
 .you-mined-confetti::before {
   top: 12px;
   left: 18%;
-  background: var(--accent);
+  background: var(--success);
   animation: you-mined-confetti-fall 2.2s ease-out infinite;
 }
 
 .you-mined-confetti::after {
   top: 8px;
   right: 22%;
-  background: var(--border-strong);
+  background: color-mix(in srgb, var(--success) 55%, var(--warning));
   animation: you-mined-confetti-fall 2.6s ease-out 0.4s infinite;
 }
 
@@ -270,5 +257,273 @@
   .mining-glow-pulse-slow {
     animation: none;
     opacity: 0.45;
+  }
+
+  .mining-pickaxe-swing,
+  .mining-pickaxe-swing-slow,
+  .mining-ore-chips {
+    animation: none !important;
+  }
+
+  .you-mined-row.you-mined-row-fresh,
+  .you-mined-badge-fresh,
+  .you-mined-trophy-bounce,
+  .you-mined-confetti::before,
+  .you-mined-confetti::after {
+    animation: none !important;
+  }
+}
+
+/* Pickaxe swings down into ore on the rock */
+@keyframes mining-pickaxe-swing {
+  0%,
+  100% {
+    transform: rotate(-38deg);
+  }
+  38% {
+    transform: rotate(14deg);
+  }
+  48% {
+    transform: rotate(9deg);
+  }
+  58% {
+    transform: rotate(12deg);
+  }
+}
+
+.mining-pickaxe-swing {
+  animation: mining-pickaxe-swing 0.82s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  transform-origin: 23px 4px;
+}
+
+.mining-pickaxe-swing-slow {
+  animation: mining-pickaxe-swing 1.35s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  transform-origin: 23px 4px;
+}
+
+@keyframes mining-ore-chips {
+  0%,
+  32%,
+  100% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.4);
+  }
+  40% {
+    opacity: 1;
+    transform: translate(-0.5px, 0.5px) scale(1);
+  }
+  52% {
+    opacity: 0.75;
+    transform: translate(-2px, 1.5px) scale(0.85);
+  }
+  64% {
+    opacity: 0;
+    transform: translate(-3.5px, 2.5px) scale(0.5);
+  }
+}
+
+.mining-ore-chips {
+  animation: mining-ore-chips 0.82s ease-out infinite;
+  transform-origin: 12px 20px;
+}
+
+/* Wallet transaction category badges — one hue per type */
+.badge-cat-receive {
+  background: color-mix(in srgb, rgb(56 189 248) 14%, transparent);
+  color: rgb(125 211 252);
+  border-color: color-mix(in srgb, rgb(56 189 248) 35%, transparent);
+}
+
+.badge-cat-send {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: rgb(251 113 133);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+}
+
+.badge-cat-generate {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: rgb(74 222 128);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+}
+
+.badge-cat-immature {
+  background: color-mix(in srgb, rgb(251 191 36) 14%, transparent);
+  color: rgb(252 211 77);
+  border-color: color-mix(in srgb, rgb(251 191 36) 35%, transparent);
+}
+
+.badge-cat-stake {
+  background: color-mix(in srgb, rgb(167 139 250) 14%, transparent);
+  color: rgb(196 181 253);
+  border-color: color-mix(in srgb, rgb(167 139 250) 35%, transparent);
+}
+
+.badge-cat-stake-mint {
+  background: color-mix(in srgb, rgb(45 212 191) 14%, transparent);
+  color: rgb(94 234 212);
+  border-color: color-mix(in srgb, rgb(45 212 191) 35%, transparent);
+}
+
+.badge-cat-stake-orphan {
+  background: color-mix(in srgb, rgb(251 146 60) 14%, transparent);
+  color: rgb(253 186 116);
+  border-color: color-mix(in srgb, rgb(251 146 60) 35%, transparent);
+}
+
+.badge-cat-move {
+  background: color-mix(in srgb, rgb(148 163 184) 14%, transparent);
+  color: rgb(203 213 225);
+  border-color: color-mix(in srgb, rgb(148 163 184) 35%, transparent);
+}
+
+.badge-cat-orphan {
+  background: color-mix(in srgb, rgb(217 70 239) 14%, transparent);
+  color: rgb(232 121 249);
+  border-color: color-mix(in srgb, rgb(217 70 239) 35%, transparent);
+}
+
+.badge-cat-default {
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  border-color: var(--border);
+}
+
+.light .badge-cat-receive {
+  color: rgb(3 105 161);
+}
+
+.light .badge-cat-send {
+  color: var(--danger);
+}
+
+.light .badge-cat-generate {
+  color: var(--success);
+}
+
+.light .badge-cat-immature {
+  color: rgb(180 83 9);
+}
+
+.light .badge-cat-stake {
+  color: rgb(109 40 217);
+}
+
+.light .badge-cat-stake-mint {
+  color: rgb(15 118 110);
+}
+
+.light .badge-cat-stake-orphan {
+  color: rgb(194 65 12);
+}
+
+.light .badge-cat-move {
+  color: rgb(71 85 105);
+}
+
+.light .badge-cat-orphan {
+  color: rgb(162 28 175);
+}
+
+/* Live chain tip: spring numbers + recent-block row motion */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes block-number-spring {
+    0% {
+      transform: scale(1) translateY(0);
+      filter: brightness(1);
+    }
+    32% {
+      transform: scale(1.14) translateY(-3px);
+      filter: brightness(1.12);
+      color: var(--accent);
+    }
+    52% {
+      transform: scale(0.95) translateY(2px);
+    }
+    72% {
+      transform: scale(1.04) translateY(-1px);
+    }
+    100% {
+      transform: scale(1) translateY(0);
+      filter: brightness(1);
+    }
+  }
+
+  .animated-block-number {
+    animation: block-number-spring 0.6s cubic-bezier(0.34, 1.45, 0.64, 1) both;
+    transform-origin: center bottom;
+    will-change: transform;
+  }
+
+  @keyframes block-row-enter {
+    from {
+      opacity: 0;
+      transform: translateY(-28px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes block-row-nudge {
+    from {
+      transform: translateY(-14px);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  tr.block-row-enter {
+    animation: block-row-enter 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  tr.block-row-nudge {
+    animation: block-row-nudge 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* Wallet metric tick flash (hashrate, etc.) */
+  @keyframes metric-flash-up {
+    0% {
+      color: var(--fg);
+    }
+    18% {
+      color: var(--accent);
+      filter: brightness(1.15);
+    }
+    100% {
+      color: var(--fg);
+    }
+  }
+
+  @keyframes metric-flash-down {
+    0% {
+      color: var(--fg);
+    }
+    18% {
+      color: var(--danger);
+      filter: brightness(1.1);
+    }
+    100% {
+      color: var(--fg);
+    }
+  }
+
+  .metric-flash-up {
+    animation: metric-flash-up 0.7s ease-out both;
+  }
+
+  .metric-flash-down {
+    animation: metric-flash-down 0.7s ease-out both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animated-block-number,
+  tr.block-row-enter,
+  tr.block-row-nudge,
+  .metric-flash-up,
+  .metric-flash-down {
+    animation: none !important;
   }
 }

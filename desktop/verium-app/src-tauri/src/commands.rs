@@ -13,6 +13,7 @@ use crate::addressbook::{self, AddressBookEntry};
 use crate::bootstrap::{cancel_bootstrap as request_bootstrap_cancel, import_bootstrap as run_import_bootstrap, BootstrapResult};
 use crate::coin_profile::{
     all_profile_summaries, assert_vericoin, assert_verium, parse_coin_id, CoinId,
+    CoinTarget, NetworkMode,
 };
 use crate::config::{
     apply_partial_to_config, chain_datadir, chain_index_needs_rebuild, chain_snapshot_needs_reindex,
@@ -31,7 +32,13 @@ use crate::config::{
     clear_wallet_bdb_environment, node_conf_path, write_node_conf_file, DaemonConfig,
     PartialDaemonConfig, RpcAuthDiagnostics,
 };
-use crate::daemon::{binary_supports_unified_chain_selector, bundled_sidecar_available, binary_missing_hint, detect_binary, force_stop_native_daemon, free_rpc_port, kill_port_listeners, native_daemon_image_running, pids_listening_on_port, sidecar_supports_binarytest, wait_for_native_daemon_exit, wait_for_rpc_port_free, DaemonBinaryStatus};
+use crate::daemon::{
+    apply_wallet_p2p_subversion, binary_supports_unified_chain_selector, bundled_sidecar_available,
+    binary_missing_hint, detect_binary, force_stop_native_daemon, free_rpc_port,
+    kill_port_listeners, native_daemon_image_running, pids_listening_on_port,
+    sidecar_supports_binarytest, wallet_p2p_subversion, wait_for_native_daemon_exit,
+    wait_for_rpc_port_free, DaemonBinaryStatus,
+};
 use crate::error::{AppError, AppResult, is_rpc_warmup};
 use crate::explorer_api::{
     fetch_blocks, fetch_chain_tips, fetch_extraction, fetch_explorer_peers, fetch_network_stats,
@@ -53,7 +60,7 @@ use crate::node::orchestrator::maybe_emit_state;
 use crate::node::snapshot::{detect_binary_for_coin, snapshot_from_status};
 use crate::node::status::{apply_snapshot, disconnected, warming_up, NodeStatus};
 use crate::node::constants::{
-    REINDEX_LOG_MAX_AGE, REPAIR_BACKOFF, TXINDEX_PAUSE_BLOCK_LAG, TXINDEX_RESUME_BLOCK_LAG,
+    REINDEX_LOG_MAX_AGE, REPAIR_BACKOFF, TXINDEX_PAUSE_BLOCK_LAG, vericoin_should_resume_p2p,
 };
 use crate::prefs::{self, PartialUserPreferences, UserPreferences};
 use crate::rpc::RpcClient;
@@ -331,18 +338,54 @@ async fn wait_for_rpc_down(coin: CoinId, cfg: &DaemonConfig, timeout: std::time:
 }
 
 pub(crate) async fn rpc_reachable(coin: CoinId, cfg: &DaemonConfig) -> bool {
-    let Ok(client) = RpcClient::from_config_for_coin(coin, cfg) else {
-        return false;
+    rpc_serves_coin(coin, cfg).await.is_ok()
+}
+
+/// RPC responds and `getblockchaininfo.chain` matches the requested coin.
+pub(crate) async fn rpc_serves_coin(coin: CoinId, cfg: &DaemonConfig) -> AppResult<()> {
+    let expected_port = expected_rpc_port(coin, cfg);
+    if cfg.rpc_port != expected_port {
+        return Err(AppError::other(format!(
+            "{} RPC is configured for port {} but must use {expected_port}",
+            coin.display_name(),
+            cfg.rpc_port
+        )));
+    }
+    let client = RpcClient::from_config_for_coin(coin, cfg)?;
+    let info: Value = match client.call("getblockchaininfo", json!([])).await {
+        Ok(v) => v,
+        Err(AppError::Rpc { code, .. }) if is_rpc_warmup(code) => {
+            return Ok(());
+        }
+        Err(AppError::DaemonUnreachable(msg)) if msg.contains("unauthorized") => {
+            return Err(AppError::DaemonUnreachable(msg));
+        }
+        Err(AppError::DaemonUnreachable(_)) if !pids_listening_on_port(cfg.rpc_port).is_empty() => {
+            return Err(AppError::DaemonUnreachable(
+                "node is starting on RPC port".into(),
+            ));
+        }
+        Err(e) => return Err(e),
     };
-    match client
-        .call::<Value>("getblockchaininfo", json!([]))
-        .await
-    {
-        Ok(_) => true,
-        Err(AppError::Rpc { code, .. }) if is_rpc_warmup(code) => true,
-        Err(AppError::DaemonUnreachable(msg)) if msg.contains("unauthorized") => false,
-        Err(AppError::DaemonUnreachable(_)) => !pids_listening_on_port(cfg.rpc_port).is_empty(),
-        _ => false,
+    let chain = info
+        .get("chain")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if coin.rpc_chain_matches(chain, &cfg.chain) {
+        return Ok(());
+    }
+    Err(AppError::other(format!(
+        "RPC port {} is serving the \"{chain}\" chain, not {}",
+        cfg.rpc_port,
+        coin.display_name()
+    )))
+}
+
+fn expected_rpc_port(coin: CoinId, cfg: &DaemonConfig) -> u16 {
+    if cfg.chain.starts_with("binarytest-") {
+        CoinTarget::new(coin, NetworkMode::BinaryTest).rpc_port()
+    } else {
+        coin.default_rpc_port()
     }
 }
 
@@ -733,15 +776,22 @@ pub async fn get_node_status(
                         .get("initialblockdownload")
                         .and_then(Value::as_bool),
                     connections: network_info.get("connections").and_then(Value::as_u64),
+                    network_active: network_info
+                        .get("networkactive")
+                        .and_then(Value::as_bool),
                     warnings: chain_info
                         .get("warnings")
                         .and_then(Value::as_str)
                         .map(str::to_string),
                     version: network_info.get("version").and_then(Value::as_i64),
-                    subversion: network_info
-                        .get("subversion")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
+                    subversion: if state.daemon(coin)?.is_managed().await {
+                        Some(wallet_p2p_subversion().to_string())
+                    } else {
+                        network_info
+                            .get("subversion")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    },
                     ..Default::default()
                 }
             }
@@ -787,6 +837,17 @@ pub async fn get_node_status(
     )
     .await;
     if status.connected {
+        if let Some(rpc_chain) = status.chain.as_deref() {
+            if !coin.rpc_chain_matches(rpc_chain, &cfg.chain) {
+                status.error = Some(format!(
+                    "This RPC port is serving the \"{rpc_chain}\" chain, not {}. \
+                     Restart the {} node from Settings.",
+                    coin.display_name(),
+                    coin.binary_base()
+                ));
+                status.daemon_phase = Some("error".into());
+            }
+        }
         state.inner().clear_auto_reindex_attempt(coin);
         state.inner().clear_bootstrap_loading(coin);
         if status.blocks.unwrap_or(0) > 10_000 {
@@ -812,6 +873,12 @@ async fn enrich_status_from_log(
     let session = current_log_session(&lines);
     let log_path = datadir.join("debug.log");
     let log_live = log_recently_modified(&log_path, Duration::from_secs(45));
+
+    // Vericoin: always run txindex/P2P heal and surface network state — even when
+    // the chain header tip is caught up (the early return below used to skip this).
+    if status.connected && !status.warming_up && coin == CoinId::Vericoin {
+        status = enrich_vericoin_connected_status(status, state, coin, cfg).await;
+    }
 
     if rpc_reports_synced(
         status.connected,
@@ -878,18 +945,6 @@ async fn enrich_status_from_log(
     }
 
     if status.connected {
-        if coin == CoinId::Vericoin {
-            if detect_txindex_pos_stall(&lines) || detect_txindex_complete(&lines) {
-                status.txindex_sync_height = effective_txindex_height(&lines);
-            }
-            status.txindex_network_paused = state.txindex_network_paused(coin);
-        }
-        // Invalid-block / txindex stalls are healed in the background.
-        let _ = heal_invalid_blocks_silently(state, coin, cfg).await;
-        if coin == CoinId::Vericoin {
-            status.txindex_network_paused = state.txindex_network_paused(coin);
-        }
-
         let lag = status
             .headers
             .unwrap_or(0)
@@ -902,6 +957,39 @@ async fn enrich_status_from_log(
         }
     }
     status
+}
+
+async fn enrich_vericoin_connected_status(
+    mut status: NodeStatus,
+    state: &AppState,
+    coin: CoinId,
+    cfg: &DaemonConfig,
+) -> NodeStatus {
+    let lines = tail_coin_debug_log(coin, cfg, 200).await.unwrap_or_default();
+    if detect_txindex_pos_stall(&lines) || detect_txindex_complete(&lines) {
+        status.txindex_sync_height = effective_txindex_height(&lines);
+    }
+    if status.network_active.is_none() {
+        status.network_active = rpc_network_active(state, coin).await;
+    }
+    let _ = heal_invalid_blocks_silently(state, coin, cfg).await;
+    status.txindex_network_paused = state.txindex_network_paused(coin);
+    if status.network_active == Some(false) {
+        status.txindex_network_paused = true;
+    }
+    status
+}
+
+async fn rpc_network_active(state: &AppState, coin: CoinId) -> Option<bool> {
+    state
+        .rpc_client(coin)
+        .await
+        .ok()?
+        .call::<Value>("getnetworkinfo", json!([]))
+        .await
+        .ok()?
+        .get("networkactive")
+        .and_then(Value::as_bool)
 }
 
 async fn set_network_active(state: &AppState, coin: CoinId, active: bool) -> AppResult<()> {
@@ -931,6 +1019,10 @@ pub(crate) async fn heal_invalid_blocks_silently(
 
     if coin == CoinId::Vericoin && detect_txindex_pos_stall(&lines) {
         return heal_vericoin_txindex_stall(state, coin, &lines).await;
+    }
+
+    if coin == CoinId::Vericoin {
+        let _ = ensure_vericoin_p2p_live(state, coin, cfg).await;
     }
 
     let hashes = detect_invalid_block_hashes(&lines);
@@ -1012,13 +1104,21 @@ async fn heal_vericoin_txindex_stall(
 ) -> AppResult<()> {
     let hashes = detect_invalid_block_hashes(lines);
     let txindex_h = effective_txindex_height(lines);
-    let chain_blocks: Option<u64> = state
+    let chain_info: Option<Value> = state
         .rpc_client(coin)
         .await?
-        .call::<serde_json::Value>("getblockchaininfo", json!([]))
+        .call("getblockchaininfo", json!([]))
         .await
-        .ok()
+        .ok();
+    let chain_blocks = chain_info
+        .as_ref()
         .and_then(|v| v.get("blocks").and_then(|b| b.as_u64()));
+    let chain_headers = chain_info
+        .as_ref()
+        .and_then(|v| v.get("headers").and_then(|b| b.as_u64()));
+    let chain_ibd = chain_info
+        .as_ref()
+        .and_then(|v| v.get("initialblockdownload").and_then(|b| b.as_bool()));
 
     let block_lag = match (chain_blocks, txindex_h) {
         (Some(b), Some(t)) => b.saturating_sub(t),
@@ -1026,6 +1126,9 @@ async fn heal_vericoin_txindex_stall(
     };
 
     let coin_age_fail = detect_recent_coin_age_failure(lines);
+    let stall_active = detect_txindex_pos_stall(lines);
+    let txindex_done = detect_txindex_complete(lines);
+    let synced_at_tip = rpc_reports_synced(true, chain_ibd, chain_blocks, chain_headers);
 
     let should_pause = coin_age_fail
         || (!hashes.is_empty() && block_lag > TXINDEX_PAUSE_BLOCK_LAG)
@@ -1047,16 +1150,20 @@ async fn heal_vericoin_txindex_stall(
         return Ok(());
     }
 
-    if state.txindex_network_paused(coin) {
+    let rpc_inactive = rpc_network_active(state, coin).await == Some(false);
+    if state.txindex_network_paused(coin) || rpc_inactive {
         let index_at_tip = match (chain_blocks, txindex_h) {
             (Some(b), Some(t)) => t >= b.saturating_sub(2),
             _ => false,
         };
-        let can_resume = index_at_tip
-            || (chain_blocks.is_some()
-                && txindex_h.is_some()
-                && block_lag <= TXINDEX_RESUME_BLOCK_LAG
-                && !coin_age_fail);
+        let can_resume = vericoin_should_resume_p2p(
+            coin_age_fail,
+            stall_active,
+            txindex_done,
+            index_at_tip,
+            block_lag,
+            synced_at_tip,
+        );
 
         if can_resume {
             if let Err(e) = set_network_active(state, coin, true).await {
@@ -1079,6 +1186,74 @@ async fn heal_vericoin_txindex_stall(
     if coin_age_fail || !hashes.is_empty() {
         state.mark_invalid_clear_attempt(coin);
         return Ok(());
+    }
+    Ok(())
+}
+
+/// Re-enable P2P when the node is caught up but networkactive is still false without
+/// a matching in-app pause flag (e.g. after a crash or external RPC change).
+async fn ensure_vericoin_p2p_live(
+    state: &AppState,
+    coin: CoinId,
+    cfg: &DaemonConfig,
+) -> AppResult<()> {
+    if rpc_network_active(state, coin).await != Some(false) {
+        if state.txindex_network_paused(coin) {
+            state.set_txindex_network_paused(coin, false);
+        }
+        return Ok(());
+    }
+
+    let lines = tail_coin_debug_log(coin, cfg, 200).await?;
+    let stall_active = detect_txindex_pos_stall(&lines);
+    if stall_active {
+        return Ok(());
+    }
+
+    let chain_info: Option<Value> = state
+        .rpc_client(coin)
+        .await?
+        .call("getblockchaininfo", json!([]))
+        .await
+        .ok();
+    let chain_blocks = chain_info
+        .as_ref()
+        .and_then(|v| v.get("blocks").and_then(|b| b.as_u64()));
+    let chain_headers = chain_info
+        .as_ref()
+        .and_then(|v| v.get("headers").and_then(|b| b.as_u64()));
+    let chain_ibd = chain_info
+        .as_ref()
+        .and_then(|v| v.get("initialblockdownload").and_then(|b| b.as_bool()));
+    let txindex_h = effective_txindex_height(&lines);
+    let block_lag = match (chain_blocks, txindex_h) {
+        (Some(b), Some(t)) => b.saturating_sub(t),
+        _ => u64::MAX,
+    };
+    let coin_age_fail = detect_recent_coin_age_failure(&lines);
+    let txindex_done = detect_txindex_complete(&lines);
+    let synced_at_tip = rpc_reports_synced(true, chain_ibd, chain_blocks, chain_headers);
+    let index_at_tip = match (chain_blocks, txindex_h) {
+        (Some(b), Some(t)) => t >= b.saturating_sub(2),
+        _ => false,
+    };
+
+    if !vericoin_should_resume_p2p(
+        coin_age_fail,
+        stall_active,
+        txindex_done,
+        index_at_tip,
+        block_lag,
+        synced_at_tip,
+    ) {
+        return Ok(());
+    }
+
+    if let Err(e) = set_network_active(state, coin, true).await {
+        tracing::warn!("heal (vericoin): setnetworkactive true (orphan pause) failed: {e}");
+    } else {
+        state.set_txindex_network_paused(coin, false);
+        tracing::info!("heal (vericoin): re-enabled P2P — node was synced but network was inactive");
     }
     Ok(())
 }
@@ -1193,11 +1368,15 @@ pub async fn get_network_info(
     coin: String,
 ) -> AppResult<Value> {
     let coin = parse_coin_id(&coin)?;
-    state
+    let mut info = state
         .rpc_client(coin)
         .await?
         .call("getnetworkinfo", json!([]))
-        .await
+        .await?;
+    if state.daemon(coin)?.is_managed().await {
+        apply_wallet_p2p_subversion(&mut info);
+    }
+    Ok(info)
 }
 
 #[tauri::command]
@@ -1299,15 +1478,74 @@ pub async fn get_new_address(
     label: Option<String>,
 ) -> AppResult<String> {
     let coin = parse_coin_id(&coin)?;
+    let cfg = state.config_fresh(coin).await?;
+    let client = state.rpc_client(coin).await?;
+    assert_rpc_matches_coin(&client, coin, &cfg).await?;
     let params = match label {
         Some(l) if !l.is_empty() => json!([l]),
         _ => json!([]),
     };
-    state
-        .rpc_client(coin)
-        .await?
-        .call("getnewaddress", params)
+    let address: String = client.call("getnewaddress", params).await?;
+    assert_address_in_wallet(&client, coin, &address).await?;
+    Ok(address)
+}
+
+async fn assert_address_in_wallet(
+    client: &RpcClient,
+    coin: CoinId,
+    address: &str,
+) -> AppResult<()> {
+    // getaddressinfo rejects invalid addresses at the RPC layer; unlike validateaddress
+    // it does not include an "isvalid" field — only ismine / solvable / script metadata.
+    let info: Value = client
+        .call("getaddressinfo", json!([address]))
         .await
+        .map_err(|e| {
+            AppError::other(format!(
+                "Could not verify {} address ownership ({e})",
+                coin.symbol()
+            ))
+        })?;
+    if info.get("ismine").and_then(Value::as_bool) != Some(true) {
+        return Err(AppError::other(format!(
+            "Generated address is not in the {} wallet — the RPC node may be on the wrong chain",
+            coin.display_name()
+        )));
+    }
+    Ok(())
+}
+
+async fn assert_rpc_matches_coin(
+    client: &RpcClient,
+    coin: CoinId,
+    cfg: &DaemonConfig,
+) -> AppResult<()> {
+    let expected_port = expected_rpc_port(coin, cfg);
+    if cfg.rpc_port != expected_port {
+        return Err(AppError::other(format!(
+            "The {} wallet is pointed at RPC port {} but must use port {expected_port}. \
+             Open Settings and restart the {} node.",
+            coin.display_name(),
+            cfg.rpc_port,
+            coin.binary_base()
+        )));
+    }
+    let info: Value = client.call("getblockchaininfo", json!([])).await?;
+    let chain = info
+        .get("chain")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if coin.rpc_chain_matches(chain, &cfg.chain) {
+        return Ok(());
+    }
+    Err(AppError::other(format!(
+        "The {} node RPC is serving the \"{chain}\" chain instead of {}. \
+         Restart the {} node from Settings so it starts with the correct chain \
+         (unified veriumd must run with -vericoin for Vericoin).",
+        coin.display_name(),
+        coin.display_name(),
+        coin.binary_base(),
+    )))
 }
 
 #[tauri::command]
@@ -2842,9 +3080,15 @@ pub async fn fetch_explorer_transactions(
 pub async fn fetch_explorer_extraction(
     coin: String,
     limit: Option<u32>,
+    period: Option<String>,
 ) -> AppResult<Vec<ExplorerExtractionEntry>> {
     let coin = parse_coin_id(&coin)?;
-    fetch_extraction(coin, limit.unwrap_or(20)).await
+    fetch_extraction(
+        coin,
+        limit.unwrap_or(20),
+        period.as_deref().unwrap_or("month"),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -2905,6 +3149,22 @@ async fn ensure_daemon_running_locked(state: &AppState, coin: CoinId, cfg: &Daem
     }
 
     if rpc_reachable(coin, cfg).await {
+        if let Err(e) = rpc_serves_coin(coin, cfg).await {
+            if !state.wrong_chain_restart_exhausted(coin) && detect_binary(coin).manageable {
+                state.increment_wrong_chain_restart(coin);
+                tracing::warn!(
+                    "ensure ({}): {} — restarting node with correct chain selector",
+                    coin.as_str(),
+                    e
+                );
+                let _ = restart_daemon_full_cycle(state, coin).await;
+                return;
+            }
+            state.set_daemon_phase(coin, "error");
+            tracing::warn!("ensure ({}): RPC chain mismatch: {e}", coin.as_str());
+            return;
+        }
+        state.clear_wrong_chain_restart_attempts(coin);
         let _ = heal_invalid_blocks_silently(state, coin, cfg).await;
         state.set_daemon_phase(coin, "connected");
         return;

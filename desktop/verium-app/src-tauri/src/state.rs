@@ -32,6 +32,7 @@ struct Inner {
     /// Unified bootstrap / stripped index: only start with `-reindex` until RPC syncs.
     pending_reindex: Mutex<HashSet<CoinId>>,
     auth_restart_attempts: Mutex<HashMap<CoinId, u32>>,
+    wrong_chain_restart_attempts: Mutex<HashMap<CoinId, u32>>,
     daemon_phase: Mutex<HashMap<CoinId, String>>,
     /// Throttle background `reconsiderblock` clears (separate from full chain repair).
     last_invalid_clear_at: Mutex<HashMap<CoinId, Instant>>,
@@ -93,6 +94,7 @@ impl AppState {
                 last_repair_at: Mutex::new(HashMap::new()),
                 pending_reindex: Mutex::new(HashSet::new()),
                 auth_restart_attempts: Mutex::new(HashMap::new()),
+                wrong_chain_restart_attempts: Mutex::new(HashMap::new()),
                 daemon_phase: Mutex::new(HashMap::new()),
                 last_invalid_clear_at: Mutex::new(HashMap::new()),
                 txindex_network_paused: Mutex::new(HashSet::new()),
@@ -264,6 +266,32 @@ impl AppState {
             .auth_restart_attempts
             .lock()
             .map(|map| map.get(&coin).copied().unwrap_or(0) >= AUTH_RETRY_MAX)
+            .unwrap_or(false)
+    }
+
+    pub fn increment_wrong_chain_restart(&self, coin: CoinId) -> u32 {
+        self.inner
+            .wrong_chain_restart_attempts
+            .lock()
+            .map(|mut map| {
+                let next = map.get(&coin).copied().unwrap_or(0) + 1;
+                map.insert(coin, next);
+                next
+            })
+            .unwrap_or(0)
+    }
+
+    pub fn clear_wrong_chain_restart_attempts(&self, coin: CoinId) {
+        if let Ok(mut map) = self.inner.wrong_chain_restart_attempts.lock() {
+            map.remove(&coin);
+        }
+    }
+
+    pub fn wrong_chain_restart_exhausted(&self, coin: CoinId) -> bool {
+        self.inner
+            .wrong_chain_restart_attempts
+            .lock()
+            .map(|map| map.get(&coin).copied().unwrap_or(0) >= 1)
             .unwrap_or(false)
     }
 

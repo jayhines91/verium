@@ -1,4 +1,5 @@
 import type { ExplorerStats } from "@/lib/explorer-api";
+import { clampMiningVrmPriceUsd } from "@/lib/mining-input-validation";
 import type { MiningInfo } from "@/lib/rpc/client";
 
 /** Convert networkhashps (H/s) from getmininginfo to kH/m (explorer convention). */
@@ -131,12 +132,9 @@ export function effectiveMiningVrmPriceUsd(
   assumption: number | undefined,
   marketPrice: number | undefined,
 ): number | undefined {
-  if (
-    assumption != null &&
-    Number.isFinite(assumption) &&
-    assumption > 0
-  ) {
-    return assumption;
+  const clamped = clampMiningVrmPriceUsd(assumption);
+  if (clamped != null) {
+    return clamped;
   }
   return marketPrice;
 }

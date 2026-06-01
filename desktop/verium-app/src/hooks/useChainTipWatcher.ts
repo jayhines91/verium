@@ -2,9 +2,10 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 
-import type { CoinId } from "@/lib/coin/profile";
+import { coinQueryKey, type CoinId } from "@/lib/coin/profile";
 import type { ExplorerBlock } from "@/lib/explorer-api";
 import { pushChainTip } from "@/lib/chain-tip-store";
+import { walletTransactionsQueryKey } from "@/lib/wallet-transactions-query";
 
 interface ChainTipPayload {
   coin: CoinId;
@@ -39,6 +40,16 @@ export function useChainTipWatcher(): void {
         hash: payload.hash,
         time: payload.time,
         block: payload.block ?? undefined,
+      });
+
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(payload.coin, "getblockchaininfo"),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: coinQueryKey(payload.coin, "getwalletinfo"),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: walletTransactionsQueryKey(payload.coin),
       });
 
       if (enrichTimer != null) window.clearTimeout(enrichTimer);

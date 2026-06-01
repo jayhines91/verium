@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, QrCode, Trash2, X } from "lucide-react";
+import { Check, Copy, QrCode, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ExplorerLink } from "@/components/ExplorerLink";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -8,13 +8,16 @@ import { QrCodeDisplay } from "@/components/QrCodeDisplay";
 import { rpcGetNewAddress } from "@/lib/rpc/client";
 import { useActiveCoin, useCoinProfile } from "@/lib/coin/context";
 import { coinQueryKey } from "@/lib/coin/profile";
-import { formatCoinAmount, coinSymbol } from "@/lib/units";
+import { formatCoinAmount } from "@/lib/units";
 import {
   receiveRequestsAppend,
   receiveRequestsDelete,
   receiveRequestsList,
 } from "@/lib/security/client";
 import { cn } from "@/lib/utils";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { useDaemonStatus } from "@/hooks/useDaemonStatus";
+import { useIsTestNetwork } from "@/lib/network-mode";
 
 interface ReceivePanelProps {
   className?: string;
@@ -23,7 +26,8 @@ interface ReceivePanelProps {
 export function ReceivePanel({ className }: ReceivePanelProps) {
   const coin = useActiveCoin();
   const profile = useCoinProfile();
-  const symbol = coinSymbol(coin);
+  const isTestNetwork = useIsTestNetwork();
+  const { data: nodeStatus } = useDaemonStatus(coin);
   const queryClient = useQueryClient();
   const [label, setLabel] = useState("");
   const [amount, setAmount] = useState("");
@@ -31,6 +35,11 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showDetail, setShowDetail] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const {
+    copied: addressCopied,
+    copy: copyAddress,
+    reset: resetAddressCopyFeedback,
+  } = useCopyToClipboard();
 
   const requestsQuery = useQuery({
     queryKey: coinQueryKey(coin, "receive-requests"),
@@ -91,14 +100,54 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
     [requests, selectedId],
   );
 
+  useEffect(() => {
+    resetAddressCopyFeedback();
+  }, [selected?.address, resetAddressCopyFeedback]);
+
   const clearForm = () => {
     setLabel("");
     setAmount("");
     setMessage("");
   };
 
+  const networkReceiveBlocked =
+    coin === "vericoin" &&
+    nodeStatus?.connected === true &&
+    (nodeStatus.txindex_network_paused === true ||
+      nodeStatus.network_active === false);
+
   return (
     <div className={cn("flex flex-col gap-4", className)}>
+      {networkReceiveBlocked && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-fg">
+          <p className="font-medium text-warning">
+            Incoming {profile.symbol} payments are paused
+          </p>
+          <p className="mt-1 text-xs text-fg-muted">
+            Your Vericoin node has temporarily disabled peer connections while
+            it rebuilds the transaction index. Payments sent now may not appear
+            until network activity resumes. Check the dashboard or Network page
+            for progress — this usually clears within a few minutes.
+          </p>
+        </div>
+      )}
+      {isTestNetwork && (
+        <div className="rounded-lg border border-border bg-bg-subtle px-4 py-3 text-xs text-fg-muted">
+          You are on the <span className="font-medium">Binarytest</span> network.
+          Only send {profile.symbol} from another wallet also set to Binarytest —
+          mainnet addresses will not receive funds here.
+        </div>
+      )}
+      {coin === "vericoin" && (
+        <div className="rounded-lg border border-border bg-bg-subtle px-4 py-3 text-xs text-fg-muted">
+          Vericoin and Verium legacy addresses both start with{" "}
+          <span className="font-mono">V</span> on mainnet. Sending{" "}
+          <span className="font-medium">VRM</span> to this address only credits your
+          Verium wallet on the Verium chain — it does not prove this is a valid{" "}
+          <span className="font-medium">VRC</span> receive. Test with a small VRC
+          payment on the Vericoin network instead.
+        </div>
+      )}
       <div className="rounded-lg border border-border bg-bg-subtle/80 p-4">
         <p className="mb-3 text-sm text-fg-muted">
           Create new receiving address{" "}
@@ -141,14 +190,7 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
                 placeholder="Optional amount to request"
                 className="h-10 w-36 rounded-md border border-border bg-bg-panel px-3 text-sm tabular-nums outline-none focus:border-accent"
               />
-              <select
-                className="h-10 rounded-md border border-border bg-bg-panel px-2 text-sm outline-none focus:border-accent"
-                value={symbol}
-                disabled
-                aria-label="Coin unit"
-              >
-                <option value={symbol}>{symbol}</option>
-              </select>
+
             </div>
           </div>
 
@@ -211,12 +253,10 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
                 <th className="px-4 py-2 text-left font-medium">Label</th>
                 <th className="px-4 py-2 text-left font-medium">Address</th>
                 <th className="px-4 py-2 text-left font-medium">Message</th>
-                <th className="px-4 py-2 text-right font-medium bg-white dark:bg-slate-900 ">
+                <th className="px-4 py-2 text-right font-medium">
                   Requested ({profile.symbol})
                 </th>
-                <th className="px-4 py-2 text-right font-medium bg-white dark:bg-slate-900 ">
-                  Actions
-                </th>
+                <th className="px-4 py-2 text-right font-medium ">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -342,22 +382,40 @@ export function ReceivePanel({ className }: ReceivePanelProps) {
             message={selected.message || undefined}
           />
 
-          <div className="mt-3 flex items-center gap-2 rounded-md border border-border bg-bg-panel px-3 py-2 text-xs">
+          <div
+            className={cn(
+              "mt-3 flex items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors",
+              addressCopied
+                ? "border-success/40 bg-success/5"
+                : "border-border bg-bg-panel",
+            )}
+          >
             <span className="min-w-0 flex-1 break-all">{selected.address}</span>
             <button
               type="button"
-              aria-label="Copy address"
-              onClick={() =>
-                void navigator.clipboard.writeText(selected.address)
-              }
-              className="shrink-0 text-fg-muted hover:text-fg"
+              aria-label={addressCopied ? "Address copied" : "Copy address"}
+              onClick={() => void copyAddress(selected.address)}
+              className={cn(
+                "inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-medium transition-colors",
+                addressCopied
+                  ? "text-success"
+                  : "text-fg-muted hover:text-fg",
+              )}
             >
-              <Copy className="h-4 w-4" />
+              {addressCopied ? (
+                <>
+                  <Check className="h-4 w-4" />
+                  <span>Copied</span>
+                </>
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
             </button>
           </div>
 
           <div className="mt-3 flex flex-wrap gap-3 text-xs">
             <ExplorerLink
+              coin={coin}
               target={{ kind: "address", address: selected.address }}
               label="View on explorer"
             />

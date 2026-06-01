@@ -1,6 +1,5 @@
-import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
-import { cn } from "@/lib/utils";
+import { AnimatedHashrate } from "@/components/AnimatedHashrate";
 
 export function MinerBootBadge({
   booting,
@@ -23,28 +22,33 @@ export function MinerBootBadge({
 export function MinerHashrateDisplay({
   booting,
   value,
+  fractionDigits = 2,
+  unit,
   className,
+  unitClassName,
   spinnerClassName,
+  fallback,
 }: {
   booting: boolean;
-  value: string;
+  /** Live H/m from `getmininginfo`; omit when booting or unknown. */
+  value?: number;
+  fractionDigits?: number;
+  unit?: string;
   className?: string;
+  unitClassName?: string;
   spinnerClassName?: string;
+  fallback?: string;
 }) {
-  if (!booting) {
-    return <span className={className}>{value}</span>;
-  }
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 text-fg-muted",
-        className,
-      )}
-    >
-      <Loader2
-        className={cn("h-3.5 w-3.5 animate-spin text-accent", spinnerClassName)}
-      />
-      Starting…
-    </span>
+    <AnimatedHashrate
+      booting={booting}
+      value={value}
+      fractionDigits={fractionDigits}
+      unit={unit}
+      className={className}
+      unitClassName={unitClassName}
+      spinnerClassName={spinnerClassName}
+      fallback={fallback ?? "—"}
+    />
   );
 }

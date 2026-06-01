@@ -110,7 +110,7 @@ struct CoinCache {
     stats: Option<TimedEntry<ExplorerStats>>,
     blocks: Option<TimedEntry<Vec<ExplorerBlock>>>,
     transactions: Option<TimedEntry<Vec<ExplorerTransaction>>>,
-    extraction: Option<TimedEntry<Vec<ExplorerExtractionEntry>>>,
+    extractions: HashMap<String, TimedEntry<Vec<ExplorerExtractionEntry>>>,
     chain_tips: Option<TimedEntry<Vec<ExplorerChainTip>>>,
     peers: Option<TimedEntry<Vec<ExplorerPeerEntry>>>,
 }
@@ -121,7 +121,7 @@ impl Default for CoinCache {
             stats: None,
             blocks: None,
             transactions: None,
-            extraction: None,
+            extractions: HashMap::new(),
             chain_tips: None,
             peers: None,
         }
@@ -197,7 +197,7 @@ pub async fn fetch_explorer_peers(coin: CoinId) -> AppResult<Vec<ExplorerPeerEnt
 }
 
 pub async fn fetch_blocks(coin: CoinId, limit: u32) -> AppResult<Vec<ExplorerBlock>> {
-    let limit = limit.clamp(1, 100);
+    let limit = limit.clamp(1, 10);
     let blocks = if let Some(cached) = read_blocks_cache(coin).await {
         cached
     } else {
@@ -287,14 +287,23 @@ pub async fn fetch_transactions(coin: CoinId, limit: u32) -> AppResult<Vec<Explo
     Ok(txs.into_iter().take(limit as usize).collect())
 }
 
-pub async fn fetch_extraction(coin: CoinId, limit: u32) -> AppResult<Vec<ExplorerExtractionEntry>> {
+pub async fn fetch_extraction(
+    coin: CoinId,
+    limit: u32,
+    period: &str,
+) -> AppResult<Vec<ExplorerExtractionEntry>> {
     let limit = limit.clamp(1, 100);
-    if let Some(cached) = read_extraction_cache(coin).await {
+    let period = normalize_extraction_period(period);
+    let cache_key = format!("{period}:{limit}");
+    if let Some(cached) = read_extraction_cache(coin, &cache_key).await {
         return Ok(cached.into_iter().take(limit as usize).collect());
     }
 
     let client = http_client()?;
-    let url = explorer_api_url(coin, &format!("extraction?limit={limit}"));
+    let url = explorer_api_url(
+        coin,
+        &format!("extraction?limit={limit}&period={period}"),
+    );
     let value = get_json(&client, &url).await?;
     let arr = value
         .as_array()
@@ -315,8 +324,18 @@ pub async fn fetch_extraction(coin: CoinId, limit: u32) -> AppResult<Vec<Explore
         })
         .collect();
 
-    write_extraction_cache(coin, entries.clone()).await;
+    write_extraction_cache(coin, &cache_key, entries.clone()).await;
     Ok(entries.into_iter().take(limit as usize).collect())
+}
+
+fn normalize_extraction_period(period: &str) -> &'static str {
+    match period.trim().to_lowercase().as_str() {
+        "week" | "7d" => "week",
+        "month" | "30d" => "month",
+        "year" => "year",
+        "all" => "all",
+        _ => "month",
+    }
 }
 
 pub async fn fetch_chain_tips(coin: CoinId) -> AppResult<Vec<ExplorerChainTip>> {
@@ -431,22 +450,29 @@ async fn write_transactions_cache(coin: CoinId, txs: Vec<ExplorerTransaction>) {
     .await;
 }
 
-async fn read_extraction_cache(coin: CoinId) -> Option<Vec<ExplorerExtractionEntry>> {
+async fn read_extraction_cache(coin: CoinId, key: &str) -> Option<Vec<ExplorerExtractionEntry>> {
     let guard = CACHE.lock().await;
     guard
         .get(&coin)?
-        .extraction
-        .as_ref()
+        .extractions
+        .get(key)
         .filter(|e| e.at.elapsed() < CACHE_TTL)
         .map(|e| e.value.clone())
 }
 
-async fn write_extraction_cache(coin: CoinId, entries: Vec<ExplorerExtractionEntry>) {
+async fn write_extraction_cache(
+    coin: CoinId,
+    key: &str,
+    entries: Vec<ExplorerExtractionEntry>,
+) {
     with_coin_cache(coin, |c| {
-        c.extraction = Some(TimedEntry {
-            at: Instant::now(),
-            value: entries,
-        });
+        c.extractions.insert(
+            key.to_string(),
+            TimedEntry {
+                at: Instant::now(),
+                value: entries,
+            },
+        );
     })
     .await;
 }

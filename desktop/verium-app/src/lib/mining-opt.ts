@@ -74,7 +74,8 @@ export const MINING_THREADS_MIN = 1;
 /** Fallback when CPU topology is not available yet. */
 export const MINING_THREADS_FALLBACK_MAX = 64;
 
-export function maxMiningThreads(topology: CpuTopology | undefined): number {
+/** Logical CPUs reported by the OS / topology probe (for display). */
+export function detectedLogicalCpus(topology: CpuTopology | undefined): number {
   if (topology?.logicalCpus && topology.logicalCpus > 0) {
     return topology.logicalCpus;
   }
@@ -82,6 +83,25 @@ export function maxMiningThreads(topology: CpuTopology | undefined): number {
     return Math.max(MINING_THREADS_MIN, navigator.hardwareConcurrency);
   }
   return MINING_THREADS_FALLBACK_MAX;
+}
+
+/**
+ * Maximum mining threads — always one less than detected logical CPUs so the
+ * system keeps a core for the OS and wallet UI.
+ */
+export function maxMiningThreads(topology: CpuTopology | undefined): number {
+  const detected = detectedLogicalCpus(topology);
+  return Math.max(MINING_THREADS_MIN, detected - 1);
+}
+
+/** User chose to mine on every logical CPU (not allowed). */
+export function triedToMineOnAllLogicalCpus(
+  threads: number,
+  topology: CpuTopology | undefined,
+  detectedOverride?: number,
+): boolean {
+  const detected = detectedOverride ?? detectedLogicalCpus(topology);
+  return detected > 1 && threads >= detected;
 }
 
 export function clampMiningThreads(

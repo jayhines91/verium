@@ -57,3 +57,42 @@ export async function playBlockMinedSound(): Promise<void> {
   if (await playBlockMinedWebAudio()) return;
   await playNativeBlockChime();
 }
+
+async function playStakeRewardWebAudio(): Promise<boolean> {
+  const ctx = getSharedAudioContext();
+  if (!ctx) return false;
+
+  try {
+    await unlockSharedWebAudio();
+    if (ctx.state !== "running") return false;
+
+    const now = ctx.currentTime;
+    const notes = [587.33, 739.99, 880.0]; // D5 · F#5 · A5
+
+    for (let i = 0; i < notes.length; i += 1) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.value = notes[i]!;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      const start = now + i * 0.13;
+      const peak = 0.14 - i * 0.025;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(Math.max(peak, 0.05), start + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.5);
+
+      osc.start(start);
+      osc.stop(start + 0.5);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function playStakeRewardSound(): Promise<void> {
+  if (await playStakeRewardWebAudio()) return;
+  await playNativeBlockChime();
+}

@@ -79,14 +79,24 @@ export function ExplorerMarketCard({ coin: coinProp }: { coin?: CoinId }) {
               label={`${profile.symbol} price`}
               value={formatUsd(stats.data?.price_usd)}
             />
-            <Stat label="Market cap" value={formatUsd(stats.data?.market_cap_usd)} />
-            <Stat label="24h volume" value={formatUsd(stats.data?.volume_24h_usd)} />
             <Stat
-              label="Block reward"
+              label="Market cap"
+              value={formatUsd(stats.data?.market_cap_usd)}
+            />
+            <Stat
+              label="24h volume"
+              value={formatUsd(stats.data?.volume_24h_usd)}
+            />
+            <Stat
+              label={coin === "vericoin" ? "Interest rate" : "Block reward"}
               value={
-                stats.data?.block_reward !== undefined
-                  ? `${formatNumber(stats.data.block_reward, 4)} ${profile.symbol}`
-                  : "—"
+                coin === "vericoin"
+                  ? stats.data?.stake_interest !== undefined
+                    ? `${formatNumber(stats.data.stake_interest, 2)}%`
+                    : "—"
+                  : stats.data?.block_reward !== undefined
+                    ? `${formatNumber(stats.data.block_reward, 4)} ${profile.symbol}`
+                    : "—"
               }
             />
             <Stat

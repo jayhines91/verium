@@ -2,31 +2,18 @@ import { useActiveCoin } from "@/lib/coin/context";
 import { coinQueryKey } from "@/lib/coin/profile";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
-import { ExplorerLink } from "@/components/ExplorerLink";
-import { MiningProfitCard } from "@/components/MiningProfitCard";
-import { RevenuePeriodToggle } from "@/components/RevenuePeriodToggle";
+import { Clock, Cpu, Globe, Target } from "lucide-react";
 import { WalletUnlockGate } from "@/components/WalletUnlockGate";
-import { EXPLORER_PROFITABILITY } from "@/lib/verium-links";
+import { MiningControlsCard } from "@/components/MiningControlsCard";
+import { MiningEconomicsCard } from "@/components/MiningEconomicsCard";
+import {
+  MiningHashrateChart,
+  type HashSample,
+} from "@/components/MiningHashrateChart";
+import { MiningHero } from "@/components/MiningHero";
+import { MiningStatTile } from "@/components/MiningStatTile";
+import { MiningStatusBanner } from "@/components/MiningStatusBanner";
+import { MinerHashrateDisplay } from "@/components/MinerBootIndicator";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
 import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { useUserPreferences } from "@/lib/user-preferences";
@@ -37,11 +24,8 @@ import {
   effectiveMiningVrmPriceUsd,
   estimateDailyMining,
   estimateHoursPerBlock,
-  formatSessionDuration,
   networkHashToKhm,
   networkSharePercent,
-  revenuePeriodLabel,
-  scaleDailyValue,
   type RevenuePeriod,
 } from "@/lib/mining-revenue";
 import {
@@ -50,8 +34,6 @@ import {
   optimizedMiningThreads,
   resolveMiningThreads,
 } from "@/lib/mining-opt";
-import { MiningThreadControls } from "@/components/MiningThreadControls";
-import { MiningRewardAddressControls } from "@/components/MiningRewardAddressControls";
 import {
   miningRewardAddressForStart,
   staticMiningAddressConfigured,
@@ -65,29 +47,20 @@ import {
   rpcMinerStart,
   rpcMinerStop,
 } from "@/lib/rpc/client";
-import { formatNumber, formatVrm } from "@/lib/utils";
-import {
-  playBlockMinedSound,
-  unlockBlockMinedAudio,
-} from "@/lib/block-mined-sound";
+import { formatNumber } from "@/lib/utils";
 import {
   clearMiningStoppedByUser,
   markMiningStoppedByUser,
 } from "@/lib/mining-session";
 import { isChainSynced } from "@/lib/bootstrap-policy";
-import { isMinerBooting, miningInfoRefetchMs } from "@/lib/mining-boot";
 import {
-  MinerBootBadge,
-  MinerHashrateDisplay,
-} from "@/components/MinerBootIndicator";
-
-interface HashSample {
-  t: number;
-  hashrate: number;
-}
+  isMinerBooting,
+  MINING_HASHRATE_POLL_MS,
+  miningInfoRefetchMs,
+} from "@/lib/mining-boot";
 
 const MAX_SAMPLES = 60;
-const SAMPLE_MIN_MS = 5_000;
+const SAMPLE_MIN_MS = MINING_HASHRATE_POLL_MS;
 
 export function Mining() {
   const coin = useActiveCoin();
@@ -127,7 +100,7 @@ export function Mining() {
     refetchInterval: (query) => {
       if (!visible) return false;
       const hr = query.state.data?.hashrate ?? 0;
-      return miningInfoRefetchMs(minerActive, hr, minerStartedAt, 4_000);
+      return miningInfoRefetchMs(minerActive, hr, minerStartedAt);
     },
   });
   const blockchain = useQuery({
@@ -202,7 +175,9 @@ export function Mining() {
     onSuccess: (state) => {
       clearMiningStoppedByUser();
       queryClient.setQueryData(coinQueryKey(coin, "get_miner_state"), state);
-      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getmininginfo") });
+      queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "getmininginfo"),
+      });
     },
   });
   const stop = useMutation({
@@ -210,7 +185,9 @@ export function Mining() {
     onSuccess: (state) => {
       markMiningStoppedByUser();
       queryClient.setQueryData(coinQueryKey(coin, "get_miner_state"), state);
-      queryClient.invalidateQueries({ queryKey: coinQueryKey(coin, "getmininginfo") });
+      queryClient.invalidateQueries({
+        queryKey: coinQueryKey(coin, "getmininginfo"),
+      });
     },
   });
 
@@ -242,6 +219,7 @@ export function Mining() {
     start.isPending,
     stop.isPending,
   );
+  const live = active || minerBooting;
   const displayThreads =
     active && minerState.data ? minerState.data.threads : miningThreads;
   const networkStats = buildNetworkStats(explorerStats.data, mining.data);
@@ -281,8 +259,28 @@ export function Mining() {
   }, [samples, minerState.data?.started_at, localHashrate]);
 
   const immature = wallet.data?.immature_balance ?? 0;
-  const staticMode = prefs.mining_reward_address_mode === "static";
-  const staticAddressMissing = staticMode && !staticMiningAddressConfigured(prefs);
+  const staticAddressMissing =
+    prefs.mining_reward_address_mode === "static" &&
+    !staticMiningAddressConfigured(prefs);
+  const controlsDisabled = active || start.isPending || stop.isPending;
+
+  const difficulty =
+    networkStats?.blockReward != null && mining.data
+      ? formatNumber(
+          networkStats.source === "explorer"
+            ? (explorerStats.data?.difficulty ?? mining.data.difficulty)
+            : mining.data.difficulty,
+          7,
+        )
+      : "—";
+
+  const chartProps = {
+    samples,
+    sessionAvg,
+    sessionStartedAt: minerState.data?.started_at,
+    minerBooting,
+    active,
+  };
 
   return (
     <WalletUnlockGate
@@ -290,229 +288,71 @@ export function Mining() {
       description="Enter your wallet passphrase to access mining controls and start the built-in CPU miner."
     >
       <div className="flex flex-col gap-4">
-        {syncStalled && (
-          <div className="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
-            Sync is stalled — rebuild WSL veriumd from the banner at the top.
-          </div>
-        )}
-        {!chainSynced && !syncStalled && (
-          <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-            {ibd
-              ? "Mining is disabled while the node is syncing"
-              : "Mining is disabled until the node reaches the network tip"}
-            {" "}
-            ({blockchain.data?.blocks?.toLocaleString() ?? "…"}
-            {syncTarget != null && syncTarget > (blockchain.data?.blocks ?? 0) && (
-              <> / ~{syncTarget.toLocaleString()} network tip</>
-            )}
-            {blocksBehind != null && blocksBehind > 0 && (
-              <> · ~{blocksBehind.toLocaleString()} blocks behind</>
-            )}
-            ).
-          </div>
-        )}
+        <MiningStatusBanner
+          syncStalled={syncStalled}
+          chainSynced={chainSynced}
+          ibd={ibd}
+          localBlocks={blockchain.data?.blocks}
+          syncTarget={syncTarget}
+          blocksBehind={blocksBehind}
+          immatureBalance={immature}
+        />
 
-        {minerBooting && (
-          <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-fg">
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" />
-            <span>
-              Miner is starting — spinning up {displayThreads} thread
-              {displayThreads === 1 ? "" : "s"}. Hashrate should appear within a
-              few seconds.
-            </span>
-          </div>
-        )}
+        <MiningHero
+          active={active}
+          minerBooting={minerBooting}
+          localHashrate={localHashrate}
+          hashrateReady={mining.data != null}
+          displayThreads={displayThreads}
+          sessionStartedAt={minerState.data?.started_at}
+          sessionAvg={sessionAvg}
+          chainSynced={chainSynced}
+          syncStalled={syncStalled}
+          staticAddressMissing={staticAddressMissing}
+          blocksBehind={blocksBehind}
+          startPending={start.isPending}
+          stopPending={stop.isPending}
+          startError={start.error}
+          stopError={stop.error}
+          onStart={() => start.mutate()}
+          onStop={() => stop.mutate()}
+        />
 
-        <Card className="relative">
-          <CardHeader className="flex-row items-center justify-between gap-4">
-            <div>
-              <CardTitle>CPU miner</CardTitle>
-            </div>
-            <div className="flex flex-col items-end gap-2">
-              {minerBooting || active ? (
-                <MinerBootBadge
-                  booting={minerBooting}
-                  active={active}
-                  activeLabel="Running"
-                />
-              ) : (
-                <Badge tone="neutral">Stopped</Badge>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4 pb-[4.75rem]">
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-fg-muted">
-              <label className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={prefs.auto_mine_on_open === true}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    if (checked) clearMiningStoppedByUser();
-                    void updatePrefs({ auto_mine_on_open: checked });
-                  }}
-                  className="h-3.5 w-3.5 rounded accent-accent"
-                />
-                Auto-mine on open
-              </label>
-              <label className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={prefs.play_sound_on_block_mined === true}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    void unlockBlockMinedAudio();
-                    void updatePrefs({ play_sound_on_block_mined: checked });
-                    if (checked) void playBlockMinedSound();
-                  }}
-                  className="h-3.5 w-3.5 rounded accent-accent"
-                />
-                Play sound when block mined
-              </label>
-            </div>
-            <MiningThreadControls
-              autoAdjust={autoAdjustThreads}
-              manualThreads={prefs.auto_mine_threads ?? 2}
-              suggestedThreads={suggestedThreads}
-              maxThreads={maxThreads}
-              logicalCpus={logicalCpus}
-              activeThreads={displayThreads}
-              isMining={active}
-              disabled={active || start.isPending || stop.isPending}
-              onAutoAdjustChange={handleAutoAdjustChange}
-              onManualThreadsChange={(threads) =>
-                void updatePrefs({ auto_mine_threads: threads })
-              }
-            />
-            <MiningRewardAddressControls
-              mode={(prefs.mining_reward_address_mode ?? "dynamic") as MiningRewardAddressMode}
-              address={prefs.mining_reward_address ?? ""}
-              disabled={active || start.isPending || stop.isPending}
-              onModeChange={(mode) =>
-                void updatePrefs({ mining_reward_address_mode: mode })
-              }
-              onAddressChange={(address) =>
-                void updatePrefs({ mining_reward_address: address })
-              }
-            />
-            {(start.error || stop.error) && (
-              <div className="max-w-[calc(100%-12rem)] text-xs text-danger">
-                {String(start.error ?? stop.error)}
-              </div>
-            )}
-          </CardContent>
-          <div className="absolute bottom-5 right-5">
-            {active ? (
-              <Button
-                variant="danger"
-                size="lg"
-                onClick={() => stop.mutate()}
-                disabled={stop.isPending}
-                className="h-12 min-w-[11.5rem] px-8 text-base font-semibold shadow-md"
-              >
-                {stop.isPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Stopping…
-                  </>
-                ) : (
-                  "Stop mining"
-                )}
-              </Button>
-            ) : (
-              <Button
-                size="lg"
-                onClick={() => start.mutate()}
-                disabled={
-                  start.isPending ||
-                  !chainSynced ||
-                  syncStalled ||
-                  staticAddressMissing
-                }
-                className="h-12 min-w-[11.5rem] px-8 text-base font-semibold shadow-md"
-              >
-                {start.isPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Starting…
-                  </>
-                ) : (
-                  "Start mining"
-                )}
-              </Button>
-            )}
-          </div>
-        </Card>
+        {live && <MiningHashrateChart {...chartProps} />}
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Hashrate</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {minerBooting ? (
-                <MinerHashrateDisplay
-                  booting
-                  value=""
-                  className="text-2xl font-semibold"
-                  spinnerClassName="h-6 w-6"
-                />
-              ) : (
-                <div className="text-2xl font-semibold tabular-nums">
-                  {mining.data ? formatNumber(mining.data.hashrate, 2) : "—"}{" "}
-                  <span className="text-sm font-normal text-fg-subtle">H/m</span>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Network hashrate</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold tabular-nums">
-                {networkKhm != null ? formatNumber(networkKhm, 2) : "—"}{" "}
-                <span className="text-sm font-normal text-fg-subtle">kH/m</span>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Difficulty</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold tabular-nums">
-                {networkStats?.blockReward != null && mining.data
-                  ? formatNumber(
-                      networkStats.source === "explorer"
-                        ? (explorerStats.data?.difficulty ??
-                            mining.data.difficulty)
-                        : mining.data.difficulty,
-                      4,
-                    )
-                  : "—"}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Est. next block</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold tabular-nums">
-                {estBlockRate != null
-                  ? `${formatNumber(estBlockRate, 1)} h`
-                  : "—"}
-              </div>
-              <div className="mt-1 text-xs text-fg-subtle">
-                reward{" "}
-                {networkStats?.blockReward != null
-                  ? formatNumber(networkStats.blockReward, 4)
-                  : "—"}{" "}
-                VRM
-              </div>
-            </CardContent>
-          </Card>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <MiningStatTile
+            label="Hashrate"
+            icon={Cpu}
+            highlight={live}
+            value={
+              <MinerHashrateDisplay
+                booting={minerBooting}
+                value={mining.data?.hashrate}
+                fractionDigits={2}
+              />
+            }
+          />
+          <MiningStatTile
+            label="Network hashrate"
+            icon={Globe}
+            value={networkKhm != null ? formatNumber(networkKhm, 2) : "—"}
+            unit="kH/m"
+          />
+          <MiningStatTile label="Difficulty" icon={Target} value={difficulty} />
+          <MiningStatTile
+            label="Est. next block"
+            icon={Clock}
+            value={
+              estBlockRate != null ? `${formatNumber(estBlockRate, 1)}` : "—"
+            }
+            unit={estBlockRate != null ? "h" : undefined}
+            hint={
+              networkStats?.blockReward != null
+                ? `reward ${formatNumber(networkStats.blockReward, 4)} VRM`
+                : undefined
+            }
+          />
         </div>
 
         {share != null && localHashrate > 0 && (
@@ -532,242 +372,53 @@ export function Mining() {
           </div>
         )}
 
+        <MiningControlsCard
+          autoAdjustThreads={autoAdjustThreads}
+          manualThreads={prefs.auto_mine_threads ?? 2}
+          suggestedThreads={suggestedThreads}
+          maxThreads={maxThreads}
+          topology={topology.data}
+          logicalCpus={logicalCpus}
+          displayThreads={displayThreads}
+          isMining={active}
+          controlsDisabled={controlsDisabled}
+          rewardMode={
+            (prefs.mining_reward_address_mode ??
+              "dynamic") as MiningRewardAddressMode
+          }
+          rewardAddress={prefs.mining_reward_address ?? ""}
+          autoMineOnOpen={prefs.auto_mine_on_open === true}
+          playSoundOnBlock={prefs.play_sound_on_block_mined === true}
+          onAutoAdjustChange={handleAutoAdjustChange}
+          onManualThreadsChange={(threads) =>
+            void updatePrefs({ auto_mine_threads: threads })
+          }
+          onRewardModeChange={(mode) =>
+            void updatePrefs({ mining_reward_address_mode: mode })
+          }
+          onRewardAddressChange={(address) =>
+            void updatePrefs({ mining_reward_address: address })
+          }
+          onAutoMineOnOpenChange={(checked) =>
+            void updatePrefs({ auto_mine_on_open: checked })
+          }
+          onPlaySoundChange={(checked) =>
+            void updatePrefs({ play_sound_on_block_mined: checked })
+          }
+        />
+
         {dailyEstimate && localHashrate > 0 && (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-fg-muted">
-                Solo revenue estimates by period
-              </p>
-              <RevenuePeriodToggle
-                value={revenuePeriod}
-                onChange={setRevenuePeriod}
-              />
-            </div>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Estimated revenue (solo)</CardTitle>
-                <CardDescription>
-                  {usingCustomVrmPrice
-                    ? "Using your VRM price assumption for USD estimates."
-                    : networkStats?.source === "explorer"
-                      ? "Live network stats from explorer."
-                      : "Network stats from local node — USD/BTC need explorer prices."}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                <div className="flex flex-col gap-1 text-sm sm:max-w-xs">
-                  <label className="text-fg-muted">VRM price ($)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.0001}
-                    placeholder={
-                      marketPriceUsd != null
-                        ? `Live: $${formatNumber(marketPriceUsd, 4)}`
-                        : "e.g. 0.07"
-                    }
-                    value={prefs.mining_vrm_price_usd ?? ""}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      void updatePrefs({
-                        mining_vrm_price_usd:
-                          v === "" ? undefined : Number(v),
-                      });
-                    }}
-                    className="h-9 rounded-md border border-border bg-bg-subtle px-3 text-sm tabular-nums outline-none focus:border-accent"
-                  />
-                  <p className="text-xs text-fg-subtle">
-                    Leave blank to use the live explorer price
-                    {marketPriceUsd != null
-                      ? ` ($${formatNumber(marketPriceUsd, 4)})`
-                      : ""}
-                    .
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
-                  <div>
-                    <div className="text-xs uppercase text-fg-subtle">
-                      VRM / {revenuePeriodLabel(revenuePeriod)}
-                    </div>
-                    <div className="text-xl font-semibold tabular-nums">
-                      {formatNumber(
-                        scaleDailyValue(
-                          dailyEstimate.vrmPerDay,
-                          revenuePeriod,
-                        ),
-                        4,
-                      )}
-                    </div>
-                    <div className="mt-0.5 text-xs text-fg-subtle">
-                      ~
-                      {formatNumber(
-                        scaleDailyValue(
-                          dailyEstimate.blocksPerDay,
-                          revenuePeriod,
-                        ),
-                        3,
-                      )}{" "}
-                      blocks
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase text-fg-subtle">
-                      USD / {revenuePeriodLabel(revenuePeriod)}
-                    </div>
-                    <div className="text-xl font-semibold tabular-nums">
-                      {dailyEstimate.usdPerDay != null
-                        ? `$${formatNumber(
-                            scaleDailyValue(
-                              dailyEstimate.usdPerDay,
-                              revenuePeriod,
-                            ),
-                            4,
-                          )}`
-                        : "—"}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase text-fg-subtle">
-                      BTC / {revenuePeriodLabel(revenuePeriod)}
-                    </div>
-                    <div className="text-xl font-semibold tabular-nums">
-                      {dailyEstimate.btcPerDay != null
-                        ? formatNumber(
-                            scaleDailyValue(
-                              dailyEstimate.btcPerDay,
-                              revenuePeriod,
-                            ),
-                            8,
-                          )
-                        : "—"}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase text-fg-subtle">
-                      Est. block time
-                    </div>
-                    <div className="text-xl font-semibold tabular-nums">
-                      {dailyEstimate.hoursPerBlock != null
-                        ? `${formatNumber(dailyEstimate.hoursPerBlock, 1)} h`
-                        : "—"}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <MiningProfitCard
-              dailyEstimate={dailyEstimate}
-              period={revenuePeriod}
-            />
-          </>
+          <MiningEconomicsCard
+            dailyEstimate={dailyEstimate}
+            period={revenuePeriod}
+            onPeriodChange={setRevenuePeriod}
+            marketPriceUsd={marketPriceUsd}
+            usingCustomVrmPrice={usingCustomVrmPrice}
+            statsSource={networkStats?.source}
+          />
         )}
 
-        {active && minerState.data?.started_at && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Session</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-3 gap-4 text-sm">
-              <div>
-                <div className="text-xs text-fg-subtle">Uptime</div>
-                <div className="font-semibold tabular-nums">
-                  {formatSessionDuration(minerState.data.started_at)}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-fg-subtle">Avg hashrate</div>
-                <div className="font-semibold tabular-nums">
-                  {sessionAvg != null
-                    ? `${formatNumber(sessionAvg, 0)} H/m`
-                    : "—"}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-fg-subtle">Threads</div>
-                <div className="font-semibold tabular-nums">
-                  {minerState.data.threads}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {immature > 0 && (
-          <div className="rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm">
-            Pending from recent blocks:{" "}
-            <strong>{formatVrm(immature, 4)}</strong> (immature)
-          </div>
-        )}
-
-        <Card>
-          <CardHeader className="flex-row items-start justify-between">
-            <div>
-              <CardTitle>Local hashrate over time</CardTitle>
-              <CardDescription>Updated every few seconds.</CardDescription>
-            </div>
-            <ExplorerLink
-              target={{ kind: "raw", url: EXPLORER_PROFITABILITY }}
-              label="Profitability calculator"
-            />
-          </CardHeader>
-          <CardContent className="h-64">
-            {minerBooting && samples.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-fg-muted">
-                <Loader2 className="h-8 w-8 animate-spin text-accent" />
-                Waiting for first hashrate sample…
-              </div>
-            ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={samples}>
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke="var(--border)"
-                />
-                <XAxis
-                  dataKey="t"
-                  tickFormatter={(t) => new Date(t).toLocaleTimeString()}
-                  stroke="var(--fg-subtle)"
-                  fontSize={11}
-                />
-                <YAxis stroke="var(--fg-subtle)" fontSize={11} />
-                <Tooltip
-                  labelFormatter={(t) =>
-                    new Date(t as number).toLocaleTimeString()
-                  }
-                  contentStyle={{
-                    backgroundColor: "var(--bg-panel)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 6,
-                    fontSize: 12,
-                  }}
-                />
-                {sessionAvg != null && sessionAvg > 0 && (
-                  <ReferenceLine
-                    y={sessionAvg}
-                    stroke="var(--fg-subtle)"
-                    strokeDasharray="4 4"
-                    label={{
-                      value: "avg",
-                      position: "insideTopRight",
-                      fontSize: 10,
-                    }}
-                  />
-                )}
-                <Line
-                  type="monotone"
-                  dataKey="hashrate"
-                  stroke="var(--accent)"
-                  strokeWidth={2}
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
+        {!live && <MiningHashrateChart {...chartProps} emptyWhenIdle />}
       </div>
     </WalletUnlockGate>
   );

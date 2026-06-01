@@ -1,3 +1,6 @@
+/** Poll interval for `getmininginfo` hashrate across the wallet UI. */
+export const MINING_HASHRATE_POLL_MS = 10_000;
+
 /** How long to show "Starting…" after minerstart before treating 0 H/m as stalled. */
 export const MINER_BOOT_GRACE_SECONDS = 120;
 
@@ -15,17 +18,13 @@ export function isMinerBooting(
   return Date.now() / 1000 - startedAt < MINER_BOOT_GRACE_SECONDS;
 }
 
+/** React Query refetch interval for local mining hashrate (`getmininginfo`). */
 export function miningInfoRefetchMs(
-  active: boolean,
-  hashrate: number,
-  startedAt: number | undefined,
-  idleMs = 5_000,
-  activeMs?: number,
+  _active?: boolean,
+  _hashrate?: number,
+  _startedAt?: number,
+  _legacyIdleMs?: number,
+  _legacyActiveMs?: number,
 ): number {
-  const fastMs = activeMs ?? idleMs;
-  if (isMinerBooting(active, hashrate, startedAt)) {
-    return Math.min(fastMs, 1_000);
-  }
-  if (active || hashrate > 0) return fastMs;
-  return idleMs;
+  return MINING_HASHRATE_POLL_MS;
 }

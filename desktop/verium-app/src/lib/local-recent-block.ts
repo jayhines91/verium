@@ -1,7 +1,10 @@
 import type { CoinId } from "@/lib/coin/profile";
 import type { ExplorerBlock } from "@/lib/explorer-api";
 import type { BlockMinedEvent } from "@/hooks/useBlockMinedWatcher";
+import type { StakeRewardEvent } from "@/hooks/useStakeRewardWatcher";
 import { rpcRaw } from "@/lib/rpc/client";
+
+export type WalletRewardEvent = BlockMinedEvent | StakeRewardEvent;
 
 /** Merge explorer feed with blocks learned from the local node (shown immediately after mining). */
 export function mergeRecentBlocks(
@@ -34,7 +37,7 @@ export function mergeRecentBlocks(
 
 async function resolveBlockHash(
   coin: CoinId,
-  event: BlockMinedEvent,
+  event: WalletRewardEvent,
 ): Promise<string | undefined> {
   if (event.blockhash) return event.blockhash;
   if (event.height <= 0) return undefined;
@@ -46,10 +49,10 @@ async function resolveBlockHash(
   }
 }
 
-/** Build a recent-blocks row from the local node (available as soon as the wallet sees the coinbase). */
-export async function blockRowFromMinedEvent(
+/** Build a recent-blocks row from the local node as soon as the wallet sees the reward. */
+export async function blockRowFromRewardEvent(
   coin: CoinId,
-  event: BlockMinedEvent,
+  event: WalletRewardEvent,
 ): Promise<ExplorerBlock | null> {
   if (event.height <= 0) return null;
 
@@ -106,3 +109,6 @@ export async function blockRowFromMinedEvent(
     };
   }
 }
+
+/** @deprecated Use `blockRowFromRewardEvent`. */
+export const blockRowFromMinedEvent = blockRowFromRewardEvent;

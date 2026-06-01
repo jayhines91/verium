@@ -41,7 +41,7 @@ export const COIN_PROFILES: Record<CoinId, CoinProfile> = {
     tagline: "Currency",
     binaryName: "vericoind",
     confFilename: "vericonomy.conf",
-    chainArg: "-chain=vericoin",
+    chainArg: "-vericoin",
     defaultRpcPort: 58683,
     defaultP2pPort: 58684,
     earnMode: "staking",

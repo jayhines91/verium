@@ -1,27 +1,18 @@
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import { ArrowLeftRight, Coins, Cpu, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { coinQueryKey, getCoinProfile, type CoinId } from "@/lib/coin/profile";
-import { fetchExplorerStats } from "@/lib/explorer-api";
-import { useExplorerQueriesEnabled } from "@/lib/network-mode";
+import { getCoinProfile, type CoinId } from "@/lib/coin/profile";
 import { useDaemonStatus } from "@/hooks/useDaemonStatus";
-import {
-  rpcGetMinerState,
-  rpcGetMiningInfo,
-  rpcGetStakingState,
-  rpcGetVericoinMiningInfo,
-  rpcGetWalletInfo,
-  rpcListTransactions,
-  type TransactionItem,
-} from "@/lib/rpc/client";
+import { useDashboardData } from "@/hooks/useDashboardData";
+import { type TransactionItem } from "@/lib/rpc/client";
 import { formatCoinAmount } from "@/lib/units";
 import {
   networkCoinsStakingPercent,
   mergeStakingNetworkKpis,
 } from "@/lib/staking-stats";
+import { transactionCategoryLabel } from "@/lib/transaction-category";
+import { AnimatedHashrate } from "@/components/AnimatedHashrate";
 import { formatNumber } from "@/lib/utils";
-import { useWindowVisible } from "@/hooks/useWindowVisible";
 
 function isEarnActivity(tx: TransactionItem, coin: CoinId): boolean {
   if (coin === "verium") {
@@ -39,75 +30,20 @@ function isEarnActivity(tx: TransactionItem, coin: CoinId): boolean {
   );
 }
 
-function activityLabel(tx: TransactionItem): string {
-  switch (tx.category) {
-    case "generate":
-    case "immature":
-      return "Mined";
-    case "stake":
-    case "stake-mint":
-      return "Staked";
-    case "stake-orphan":
-      return "Stake orphan";
-    case "receive":
-      return "Received";
-    case "send":
-      return "Sent";
-    default:
-      return tx.category;
-  }
-}
-
 export function DashboardStrip({ coin }: { coin: CoinId }) {
   const profile = getCoinProfile(coin);
   const { data: status } = useDaemonStatus(coin);
   const connected = status?.connected === true;
   const showRpcData = connected;
-  const visible = useWindowVisible();
-
-  const wallet = useQuery({
-    queryKey: coinQueryKey(coin, "getwalletinfo"),
-    queryFn: () => rpcGetWalletInfo(coin),
-    refetchInterval: visible ? 10_000 : false,
-  });
-  // Shared key + limit with DashboardMiddleRow so React Query dedupes both
-  // dashboard cards into a single listtransactions poll.
-  const txs = useQuery({
-    queryKey: coinQueryKey(coin, "listtransactions", "dashboard"),
-    queryFn: () => rpcListTransactions(coin, 50, 0),
-    refetchInterval: visible ? 30_000 : false,
-  });
-  const vrmMining = useQuery({
-    queryKey: coinQueryKey("verium", "getmininginfo"),
-    queryFn: () => rpcGetMiningInfo("verium"),
-    refetchInterval: visible ? 5_000 : false,
-    enabled: coin === "verium",
-  });
-  const vrmMiner = useQuery({
-    queryKey: coinQueryKey("verium", "get_miner_state"),
-    queryFn: () => rpcGetMinerState("verium"),
-    refetchInterval: visible ? 5_000 : false,
-    enabled: coin === "verium",
-  });
-  const vrcStaking = useQuery({
-    queryKey: coinQueryKey("vericoin", "get_staking_state"),
-    queryFn: () => rpcGetStakingState("vericoin"),
-    refetchInterval: visible ? 5_000 : false,
-    enabled: coin === "vericoin",
-  });
-  const vrcMining = useQuery({
-    queryKey: coinQueryKey("vericoin", "getmininginfo"),
-    queryFn: () => rpcGetVericoinMiningInfo(),
-    refetchInterval: visible ? 10_000 : false,
-    enabled: coin === "vericoin",
-  });
-  const explorerEnabled = useExplorerQueriesEnabled();
-  const stats = useQuery({
-    queryKey: coinQueryKey(coin, "explorer-stats"),
-    queryFn: () => fetchExplorerStats(coin),
-    enabled: explorerEnabled,
-    refetchInterval: visible ? 60_000 : false,
-  });
+  const {
+    wallet,
+    transactions: txs,
+    mining: vrmMining,
+    minerState: vrmMiner,
+    stakingState: vrcStaking,
+    vrcMining,
+    explorer: stats,
+  } = useDashboardData(coin);
 
   const vrcNetwork =
     coin === "vericoin"
@@ -174,8 +110,12 @@ export function DashboardStrip({ coin }: { coin: CoinId }) {
           <CardContent className="grid grid-cols-2 gap-3 pb-4 pt-0 text-sm">
             <div>
               <div className="text-xs text-fg-subtle">Hashrate</div>
-              <div className="font-semibold tabular-nums">
-                {formatNumber(vrmMining.data?.hashrate ?? 0, 0)} H/m
+              <div className="font-semibold">
+                <AnimatedHashrate
+                  value={vrmMining.data?.hashrate}
+                  fractionDigits={0}
+                  className="text-fg"
+                />
               </div>
             </div>
             <div>
@@ -274,7 +214,9 @@ export function DashboardStrip({ coin }: { coin: CoinId }) {
                   className="flex items-center justify-between gap-3 py-2"
                 >
                   <div className="min-w-0">
-                    <div className="font-medium">{activityLabel(tx)}</div>
+                    <div className="font-medium">
+                      {transactionCategoryLabel(tx.category)}
+                    </div>
                     <div className="truncate text-xs text-fg-subtle">
                       {tx.txid.slice(0, 16)}…
                     </div>

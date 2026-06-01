@@ -1,7 +1,5 @@
 import { useActiveCoin } from "@/lib/coin/context";
-import { coinQueryKey } from "@/lib/coin/profile";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { MiningPickaxeAnimation } from "@/components/MiningPickaxeAnimation";
 import {
@@ -23,63 +21,25 @@ import {
   formatSessionDuration,
   networkSharePercent,
 } from "@/lib/mining-revenue";
-import { isMinerBooting, miningInfoRefetchMs } from "@/lib/mining-boot";
-import { fetchExplorerStats, isExplorerApiEnabled } from "@/lib/explorer-api";
-import {
-  rpcGetMinerState,
-  rpcGetMiningInfo,
-  rpcGetWalletInfo,
-  rpcListTransactions,
-} from "@/lib/rpc/client";
+import { isMinerBooting } from "@/lib/mining-boot";
 import { formatNumber, formatVrm } from "@/lib/utils";
-import { useWindowVisible } from "@/hooks/useWindowVisible";
+import { useDashboardData } from "@/hooks/useDashboardData";
 
 export function YourMiningPanel() {
   const coin = useActiveCoin();
-  const visible = useWindowVisible();
-  const minerState = useQuery({
-    queryKey: coinQueryKey(coin, "get_miner_state"),
-    queryFn: () => rpcGetMinerState(coin),
-    refetchInterval: visible ? 5_000 : false,
-  });
-  const minerActive = minerState.data?.active ?? false;
-  const minerStartedAt = minerState.data?.started_at;
-  const mining = useQuery({
-    queryKey: coinQueryKey(coin, "getmininginfo"),
-    queryFn: () => rpcGetMiningInfo(coin),
-    refetchInterval: (query) => {
-      if (!visible) return false;
-      const hr = query.state.data?.hashrate ?? 0;
-      return miningInfoRefetchMs(minerActive, hr, minerStartedAt, 5_000);
-    },
-  });
-  const wallet = useQuery({
-    queryKey: coinQueryKey(coin, "getwalletinfo"),
-    queryFn: () => rpcGetWalletInfo(coin),
-    refetchInterval: visible ? 10_000 : false,
-  });
-  const txs = useQuery({
-    queryKey: coinQueryKey(coin, "listtransactions", "mining-panel"),
-    queryFn: () => rpcListTransactions(coin, 50, 0),
-    refetchInterval: visible ? 30_000 : false,
-  });
-  const explorerEnabled = useQuery({
-    queryKey: ["explorer-api-enabled"],
-    queryFn: isExplorerApiEnabled,
-    staleTime: Infinity,
-  });
-  const explorerStats = useQuery({
-    queryKey: coinQueryKey(coin, "explorer-stats"),
-    queryFn: () => fetchExplorerStats(coin),
-    enabled: explorerEnabled.data === true,
-    refetchInterval: visible ? 30_000 : false,
-    retry: 0,
-  });
+  const {
+    mining,
+    minerState,
+    wallet,
+    transactions,
+    explorer: explorerStats,
+    minerActive,
+  } = useDashboardData(coin);
 
   const localHashrate = mining.data?.hashrate ?? 0;
   const networkStats = buildNetworkStats(explorerStats.data, mining.data);
   const blocksFound =
-    txs.data?.filter(
+    transactions.data?.filter(
       (t) => t.category === "generate" || t.category === "immature",
     ).length ?? 0;
   const immature = wallet.data?.immature_balance ?? 0;
@@ -87,7 +47,7 @@ export function YourMiningPanel() {
   const minerBooting = isMinerBooting(
     active,
     localHashrate,
-    minerStartedAt,
+    minerState.data?.started_at,
   );
   const share = networkSharePercent(localHashrate, networkStats?.networkHash);
   const estBlockH = estimateHoursPerBlock(localHashrate, networkStats);
@@ -151,17 +111,12 @@ export function YourMiningPanel() {
             <Stat
               label="Hashrate"
               value={
-                minerBooting ? (
-                  <MinerHashrateDisplay
-                    booting
-                    value=""
-                    className="font-semibold"
-                  />
-                ) : localHashrate > 0 ? (
-                  `${formatNumber(localHashrate, 0)} H/m`
-                ) : (
-                  "—"
-                )
+                <MinerHashrateDisplay
+                  booting={minerBooting}
+                  value={localHashrate > 0 ? localHashrate : undefined}
+                  fractionDigits={0}
+                  className="font-semibold"
+                />
               }
             />
             <Stat

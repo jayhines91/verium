@@ -1,7 +1,5 @@
 //! Anti-phishing spending controls and address allowlist.
 
-use std::collections::HashSet;
-
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppResult;
@@ -59,6 +57,17 @@ pub fn save(config: &SpendingControlsConfig) -> AppResult<()> {
     secret_store::save_json(STORE_LABEL, config)
 }
 
+/// Persist Security-page toggles without wiping send history or daily counters.
+pub fn save_ui_settings(incoming: &SpendingControlsConfig) -> AppResult<()> {
+    let mut config = load()?;
+    config.daily_spend_cap_vrm = incoming.daily_spend_cap_vrm;
+    config.daily_spend_cap_vrc = incoming.daily_spend_cap_vrc;
+    config.allowlist_only = incoming.allowlist_only;
+    config.require_first_send_confirmation = incoming.require_first_send_confirmation;
+    config.clipboard_guard_enabled = incoming.clipboard_guard_enabled;
+    save(&config)
+}
+
 fn today_str() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
@@ -72,7 +81,39 @@ fn reset_daily_if_needed(config: &mut SpendingControlsConfig) {
     }
 }
 
-pub fn check_spend_allowed(amount: f64, coin: &str, address: &str) -> AppResult<SpendCheckResult> {
+pub fn is_known_send_destination(
+    coin: &str,
+    address: &str,
+    config: &SpendingControlsConfig,
+) -> bool {
+    let address = address.trim();
+    if address.is_empty() {
+        return false;
+    }
+    if config
+        .sent_addresses
+        .iter()
+        .any(|a| a.eq_ignore_ascii_case(address))
+    {
+        return true;
+    }
+    if let Ok(coin_id) = crate::coin_profile::parse_coin_id(coin) {
+        if let Ok(entries) = crate::addressbook::list_entries(coin_id) {
+            return entries.iter().any(|entry| {
+                entry.category.eq_ignore_ascii_case("send")
+                    && entry.address.eq_ignore_ascii_case(address)
+            });
+        }
+    }
+    false
+}
+
+pub fn check_spend_allowed(
+    amount: f64,
+    coin: &str,
+    address: &str,
+    wallet_already_sent: bool,
+) -> AppResult<SpendCheckResult> {
     let mut config = load()?;
     reset_daily_if_needed(&mut config);
 
@@ -98,10 +139,7 @@ pub fn check_spend_allowed(amount: f64, coin: &str, address: &str) -> AppResult<
         }
     }
 
-    let is_first_send = !config
-        .sent_addresses
-        .iter()
-        .any(|a| a.eq_ignore_ascii_case(address));
+    let is_first_send = !is_known_send_destination(coin, address, &config) && !wallet_already_sent;
 
     let requires_extra = config.require_first_send_confirmation && is_first_send;
 
@@ -109,8 +147,22 @@ pub fn check_spend_allowed(amount: f64, coin: &str, address: &str) -> AppResult<
         allowed: true,
         reason: None,
         requires_extra_confirmation: requires_extra,
-        look_alike_warning: detect_look_alike(address, &config.sent_addresses),
+        look_alike_warning: detect_look_alike(address, &known_addresses_for_lookalike(coin, &config)),
     })
+}
+
+fn known_addresses_for_lookalike(coin: &str, config: &SpendingControlsConfig) -> Vec<String> {
+    let mut known = config.sent_addresses.clone();
+    if let Ok(coin_id) = crate::coin_profile::parse_coin_id(coin) {
+        if let Ok(entries) = crate::addressbook::list_entries(coin_id) {
+            for entry in entries {
+                if entry.category.eq_ignore_ascii_case("send") {
+                    known.push(entry.address);
+                }
+            }
+        }
+    }
+    known
 }
 
 pub fn record_spend(amount: f64, coin: &str, address: &str) -> AppResult<()> {
@@ -120,10 +172,12 @@ pub fn record_spend(amount: f64, coin: &str, address: &str) -> AppResult<()> {
         "vericoin" => config.spent_today_vrc += amount,
         _ => config.spent_today_vrm += amount,
     }
-    if !config
-        .sent_addresses
-        .iter()
-        .any(|a| a.eq_ignore_ascii_case(address))
+    let address = address.trim();
+    if !address.is_empty()
+        && !config
+            .sent_addresses
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case(address))
     {
         config.sent_addresses.push(address.to_string());
     }

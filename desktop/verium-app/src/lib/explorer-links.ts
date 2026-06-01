@@ -79,41 +79,72 @@ function legacyHashTemplate(
   return `${host}/#${fragment}/%s`;
 }
 
+/** True when a saved template targets the other chain (vrm vs vrc path or legacy host). */
+export function explorerTemplateTargetsOtherChain(
+  coin: CoinId,
+  stored: string,
+): boolean {
+  const lower = stored.toLowerCase();
+  const otherPath = explorerChainPath(otherCoin(coin));
+  if (lower.includes(`/${otherPath}/`) || lower.includes(`/${otherPath}#`)) {
+    return true;
+  }
+  if (coin === "verium" && lower.includes("explorer-vrc")) return true;
+  if (coin === "vericoin" && lower.includes("explorer-vrm")) return true;
+  return false;
+}
+
+function effectiveExplorerTemplate(
+  coin: CoinId,
+  stored: string | undefined,
+  fragment: "tx" | "block" | "address",
+  defaultFor: (c: CoinId) => string,
+): string {
+  const coinDefault = defaultFor(coin);
+  if (!stored) return coinDefault;
+  if (isLegacyExplorerUrl(stored)) return coinDefault;
+  if (stored === legacyHashTemplate(coin, fragment)) return coinDefault;
+  if (stored === legacyHashTemplate(otherCoin(coin), fragment)) return coinDefault;
+  if (stored === defaultFor(otherCoin(coin))) return coinDefault;
+  if (explorerTemplateTargetsOtherChain(coin, stored)) return coinDefault;
+  return stored;
+}
+
 /** Prefer the active coin's explorer when prefs still hold a legacy or other-chain default. */
 export function effectiveTxExplorerTemplate(
   coin: CoinId,
   stored: string | undefined,
 ): string {
-  const coinDefault = defaultTxExplorerTemplate(coin);
-  if (!stored) return coinDefault;
-  if (isLegacyExplorerUrl(stored)) return coinDefault;
-  if (stored === legacyHashTemplate(coin, "tx")) return coinDefault;
-  if (stored === legacyHashTemplate(otherCoin(coin), "tx")) return coinDefault;
-  return stored;
+  return effectiveExplorerTemplate(
+    coin,
+    stored,
+    "tx",
+    defaultTxExplorerTemplate,
+  );
 }
 
 export function effectiveBlockExplorerTemplate(
   coin: CoinId,
   stored: string | undefined,
 ): string {
-  const coinDefault = defaultBlockExplorerTemplate(coin);
-  if (!stored) return coinDefault;
-  if (isLegacyExplorerUrl(stored)) return coinDefault;
-  if (stored === legacyHashTemplate(coin, "block")) return coinDefault;
-  if (stored === legacyHashTemplate(otherCoin(coin), "block")) return coinDefault;
-  return stored;
+  return effectiveExplorerTemplate(
+    coin,
+    stored,
+    "block",
+    defaultBlockExplorerTemplate,
+  );
 }
 
 export function effectiveAddressExplorerTemplate(
   coin: CoinId,
   stored: string | undefined,
 ): string {
-  const coinDefault = defaultAddressExplorerTemplate(coin);
-  if (!stored) return coinDefault;
-  if (isLegacyExplorerUrl(stored)) return coinDefault;
-  if (stored === legacyHashTemplate(coin, "address")) return coinDefault;
-  if (stored === legacyHashTemplate(otherCoin(coin), "address")) return coinDefault;
-  return stored;
+  return effectiveExplorerTemplate(
+    coin,
+    stored,
+    "address",
+    defaultAddressExplorerTemplate,
+  );
 }
 
 export function buildTxExplorerUrl(
@@ -121,9 +152,10 @@ export function buildTxExplorerUrl(
   template: string,
   txid: string,
 ): string {
+  const resolved = effectiveTxExplorerTemplate(coin, template);
   const safe =
-    template && template.includes("%s")
-      ? template
+    resolved && resolved.includes("%s")
+      ? resolved
       : defaultTxExplorerTemplate(coin);
   return safe.replace("%s", encodeURIComponent(txid));
 }
@@ -133,9 +165,10 @@ export function buildBlockExplorerUrl(
   template: string,
   blockHashOrHeight: string | number,
 ): string {
+  const resolved = effectiveBlockExplorerTemplate(coin, template);
   const safe =
-    template && template.includes("%s")
-      ? template
+    resolved && resolved.includes("%s")
+      ? resolved
       : defaultBlockExplorerTemplate(coin);
   return safe.replace("%s", encodeURIComponent(String(blockHashOrHeight)));
 }
@@ -145,9 +178,10 @@ export function buildAddressExplorerUrl(
   template: string,
   address: string,
 ): string {
+  const resolved = effectiveAddressExplorerTemplate(coin, template);
   const safe =
-    template && template.includes("%s")
-      ? template
+    resolved && resolved.includes("%s")
+      ? resolved
       : defaultAddressExplorerTemplate(coin);
   return safe.replace("%s", encodeURIComponent(address));
 }

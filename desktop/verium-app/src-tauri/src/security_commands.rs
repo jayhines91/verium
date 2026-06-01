@@ -1,14 +1,14 @@
 //! Tauri commands for security, recovery, 2FA, passkeys, hardware wallets, etc.
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::State;
 
 use crate::audit_log::{self, AuditEntry};
 use crate::auto_lock::{self, AutoLockConfig};
 use crate::backup_scheduler::{self, BackupHealth, BackupSchedulerConfig, ScheduledBackupResult};
+use crate::coin_profile::{parse_coin_id, CoinId};
 use crate::commands;
-use crate::coin_profile::parse_coin_id;
 use crate::error::{AppError, AppResult};
 use crate::hardware_wallet::{self, HardwareWalletConfig, HardwareVendor, PsbtSendResult};
 use crate::installer_verify::{self, VerificationStatus};
@@ -366,16 +366,48 @@ pub fn spending_controls_get() -> AppResult<SpendingControlsConfig> {
 
 #[tauri::command]
 pub fn spending_controls_save(config: SpendingControlsConfig) -> AppResult<()> {
-    spending_controls::save(&config)
+    spending_controls::save_ui_settings(&config)
+}
+
+async fn wallet_has_sent_to(state: &AppState, coin: CoinId, address: &str) -> bool {
+    let address = address.trim();
+    if address.is_empty() {
+        return false;
+    }
+    let client = match state.rpc_client(coin).await {
+        Ok(client) => client,
+        Err(_) => return false,
+    };
+    let txs: Value = match client
+        .call("listtransactions", json!(["*", 2000, 0]))
+        .await
+    {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let Some(items) = txs.as_array() else {
+        return false;
+    };
+    items.iter().any(|tx| {
+        tx.get("category").and_then(Value::as_str) == Some("send")
+            && tx
+                .get("address")
+                .and_then(Value::as_str)
+                .is_some_and(|addr| addr.eq_ignore_ascii_case(address))
+    })
 }
 
 #[tauri::command]
-pub fn spending_controls_check_send(
+pub async fn spending_controls_check_send(
+    state: State<'_, AppState>,
     amount: f64,
     coin: String,
     address: String,
 ) -> AppResult<SpendCheckResult> {
-    spending_controls::check_spend_allowed(amount, &coin, &address)
+    let coin_id = parse_coin_id(&coin)?;
+    let address = address.trim().to_string();
+    let wallet_already_sent = wallet_has_sent_to(state.inner(), coin_id, &address).await;
+    spending_controls::check_spend_allowed(amount, &coin, &address, wallet_already_sent)
 }
 
 #[tauri::command]

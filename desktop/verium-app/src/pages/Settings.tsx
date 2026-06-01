@@ -54,6 +54,7 @@ import { MiningRewardAddressControls } from "@/components/MiningRewardAddressCon
 import type { MiningRewardAddressMode } from "@/lib/mining-reward-address";
 import {
   playBlockMinedSound,
+  playStakeRewardSound,
   unlockBlockMinedAudio,
 } from "@/lib/block-mined-sound";
 import {
@@ -61,11 +62,11 @@ import {
   unlockReceivedVrmAudio,
 } from "@/lib/received-vrm-sound";
 import {
-  DEFAULT_ADDRESS_EXPLORER_TEMPLATE,
-  DEFAULT_BLOCK_EXPLORER_TEMPLATE,
-  DEFAULT_TX_EXPLORER_TEMPLATE,
-  DOCS_DOWNLOADS,
-} from "@/lib/verium-links";
+  defaultAddressExplorerTemplate,
+  defaultBlockExplorerTemplate,
+  defaultTxExplorerTemplate,
+} from "@/lib/explorer-links";
+import { DOCS_DOWNLOADS } from "@/lib/verium-links";
 import { ADVANCED_SETTINGS_ENABLED } from "@/lib/features";
 
 export function Settings() {
@@ -232,7 +233,7 @@ export function Settings() {
             Automatically start Vericoin staking when the app opens.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-col gap-3">
           <label className="flex cursor-pointer items-center gap-3 text-sm">
             <input
               type="checkbox"
@@ -245,6 +246,20 @@ export function Settings() {
               className="h-4 w-4 rounded border-border accent-accent"
             />
             <span>Auto-stake on open</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={prefs.play_sound_on_stake_reward === true}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                void unlockBlockMinedAudio();
+                void updatePrefs({ play_sound_on_stake_reward: checked });
+                if (checked) void playStakeRewardSound();
+              }}
+              className="h-4 w-4 rounded border-border accent-accent"
+            />
+            <span>Play chime when this wallet earns a stake reward</span>
           </label>
         </CardContent>
       </Card>
@@ -276,6 +291,7 @@ export function Settings() {
             manualThreads={prefs.auto_mine_threads ?? 2}
             suggestedThreads={suggestedThreads}
             maxThreads={maxThreads}
+            topology={topology.data}
             logicalCpus={logicalCpus}
             onAutoAdjustChange={handleAutoAdjustChange}
             onManualThreadsChange={(threads) =>
@@ -520,31 +536,31 @@ export function Settings() {
                   onChange={(v) =>
                     void updatePrefs({ explorer_tx_url_template: v })
                   }
-                  placeholder={DEFAULT_TX_EXPLORER_TEMPLATE}
+                  placeholder={defaultTxExplorerTemplate(activeCoin)}
                   mono
                 />
                 <Field
                   label="Block URL"
                   value={
                     prefs.explorer_block_url_template ??
-                    DEFAULT_BLOCK_EXPLORER_TEMPLATE
+                    defaultBlockExplorerTemplate(activeCoin)
                   }
                   onChange={(v) =>
                     void updatePrefs({ explorer_block_url_template: v })
                   }
-                  placeholder={DEFAULT_BLOCK_EXPLORER_TEMPLATE}
+                  placeholder={defaultBlockExplorerTemplate(activeCoin)}
                   mono
                 />
                 <Field
                   label="Address URL"
                   value={
                     prefs.explorer_address_url_template ??
-                    DEFAULT_ADDRESS_EXPLORER_TEMPLATE
+                    defaultAddressExplorerTemplate(activeCoin)
                   }
                   onChange={(v) =>
                     void updatePrefs({ explorer_address_url_template: v })
                   }
-                  placeholder={DEFAULT_ADDRESS_EXPLORER_TEMPLATE}
+                  placeholder={defaultAddressExplorerTemplate(activeCoin)}
                   mono
                 />
               </section>

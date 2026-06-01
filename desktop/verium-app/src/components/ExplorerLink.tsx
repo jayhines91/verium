@@ -1,3 +1,4 @@
+import { type ReactNode } from "react";
 import { ExternalLink } from "lucide-react";
 import { useActiveCoin } from "@/lib/coin/context";
 import type { CoinId } from "@/lib/coin/profile";
@@ -24,7 +25,7 @@ type ExplorerTarget =
 interface ExplorerLinkProps {
   target: ExplorerTarget;
   coin?: CoinId;
-  label?: string;
+  label?: ReactNode;
   className?: string;
   showIcon?: boolean;
   title?: string;
@@ -72,14 +73,14 @@ export function ExplorerLink({
   return (
     <button
       type="button"
-      title={title ?? label}
+      title={title ?? (typeof label === "string" ? label : "View on explorer")}
       onClick={() => void openExternal(resolveUrl())}
       className={cn(
         "inline-flex items-center gap-1 text-xs text-accent underline-offset-2 hover:underline",
         className,
       )}
     >
-      {label.slice(0, 20)}...
+      {label}
       {showIcon && (
         <ExternalLink className="h-3 w-3 shrink-0 opacity-70 truncate" />
       )}

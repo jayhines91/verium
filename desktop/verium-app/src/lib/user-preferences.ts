@@ -20,6 +20,7 @@ export interface UserPreferences {
   auto_mine_on_open?: boolean;
   auto_stake_on_open?: boolean;
   play_sound_on_block_mined?: boolean;
+  play_sound_on_stake_reward?: boolean;
   notify_on_vrm_received?: boolean;
   notify_on_vrc_received?: boolean;
   /** When true, thread count follows CPU topology; when false, uses auto_mine_threads. */
@@ -57,6 +58,7 @@ const DEFAULT_PREFS: UserPreferences = {
   auto_mine_on_open: false,
   auto_stake_on_open: false,
   play_sound_on_block_mined: false,
+  play_sound_on_stake_reward: false,
   notify_on_vrm_received: true,
   notify_on_vrc_received: true,
   auto_adjust_mine_threads: true,
