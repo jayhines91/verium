@@ -1,13 +1,29 @@
 name: Build Verium (Windows x86_64 via Ubuntu)
 
 on:
+  push:
+    branches: [testnet]
+    paths: ['**.c', '**.cpp', '**.h', 'depends/**', '.github/workflows/Windows64Build.yml', 'configure.ac', 'Makefile*', 'src/**', 'share/**', 'contrib/**']
   workflow_dispatch:
+    inputs:
+      target_ref:
+        description: "Branch/Tag/SHA to build"
+        required: true
+        default: "testnet"
+      depends_target:
+        description: "Optional: build only this depends pkg first (e.g., curl, openssl). Leave empty for full depends."
+        required: false
+        default: ""
+      verbose_make:
+        description: "Verbose make output (V=1)"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
 
 concurrency:
-  group: verium-ci-${{ github.ref }}   
+  group: verium-ci-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -23,16 +39,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || github.ref }}
           submodules: recursive
           fetch-depth: 0
 
-      - name: Base deps + MinGW
+      - name: Base deps + MinGW toolchain + NSIS
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential automake libtool pkg-config python3 \
             g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 \
-            curl zip unzip ccache
+            curl zip unzip ccache nsis
 
       # Optional: preseed source tarballs (uncomment if you host them)
       # - name: Preseed depends sources
@@ -63,7 +80,20 @@ jobs:
       - name: Build depends (Win64)
         run: |
           set -e
-          make -C depends HOST=${HOST_TRIPLET} -j"$(nproc || echo 2)" || {
+          export RC=${HOST_TRIPLET}-windres
+          export WINDRES=${HOST_TRIPLET}-windres
+
+          JOBS=$(($(nproc) > 4 ? 4 : $(nproc)))
+          if [ -n "${{ github.event.inputs.depends_target }}" ]; then
+            echo "Priming depends target: ${{ github.event.inputs.depends_target }}"
+            make -C depends HOST=${HOST_TRIPLET} \
+              CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 \
+              ${{ github.event.inputs.depends_target }} -j"$JOBS" \
+              RC="$RC" WINDRES="$WINDRES"
+          fi
+          make -C depends HOST=${HOST_TRIPLET} \
+            CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 \
+            -j"$JOBS" RC="$RC" WINDRES="$WINDRES" || {
             echo "---- tail curl config.log ----"
             find depends/work/build -path "*/curl/*/config.log" -exec sh -c 'echo "==> {}"; tail -n 200 "{}"' \;
             echo "---- tail any config.log ----"
@@ -71,21 +101,72 @@ jobs:
             exit 1
           }
 
+      - name: Patch chainparams seeds to old style
+        run: |
+          set -e
+          f=src/chainparams.cpp
+          test -f "$f" || { echo "$f not found"; exit 1; }
+          cp "$f" "$f.bak"
+          # Replace 3-arg and 2-arg forms with a single host string
+          perl -0777 -pe 's/vSeeds\.emplace_back\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)/vSeeds.push_back("$1")/g' -i "$f"
+          # Optional: also handle initializer-list style if present
+          perl -0777 -pe 's/vSeeds\.push_back\(\s*CDNSSeedData\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*(?:,\s*(?:true|false))?\s*\)\s*\)/vSeeds.push_back("$1")/g' -i "$f"
+          echo "Patch diff:"
+          git --no-pager diff -- "$f" || true
+
+      - name: Shim gmtime_r for Windows (use gmtime_s)
+        run: |
+          set -e
+          f=src/util/time.cpp
+          if [ -f "$f" ] && ! grep -q 'gmtime_r_compat' "$f"; then
+            {
+              echo '#ifdef _WIN32'
+              echo '#include <time.h>'
+              echo 'static inline struct tm* gmtime_r_compat(const time_t* t, struct tm* res){ return gmtime_s(res,t)==0 ? res : NULL; }'
+              echo '#define gmtime_r(t,r) gmtime_r_compat((t),(r))'
+              echo '#endif'
+              cat "$f"
+            } > "$f".tmp && mv "$f".tmp "$f"
+          fi
+
+      - name: Initialize Qt automake vars (fix += error)
+        run: |
+          set -e
+          f=src/Makefile.qt.include
+          if [ -f "$f" ]; then
+            # Insert only if not already present
+            grep -q '^[[:space:]]*LIBBITCOINQT_LIBS[[:space:]]*=' "$f" || \
+              sed -i '1i LIBBITCOINQT_LIBS =\nLIBBITCOINQT_INCLUDES =' "$f"
+            echo "Patched $f:"
+            head -n 8 "$f"
+          else
+            echo "ERROR: $f not found" >&2
+            exit 1
+          fi
+
       - name: Configure (Win64)
         run: |
           ./autogen.sh
           export CONFIG_SITE="$(pwd)/depends/${HOST_TRIPLET}/share/config.site"
           set -o pipefail
+          rm -f config.cache
           ./configure \
             --host=${HOST_TRIPLET} \
             --prefix="$(pwd)/depends/${HOST_TRIPLET}" \
             --disable-bench --disable-tests \
             --enable-reduce-exports \
             --disable-shared --enable-static \
+            ac_cv_search_clock_gettime=no \
           || { echo "=== config.log (tail) ==="; tail -n 200 config.log || true; exit 1; }
 
       - name: Build (Win64)
-        run: make -j"$(nproc || echo 2)" V=1
+        run: |
+          JOBS=$(($(nproc) > 4 ? 4 : $(nproc)))
+          if [ "${{ github.event.inputs.verbose_make }}" = "true" ]; then
+            make -j"$JOBS" V=1
+          else
+            make -j"$JOBS"
+          fi
 
       - name: Package + checksums
         run: |
@@ -97,14 +178,34 @@ jobs:
           cp -f src/*.exe out/ 2>/dev/null || true
           cp -f src/qt/*.exe out/ 2>/dev/null || true
           [ -n "$(ls -A out)" ] || { echo "No Windows EXEs in out/"; exit 2; }
+          ./contrib/release-tools/gather-manpages.sh "out/share/man/man1"
           (cd out && zip -r "../$PKG" .)
           sha256sum "$PKG" > "${PKG}.SHA256SUMS"
+
+          echo "=== NSIS Installer ==="
+          make deploy
+          SETUP=$(ls verium-*-win64-setup.exe 2>/dev/null | head -1)
+          [ -n "$SETUP" ] || { echo "NSIS installer not built"; exit 3; }
+          sha256sum "$SETUP" >> "${PKG}.SHA256SUMS"
           echo "ART_MAIN=$PKG" >> $GITHUB_ENV
           echo "ART_SUMS=${PKG}.SHA256SUMS" >> $GITHUB_ENV
+          echo "ART_SETUP=$SETUP" >> $GITHUB_ENV
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifacts (binaries + checksums + installer)
+        uses: actions/upload-artifact@v4
         with:
           name: win64-${{ env.HOST_TRIPLET }}
           path: |
             ${{ env.ART_MAIN }}
             ${{ env.ART_SUMS }}
+            ${{ env.ART_SETUP }}
+
+      - name: Upload build logs (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: win64-dep-logs
+          path: |
+            depends/work/build/**/config.log
+            depends/work/build/**/config.status
+          if-no-files-found: ignore

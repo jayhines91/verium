@@ -23,7 +23,7 @@
 
   <url type="homepage">https://www.vericonomy.com</url>
   <developer_name>Verium Team</developer_name>
-  <update_contact>dev@vericoin.info</update_contact>
+  <update_contact>dev@vericonomy.com</update_contact>
 
   <provides>
     <binary>verium-qt</binary>

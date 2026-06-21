@@ -1,4 +1,4 @@
-dist_man1_MANS=
+dist_man1_MANS=verium-testnet.1
 
 if BUILD_BITCOIND
   dist_man1_MANS+=veriumd.1

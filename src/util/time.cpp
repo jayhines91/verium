@@ -1,3 +1,8 @@
+#ifdef _WIN32
+#include <time.h>
+static inline struct tm* gmtime_r_compat(const time_t* t, struct tm* res){ return gmtime_s(res,t)==0 ? res : NULL; }
+#define gmtime_r(t,r) gmtime_r_compat((t),(r))
+#endif
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying

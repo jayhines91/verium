@@ -1,13 +1,14 @@
-
 name: Build Verium (Linux x86_64 • depends)
 
 on:
+  push:
+    branches: [ testnet ]
   workflow_dispatch:
     inputs:
       target_ref:
         description: "Branch/Tag/SHA to build"
         required: true
-        default: "Verium-1.3.5"
+        default: "testnet"
       depends_target:
         description: "Optional: build only this depends pkg first (e.g., boost, openssl). Leave empty for full depends."
         required: false
@@ -45,7 +46,7 @@ jobs:
       - name: Checkout target ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.target_ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || github.ref }}
           submodules: recursive
           fetch-depth: 0
 
@@ -79,11 +80,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          # NEW: install gcc-9/g++-9
           sudo apt-get install -y \
             build-essential automake libtool pkg-config python3 \
             curl zip unzip ccache \
-            gcc-9 g++-9
+            gcc-9 g++-9 gcc-11 g++-11
           "$CC" --version; "$CXX" --version
 
       - name: Build depends (Linux)
@@ -166,16 +166,39 @@ jobs:
       - name: Package + checksums (Linux)
         run: |
           set -euo pipefail
-          V=$(git describe --tags --dirty --always || echo untagged)
+          V=$(grep '^PACKAGE_VERSION' Makefile 2>/dev/null | sed 's/.*= *//' | tr -d ' ') || echo "1.3.5.2"
           OUTDIR="out-linux"
-          mkdir -p "$OUTDIR"
-          cp -f src/verium* "$OUTDIR/" 2>/dev/null || true
-          cp -f src/qt/verium* "$OUTDIR/" 2>/dev/null || true
-          if [ -z "$(ls -A "$OUTDIR" 2>/dev/null)" ]; then
+          rm -rf "$OUTDIR"
+          mkdir -p "$OUTDIR"/{daemon,doc,manpages,share/applications,share/pixmaps,share/icons/hicolor/128x128/apps}
+
+          # Root: GUI binary, COPYING, readme (matches Windows layout)
+          cp -f src/qt/verium-qt "$OUTDIR/"
+          cp -f COPYING "$OUTDIR/"
+          cp -f doc/README_windows.txt "$OUTDIR/readme.txt"
+
+          # daemon/: CLI tools (matches Windows)
+          cp -f src/veriumd src/verium-cli src/verium-tx src/verium-wallet "$OUTDIR/daemon/" 2>/dev/null || true
+
+          # doc/: release notes and docs (matches Windows)
+          cp -r doc "$OUTDIR/"
+          rm -rf "$OUTDIR/doc/man"
+          find "$OUTDIR/doc" -name 'Makefile*' -delete 2>/dev/null || true
+
+          # manpages/: all man pages (matches Windows)
+          ./contrib/release-tools/gather-manpages.sh "$OUTDIR/manpages"
+
+          # share/: .desktop launcher and icon for verium-qt
+          cp -f share/applications/verium-qt.desktop "$OUTDIR/share/applications/"
+          cp -f share/pixmaps/verium-qt.png "$OUTDIR/share/pixmaps/"
+          cp -f share/pixmaps/verium-qt.png "$OUTDIR/share/icons/hicolor/128x128/apps/"
+          cp -f contrib/release-tools/INSTALL_LINUX.txt "$OUTDIR/"
+
+          if [ -z "$(ls -A "$OUTDIR" 2>/dev/null)" ] || [ ! -f "$OUTDIR/verium-qt" ]; then
             echo "No Linux binaries found in $OUTDIR; exiting."
             exit 2
           fi
-          PKG="verium-${V}-${HOST_TRIPLET}.tar.gz"
+
+          PKG="verium-${V}-x86_64-pc-linux-gnu.tar.gz"
           tar -C "$OUTDIR" -czf "$PKG" .
           sha256sum "$PKG" > "${PKG}.SHA256SUMS"
           echo "ART_MAIN=$PKG" >> $GITHUB_ENV

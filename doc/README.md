@@ -7,7 +7,7 @@ Verium is the original Verium client and it builds the backbone of the network. 
 
 In order to help you to be able to sync as fast as possible we have implemented a bootstrap system explain in the documentation below
 
-To download Verium, visit [vericoin.info](https://vericoin.info/verium-digital-reserve/).
+To download Verium, visit [vericonomy.com](https://vericonomy.com).
 
 Running
 ---------------------
@@ -39,10 +39,10 @@ In order to speed up the download of the blockchain and to let you discover the 
 
 ### Need Help?
 
-* See the documentation at the [Vericoin & Verium Wiki](https://wiki.vericoin.info/)
+* See the documentation at the [Vericoin & Verium Wiki](https://docs.vericonomy.com)
 for help and more information.
 * Ask for help on 
- - [Slack](https://slack.vericoin.info)
+ - [Slack](https://vericonomy.com)
  - [Telegram](https://t.me/vericoinandverium)
  - [Vericoin & Verium Reddit](https://www.reddit.com/r/vericoin)
 
@@ -68,7 +68,7 @@ The Verium repo's [root README](/README.md) contains relevant information on the
 - [Benchmarking](benchmarking.md)
 
 ### Resources
-* Discuss on the [Slack](https://slack.vericoin.info), in the development channel.
+* Discuss on the [Slack](https://vericonomy.com), in the development channel.
 * Follow the [Development Kanban](https://trello.com/b/Fna9ydfw/vericonomy).
 
 ### Miscellaneous

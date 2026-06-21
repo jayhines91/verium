@@ -1,6 +1,6 @@
 Verium Vault version 1.3.1 is now available from:
 
-  https://vericoin.info
+  https://vericonomy.com
 
 This is a new major version release, bringing both new features and
 bug fixes.

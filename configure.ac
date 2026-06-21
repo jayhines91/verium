@@ -3,10 +3,10 @@ AC_PREREQ([2.60])
 define(_CLIENT_VERSION_MAJOR, 1)
 define(_CLIENT_VERSION_MINOR, 3)
 define(_CLIENT_VERSION_REVISION, 5)
-define(_CLIENT_VERSION_BUILD, 0)
+define(_CLIENT_VERSION_BUILD, 2)
 define(_CLIENT_VERSION_RC, 0)
 define(_CLIENT_VERSION_IS_RELEASE, true)
-define(_COPYRIGHT_YEAR, 2025)
+define(_COPYRIGHT_YEAR, 2026)
 define(_COPYRIGHT_HOLDERS,[The %s developers])
 define(_COPYRIGHT_HOLDERS_SUBSTITUTION,[[Vericonomy]])
 AC_INIT([Verium],m4_join([.], _CLIENT_VERSION_MAJOR, _CLIENT_VERSION_MINOR, _CLIENT_VERSION_REVISION, m4_if(_CLIENT_VERSION_BUILD, [0], [], _CLIENT_VERSION_BUILD))m4_if(_CLIENT_VERSION_RC, [0], [], [rc]_CLIENT_VERSION_RC),[https://github.com/VeriumReserve/verium/issues]/[https://github.com/jayhines91/verium],[verium],[https://Vericonomy.com/])
@@ -17,7 +17,7 @@ AC_CONFIG_MACRO_DIR([build-aux/m4])
 AM_PROG_AS
 
 BITCOIN_DAEMON_NAME=veriumd
-BITCOIN_GUI_NAME=verium
+BITCOIN_GUI_NAME=verium-qt
 BITCOIN_CLI_NAME=verium-cli
 BITCOIN_TX_NAME=verium-tx
 BITCOIN_WALLET_TOOL_NAME=verium-wallet

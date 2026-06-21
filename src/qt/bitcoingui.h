@@ -342,9 +342,11 @@ protected:
     /** So that it responds to left-button clicks */
     void mousePressEvent(QMouseEvent *event);
     void mouseMoveEvent(QMouseEvent *event);
+    void mouseReleaseEvent(QMouseEvent *event);
 
 private:
     QPointF initPosition;
+    bool m_dragging;
 
 };
 
