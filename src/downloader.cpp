@@ -58,8 +58,7 @@ bool bootstrapStagingReady()
 {
     const fs::path staging = GetDataDir() / "bootstrap";
     return fs::exists(staging / "blocks") &&
-           fs::exists(staging / "chainstate") &&
-           fs::exists(staging / "indexes");
+           fs::exists(staging / "chainstate");
 }
 
 bool bootstrapApplyPending()
@@ -131,26 +130,31 @@ void requestBootstrapDownloadRetryNow()
 
 bool pauseNetworkForBootstrap()
 {
+    SetChainSyncPausedForBootstrap(true);
+
     if (!g_connman) {
-        LogPrintf("bootstrap: pauseNetworkForBootstrap skipped (connman not ready)\n");
+        LogPrintf("bootstrap: connman not ready; chain sync paused only\n");
         return false;
     }
     if (g_bootstrap_network_paused) {
         return true;
     }
     const bool prior = g_connman->GetNetworkActive();
-    if (prior) {
-        SetChainSyncPausedForBootstrap(true);
-        g_connman->SetNetworkActive(false);
-        g_bootstrap_network_paused = true;
-        LogActivity("Bootstrap: pausing P2P and chain sync during download and extract");
-        LogPrintf("bootstrap: network paused for bootstrap\n");
+    if (!prior) {
+        // SetNetworkActive(false) is a no-op when already inactive; toggle to force DisconnectNodes().
+        g_connman->SetNetworkActive(true);
     }
+    g_connman->SetNetworkActive(false);
+    g_bootstrap_network_paused = true;
+    LogActivity("Bootstrap: pausing P2P and chain sync during download and extract");
+    LogPrintf("bootstrap: network paused for bootstrap (was %sactive)\n", prior ? "" : "in");
     return prior;
 }
 
 void restoreNetworkAfterBootstrap()
 {
+    SetChainSyncPausedForBootstrap(false);
+
     if (!g_bootstrap_network_paused) {
         return;
     }
@@ -160,7 +164,6 @@ void restoreNetworkAfterBootstrap()
     }
     g_connman->SetNetworkActive(true);
     g_bootstrap_network_paused = false;
-    SetChainSyncPausedForBootstrap(false);
     LogActivity("Bootstrap: resuming P2P and chain sync");
     LogPrintf("bootstrap: network restored (active=true)\n");
 }
@@ -518,11 +521,78 @@ void validateBootstrapContent() {
 
     LogPrintf("bootstrap: Checking Bootstrap Content\n");
 
-    if (!boost::filesystem::exists(GetDataDir() / "bootstrap" / "chainstate") ||
-        !boost::filesystem::exists(GetDataDir() / "bootstrap" / "blocks") ||
-        !boost::filesystem::exists(GetDataDir() / "bootstrap" / "indexes"))
-        throw std::runtime_error("bootstrap: Downloaded zip file did not contain all necessary files!\n");
+    const fs::path staging = GetDataDir() / "bootstrap";
+    std::string missing;
+    if (!boost::filesystem::exists(staging / "blocks"))
+        missing += " blocks";
+    if (!boost::filesystem::exists(staging / "chainstate"))
+        missing += " chainstate";
+    if (!missing.empty()) {
+        throw std::runtime_error(strprintf(
+            "bootstrap: Downloaded zip file did not contain all necessary files (%s)!",
+            missing.substr(1)));
+    }
 
+    if (!boost::filesystem::exists(staging / "indexes")) {
+        LogPrintf("bootstrap: archive has no indexes/; optional indexes will be rebuilt after install\n");
+        LogActivity("Bootstrap: no indexes in archive (will rebuild on startup if enabled)");
+    }
+
+}
+
+static void copy_directory_recursive(const fs::path& src, const fs::path& dst)
+{
+    boost::system::error_code ec;
+    fs::create_directories(dst, ec);
+    if (ec) {
+        throw std::runtime_error(strprintf("bootstrap: Unable to create %s: %s", dst.string(), ec.message()));
+    }
+
+    for (fs::directory_iterator it(src, ec), end; it != end; it.increment(ec)) {
+        if (ec) {
+            throw std::runtime_error(strprintf("bootstrap: Unable to read %s: %s", src.string(), ec.message()));
+        }
+        const fs::path from = it->path();
+        const fs::path to = dst / from.filename();
+        if (fs::is_directory(from)) {
+            copy_directory_recursive(from, to);
+        } else {
+            fs::create_directories(to.parent_path(), ec);
+            if (ec) {
+                throw std::runtime_error(strprintf("bootstrap: Unable to create %s: %s", to.parent_path().string(), ec.message()));
+            }
+            fs::copy_file(from, to, fs::copy_option::overwrite_if_exists, ec);
+            if (ec) {
+                throw std::runtime_error(strprintf("bootstrap: Unable to copy %s: %s", from.string(), ec.message()));
+            }
+        }
+    }
+}
+
+static void install_staged_directory(const fs::path& src, const fs::path& dst)
+{
+    boost::system::error_code ec;
+    if (fs::exists(dst)) {
+        fs::remove_all(dst, ec);
+        if (ec) {
+            throw std::runtime_error(strprintf("bootstrap: Unable to remove %s: %s", dst.string(), ec.message()));
+        }
+        ec.clear();
+    }
+
+    fs::rename(src, dst, ec);
+    if (!ec) {
+        return;
+    }
+
+    LogPrintf("bootstrap: rename %s -> %s failed (%s), copying instead\n",
+              src.string(), dst.string(), ec.message().c_str());
+    copy_directory_recursive(src, dst);
+    fs::remove_all(src, ec);
+    if (ec) {
+        LogPrintf("bootstrap: warning: installed %s but failed to remove staging copy %s: %s\n",
+                  dst.string(), src.string(), ec.message().c_str());
+    }
 }
 
 void applyBootstrap() {
@@ -533,11 +603,15 @@ void applyBootstrap() {
     LogActivity("Bootstrap apply: removing old indexes directory");
     boost::filesystem::remove_all(GetDataDir() / "indexes");
     LogActivity("Bootstrap apply: installing blocks from staging");
-    boost::filesystem::rename(GetDataDir() / "bootstrap" / "blocks", GetDataDir() / "blocks");
+    install_staged_directory(GetDataDir() / "bootstrap" / "blocks", GetDataDir() / "blocks");
     LogActivity("Bootstrap apply: installing chainstate from staging");
-    boost::filesystem::rename(GetDataDir() / "bootstrap" / "chainstate", GetDataDir() / "chainstate");
-    LogActivity("Bootstrap apply: installing indexes from staging");
-    boost::filesystem::rename(GetDataDir() / "bootstrap" / "indexes", GetDataDir() / "indexes");
+    install_staged_directory(GetDataDir() / "bootstrap" / "chainstate", GetDataDir() / "chainstate");
+    if (boost::filesystem::exists(GetDataDir() / "bootstrap" / "indexes")) {
+        LogActivity("Bootstrap apply: installing indexes from staging");
+        install_staged_directory(GetDataDir() / "bootstrap" / "indexes", GetDataDir() / "indexes");
+    } else {
+        LogActivity("Bootstrap apply: no indexes in archive; will rebuild on startup if enabled");
+    }
     LogActivity("Bootstrap apply: removing staging directory");
     boost::filesystem::remove_all(GetDataDir() / "bootstrap");
     boost::filesystem::path pathBootstrapZip(GetDataDir() / getBootstrapArchiveFileName());
@@ -590,7 +664,7 @@ void downloadBootstrap() {
         bootstrap_status(extract_msg.c_str());
     }
     extractBootstrap(pathBootstrapZip);
-    bootstrap_status("Validating blocks, chainstate, and indexes");
+    bootstrap_status("Validating blocks and chainstate");
     validateBootstrapContent();
 
     markBootstrapApplyPending();

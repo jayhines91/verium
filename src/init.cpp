@@ -281,6 +281,15 @@ void Shutdown(InitInterfaces& interfaces)
             LogActivity("Bootstrap apply: legacy shutdown-path failed: %s", e.what());
             LogPrintf("%s: Unable to change database: %s\n",__func__,e.what());
         }
+    } else if (bootstrapApplyPending()) {
+        try {
+            LogActivity("Bootstrap apply: shutdown-path starting");
+            applyBootstrap();
+            clearBootstrapApplyPending();
+        } catch (const std::exception& e) {
+            LogActivity("Bootstrap apply: shutdown-path failed: %s", e.what());
+            LogPrintf("%s: Unable to apply bootstrap: %s\n", __func__, e.what());
+        }
     }
 
     try {
@@ -855,6 +864,8 @@ void InitLogging()
     std::string version_string = FormatFullVersion();
 #ifdef DEBUG
     version_string += " (debug build)";
+#elif !CLIENT_VERSION_IS_RELEASE
+    version_string += " (pre-release build)";
 #else
     version_string += " (release build)";
 #endif

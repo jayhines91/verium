@@ -20,6 +20,7 @@ class TransactionView;
 class WalletModel;
 class AddressBookPage;
 class CommunityPage;
+class WalletController;
 
 QT_BEGIN_NAMESPACE
 class QModelIndex;
@@ -45,6 +46,7 @@ public:
         The client model represents the part of the core that communicates with the P2P network, and is wallet-agnostic.
     */
     void setClientModel(ClientModel *clientModel);
+    void setWalletController(WalletController* wallet_controller);
     WalletModel *getWalletModel() { return walletModel; }
     /** Set the wallet model.
         The wallet model represents a bitcoin wallet, and offers access to the list of transactions, address book and sending
@@ -60,6 +62,7 @@ public:
 
 private:
     ClientModel *clientModel;
+    WalletController* m_wallet_controller{nullptr};
     WalletModel *walletModel;
 
     OverviewPage *overviewPage;

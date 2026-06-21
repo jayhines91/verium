@@ -30,6 +30,7 @@ clean_root_configure_artifacts() {
     # Subproject configure leakage from old in-tree builds
     rm -rf src/univalue/config.* src/univalue/Makefile src/univalue/libtool src/univalue/.libs
     rm -rf src/secp256k1/config.* src/secp256k1/Makefile src/secp256k1/libtool src/secp256k1/.libs
+    rm -f src/secp256k1/src/libsecp256k1-config.h
 }
 
 ensure_autogen() {
@@ -40,33 +41,51 @@ ensure_autogen() {
     fi
 }
 
+# Source shared/depends-preseed helpers (env + depends-cache.sh).
+source_shared_preseed_helpers() {
+    local root="${1:-$BUILD_COMMON_ROOT}"
+    local cache_root=""
+
+    if [ -n "${SHARED_DEPENDS_PRESEED:-}" ] && [ -f "${SHARED_DEPENDS_PRESEED}/depends-cache.sh" ]; then
+        cache_root="${SHARED_DEPENDS_PRESEED}"
+    elif [ -d "${root}/../shared/depends-preseed" ]; then
+        cache_root="$(cd "${root}/../shared/depends-preseed" && pwd)"
+    fi
+
+    if [ -z "$cache_root" ] || [ ! -f "${cache_root}/depends-cache.sh" ]; then
+        echo "ERROR: shared depends preseed not found at ${root}/../shared/depends-preseed" >&2
+        echo "       Populate it with shared/depends-preseed/preseed-depends.sh" >&2
+        return 1
+    fi
+
+    if [ -f "${cache_root}/env.sh" ]; then
+        # shellcheck source=/dev/null
+        source "${cache_root}/env.sh"
+    fi
+    export DEPENDS_PRESEED_ROOT="${SHARED_DEPENDS_PRESEED:-$cache_root}"
+    export SHARED_DEPENDS_PRESEED="${SHARED_DEPENDS_PRESEED:-$cache_root}"
+    # shellcheck source=/dev/null
+    source "${cache_root}/depends-cache.sh"
+}
+
 ensure_depends() {
     local host_triplet="$1"
     local root="${2:-$BUILD_COMMON_ROOT}"
     local extra_make_args="${3:-}"
     cd "$root"
 
-    local cache_root="${SHARED_DEPENDS_PRESEED:-$(cd "${root}/../shared/depends-preseed" 2>/dev/null && pwd || true)}"
-    if [ -f "${cache_root}/depends-cache.sh" ]; then
-        # shellcheck source=/dev/null
-        source "${cache_root}/depends-cache.sh"
-        ensure_depends_with_shared_preseed "$host_triplet" "$root" "$extra_make_args" 4
-        return
-    fi
+    source_shared_preseed_helpers "$root" || exit 1
+    ensure_depends_with_shared_preseed "$host_triplet" "$root" "$extra_make_args" 4
+}
 
-    # Fallback when shared preseed bundle is unavailable.
-    local shared_preseed="$cache_root"
-    if [ -n "$shared_preseed" ] && [ -d "${shared_preseed}/SDKs" ] && [[ "$extra_make_args" != *SDK_PATH=* ]]; then
-        extra_make_args="SDK_PATH=${shared_preseed}/SDKs ${extra_make_args}"
-    fi
-
-    if [ ! -f "depends/${host_triplet}/lib/libcurl.a" ]; then
-        echo "=== Building depends/${host_triplet} (first run only) ==="
-        # shellcheck disable=SC2086
-        make -C depends HOST="$host_triplet" CC_FOR_BUILD=gcc-9 CXX_FOR_BUILD=g++-9 -j4 $extra_make_args
-    else
-        echo "=== Reusing depends/${host_triplet} ==="
-    fi
+# Docker: always mount CodeRepo/shared/depends-preseed at /shared/depends-preseed.
+docker_shared_preseed_mount_args() {
+    local root="${1:-$BUILD_COMMON_ROOT}"
+    local shared
+    source_shared_preseed_helpers "$root" || exit 1
+    shared="$(default_shared_preseed_for_project "$root")" || exit 1
+    printf '%s\n' "-v" "${shared}:${DOCKER_SHARED_DEPENDS_PRESEED:-/shared/depends-preseed}" \
+        "-e" "SHARED_DEPENDS_PRESEED=${DOCKER_SHARED_DEPENDS_PRESEED:-/shared/depends-preseed}"
 }
 
 configure_platform_build() {
@@ -124,15 +143,6 @@ prepare_output_dirs() {
     mkdir -p "${root}/${out_dir}"
     if [ -n "$release_dir" ]; then
         mkdir -p "${root}/${release_dir}"
-    fi
-}
-
-# Docker helpers: mount monorepo shared depends preseed (SDKs + built/<family>/ caches).
-docker_shared_preseed_mount_args() {
-    local root="${1:-$BUILD_COMMON_ROOT}"
-    local shared="${SHARED_DEPENDS_PRESEED:-$(cd "${root}/../shared/depends-preseed" 2>/dev/null && pwd || true)}"
-    if [ -d "$shared" ]; then
-        printf '%s\n' "-v" "${shared}:/shared/depends-preseed" "-e" "SHARED_DEPENDS_PRESEED=/shared/depends-preseed"
     fi
 }
 
@@ -219,6 +229,15 @@ clean_windows_dev_output_dir() {
     fi
 }
 
+clean_windows_dev_build_dir() {
+    local root="${1:-$BUILD_COMMON_ROOT}"
+    local build_dir="${2:-$WINDOWS_DEV_BUILD_DIR}"
+    if [ -d "${root}/${build_dir}" ]; then
+        echo "=== Cleaning ${build_dir}/ before dev build ==="
+        rm -rf "${root}/${build_dir}"
+    fi
+}
+
 # Compile all Windows dev binaries and build the Developer Edition NSIS installer.
 run_windows_dev_compile_and_package() {
     local root="${1:-$BUILD_COMMON_ROOT}"
@@ -227,6 +246,7 @@ run_windows_dev_compile_and_package() {
     local out_dir="${WINDOWS_DEV_OUT_DIR}"
 
     require_dev_helper_enabled "$root"
+    clean_windows_dev_build_dir "$root" "$build_dir"
     clean_windows_dev_output_dir "$root" "$out_dir"
     ensure_windows_cross_toolchain
     patch_curl_mk_for_windows_cross "$root"

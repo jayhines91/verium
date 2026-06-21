@@ -74,11 +74,14 @@ public:
         consensus.nPowTargetTimespan = 2 * 24 * 60 * 60; // two days
         consensus.fPowNoRetargeting = false;
 
-        // The best chain should have at least this much work.
-        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000000000000000000000000");
+        // The best chain should have at least this much work (mainnet block 550000).
+        // Peers below this work are ignored; raises the bar against low-work forks.
+        consensus.nMinimumChainWork = uint256S("0x00000000000000000000000000000000000000000000000000000caa7ae09617");
 
-        // By default assume that the signatures in ancestors of this block are valid.
-        consensus.defaultAssumeValid = uint256S("0x0000000000000000000000000000000000000000000000000000000000000000");
+        // During IBD, skip script checks for blocks that are ancestors of this
+        // buried block (mainnet height 550000). PoW/merkle/connect rules still apply.
+        // Override with -assumevalid=0 to verify everything. Bump each release.
+        consensus.defaultAssumeValid = uint256S("0xcf444659c13aa06daae3cb6cbd697780a355e10b6a4d758ace78660bfd91ea61");
 
         // Let's start with VIP (Verium Improvement Protocol)
         // XXX: Use it and set a correct value

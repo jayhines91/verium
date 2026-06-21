@@ -17,7 +17,7 @@
  *
  * Holder/release: set to 0, then Build-Scripts/build-windows-docker.sh → out-windows/
  */
-#define ENABLE_DEV_HELPER_WINDOW 1
+#define ENABLE_DEV_HELPER_WINDOW 0
 
 /** Display version on splash screen, window title, and About dialog. */
 #define DEV_EDITION_VERSION_STRING "2.2"

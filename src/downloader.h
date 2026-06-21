@@ -8,11 +8,10 @@
 #include <string>
 #include <functional>
 
-#if defined(__arm__) || defined(__aarch64__)
-const std::string BOOTSTRAP_DIR("/bootstrap-arm");
-#else
+// Chain data is architecture-independent; all platforms (x86_64, ARM, ARM64)
+// pull from the same hosted bootstrap directory. The old /bootstrap-arm path
+// did not exist on the file server and produced a 404 on ARM builds.
 const std::string BOOTSTRAP_DIR("/bootstrap");
-#endif
 
 const std::string BOOTSTRAP_FILE_VRM("verium-bootstrap.zip");
 

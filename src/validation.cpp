@@ -1991,6 +1991,14 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
 
     CBlockUndo blockundo;
 
+    // Parallel script-verification queue: if worker threads are running, batch
+    // script checks instead of executing them inline in CheckInputs. The control
+    // object's destructor will Wait() on any outstanding work, so it must stay
+    // alive until after the loop below. A nullptr queue makes Add/Wait no-ops
+    // and keeps the inline verification path used when -par=1 / -par=0 on a
+    // single-core host.
+    CCheckQueueControl<CScriptCheck> control(fScriptChecks && nScriptCheckThreads ? &scriptcheckqueue : nullptr);
+
     std::vector<int> prevheights;
     CAmount nFees = 0;
     CAmount nValueIn = 0;
@@ -2055,6 +2063,11 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
                     return state.Invalid(ValidationInvalidReason::CONSENSUS, error("ConnectBlock(): %s not paying required fee=%s, paid=%s", tx.GetHash().ToString(), requiredFee, nTxValueIn - nTxValueOut),
                         REJECT_INVALID, "bad-fee-amount");
             }
+
+            // Hand the queued script checks (populated by CheckInputs above
+            // when running with worker threads) off to the parallel queue.
+            // No-op when control was constructed with a nullptr queue.
+            control.Add(vChecks);
         }
 
         CTxUndo undoDummy;
@@ -2070,6 +2083,16 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     // ppcoin: track money supply and mint amount info
     pindex->nMint = nValueOut - nValueIn + nFees;
     pindex->nMoneySupply = (pindex->pprev ? pindex->pprev->nMoneySupply : 0) + nValueOut - nValueIn;
+
+    // Wait for any outstanding parallel script checks to finish. If any failed
+    // we must reject the block; without this Wait, a script verification
+    // failure would be lost when worker threads are in use.
+    if (!control.Wait()) {
+        LogPrintf("ERROR: %s: CheckQueue failed\n", __func__);
+        return state.Invalid(ValidationInvalidReason::CONSENSUS,
+                             error("ConnectBlock(): parallel script check failed"),
+                             REJECT_INVALID, "block-validation-failed");
+    }
 
     int64_t nTime4 = GetTimeMicros(); nTimeVerify += nTime4 - nTime2;
     LogPrint(BCLog::BENCH, "    - Verify %u txins: %.2fms (%.3fms/txin) [%.2fs (%.2fms/blk)]\n", nInputs - 1, MILLI * (nTime4 - nTime2), nInputs <= 1 ? 0 : MILLI * (nTime4 - nTime2) / (nInputs-1), nTimeVerify * MICRO, nTimeVerify * MILLI / nBlocksTotal);

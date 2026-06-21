@@ -801,6 +801,10 @@ void BitcoinGUI::setWalletController(WalletController* wallet_controller)
     connect(wallet_controller, &WalletController::walletAdded, this, &BitcoinGUI::addWallet);
     connect(wallet_controller, &WalletController::walletRemoved, this, &BitcoinGUI::removeWallet);
 
+    if (walletFrame) {
+        walletFrame->setWalletController(wallet_controller);
+    }
+
     for (WalletModel* wallet_model : m_wallet_controller->getOpenWallets()) {
         addWallet(wallet_model);
     }

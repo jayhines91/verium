@@ -6,6 +6,7 @@
 #include <qt/walletmodel.h>
 
 #include <qt/bitcoingui.h>
+#include <qt/walletcontroller.h>
 #include <qt/walletview.h>
 
 #include <cassert>
@@ -40,6 +41,14 @@ void WalletFrame::setClientModel(ClientModel *_clientModel)
     this->clientModel = _clientModel;
 }
 
+void WalletFrame::setWalletController(WalletController* wallet_controller)
+{
+    m_wallet_controller = wallet_controller;
+    for (WalletView* wallet_view : mapWalletViews) {
+        wallet_view->setWalletController(wallet_controller);
+    }
+}
+
 bool WalletFrame::addWallet(WalletModel *walletModel)
 {
     if (!gui || !clientModel || !walletModel) return false;
@@ -49,6 +58,7 @@ bool WalletFrame::addWallet(WalletModel *walletModel)
     WalletView *walletView = new WalletView(platformStyle, this);
     walletView->setBitcoinGUI(gui);
     walletView->setClientModel(clientModel);
+    walletView->setWalletController(m_wallet_controller);
     walletView->setWalletModel(walletModel);
     walletView->showOutOfSyncWarning(bOutOfSync);
 

@@ -48,7 +48,8 @@ public:
     enum Phase {
         PhaseDownload = 0,
         PhaseExtract = 1,
-        PhaseValidate = 2
+        PhaseValidate = 2,
+        PhaseComplete = 3
     };
 
     explicit BootstrapDialog(QWidget *parent = 0);

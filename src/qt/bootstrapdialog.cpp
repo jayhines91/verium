@@ -6,6 +6,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QEventLoop>
+#include <QFile>
 #include <QFont>
 #include <QLabel>
 #include <QStyle>
@@ -94,6 +95,11 @@ BootstrapDialog::BootstrapDialog(QWidget *parent) :
     ui->interruptedUrlLabel->setText(QString::fromStdString(getBootstrapDownloadUrl()));
     ui->detailsText->setPlainText(QString::fromStdString(getBootstrapDownloadUrl()));
     ui->interruptedDetailsText->setPlainText(QString::fromStdString(getBootstrapDownloadUrl()));
+
+    QFile styleFile(QStringLiteral(":/style"));
+    if (styleFile.open(QFile::ReadOnly | QFile::Text)) {
+        setStyleSheet(QString::fromUtf8(styleFile.readAll()));
+    }
 
     m_worker->moveToThread(&m_worker_thread);
     connect(m_worker, &BootstrapWorker::progress, this, &BootstrapDialog::onDownloadProgress, Qt::QueuedConnection);
@@ -258,6 +264,7 @@ void BootstrapDialog::startDownload()
 
     reset_download_cancel();
     m_worker_running = true;
+    pauseNetworkForBootstrap();
     setProgressState();
     QMetaObject::invokeMethod(m_worker, "run", Qt::QueuedConnection);
 }
@@ -364,7 +371,7 @@ void BootstrapDialog::onStatusMessage(const QString& message)
 
     if (message.startsWith(QStringLiteral("Validating"), Qt::CaseInsensitive)) {
         ui->progressTitle->setText(tr("Validating bootstrap archive"));
-        ui->progressSubtitle->setText(tr("Checking blocks, chainstate, and indexes."));
+        ui->progressSubtitle->setText(tr("Checking blocks and chainstate."));
         ui->progressBar->setMaximum(0);
         ui->percentLabel->setText(QStringLiteral("…"));
         ui->sizeLabel->clear();
@@ -387,13 +394,16 @@ void BootstrapDialog::onStatusMessage(const QString& message)
         ui->progressBar->setMaximum(100);
         ui->progressBar->setValue(100);
         ui->percentLabel->setText(tr("100%"));
+        updateStepper(PhaseComplete);
     }
 }
 
 void BootstrapDialog::onDownloadProgress(qint64 total, qint64 now)
 {
     ui->stackedWidget->setCurrentIndex(PageProgress);
-    updateStepper(PhaseDownload);
+    if (m_phase <= PhaseDownload) {
+        updateStepper(PhaseDownload);
+    }
     updateProgressMetrics(total, now);
 }
 
@@ -412,7 +422,7 @@ void BootstrapDialog::onDownloadFinished(int result, const QString& error)
         ui->progressBar->setMaximum(100);
         ui->progressBar->setValue(100);
         ui->percentLabel->setText(tr("100%"));
-        updateStepper(PhaseValidate);
+        updateStepper(PhaseComplete);
         QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
         accept();
         QApplication::quit();

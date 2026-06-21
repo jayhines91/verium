@@ -94,6 +94,7 @@ protected:
     QObject* worker() const { return m_wallet_controller->m_activity_worker; }
 
     void showProgressDialog(const QString& label_text);
+    void destroyProgressDialog();
 
     WalletController* const m_wallet_controller;
     QWidget* const m_parent_widget;
@@ -141,6 +142,30 @@ Q_SIGNALS:
 
 private:
     void finish();
+};
+
+class EncryptWalletActivity : public WalletControllerActivity
+{
+    Q_OBJECT
+
+public:
+    EncryptWalletActivity(WalletController* wallet_controller, QWidget* parent_widget);
+    ~EncryptWalletActivity();
+
+    void encrypt(WalletModel* wallet_model);
+
+Q_SIGNALS:
+    void encrypted(WalletModel* wallet_model);
+
+private:
+    void askPassphrase();
+    void runEncrypt();
+    void finish();
+
+    WalletModel* m_target_model{nullptr};
+    SecureString m_passphrase;
+    AskPassphraseDialog* m_passphrase_dialog{nullptr};
+    bool m_success{false};
 };
 
 #endif // BITCOIN_QT_WALLETCONTROLLER_H
