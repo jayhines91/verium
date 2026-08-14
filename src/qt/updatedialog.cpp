@@ -21,6 +21,7 @@ UpdateDialog::UpdateDialog(QWidget *parent) :
     setWindowTitle(tr("Check for Update"));
     ui->updateButton->setVisible(false);
     ui->progressBar->setVisible(false);
+
     downloadVersionFile();
     clientName = getUpdatedClient();
     if (clientName.compare(" ") != 0){
@@ -58,6 +59,9 @@ void UpdateDialog::on_updateButton_clicked()
         downloadClient(clientName);
     } catch (const std::runtime_error& e) {
         QMessageBox::critical(this, tr("Update failed"), e.what());
+        set_xferinfo_data(nullptr);
+        update_callback_instance = nullptr;
+        return;
     }
     set_xferinfo_data(nullptr);
     update_callback_instance = nullptr;

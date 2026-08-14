@@ -36,6 +36,12 @@
 #include <util/system.h>
 #include <util/threadnames.h>
 
+#if defined(Q_OS_LINUX)
+#include <util/curlssl.h>
+#include <QSslCertificate>
+#include <QSslSocket>
+#endif
+
 #include <memory>
 
 #include <QApplication>
@@ -413,6 +419,39 @@ static void SetupUIArgs()
     gArgs.AddArg("-uiplatform", strprintf("Select platform to customize UI for (one of windows, macosx, other; default: %s)", BitcoinGUI::DEFAULT_UIPLATFORM), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::GUI);
 }
 
+#if defined(Q_OS_LINUX)
+static void InitQtSslCertificates()
+{
+    if (!QSslSocket::supportsSsl()) {
+        return;
+    }
+    InitCurlSsl();
+
+    const std::string& cafile = GetSystemCaFile();
+    if (!cafile.empty()) {
+        const QList<QSslCertificate> certs = QSslCertificate::fromPath(QString::fromStdString(cafile), QSsl::Pem);
+        if (!certs.isEmpty()) {
+            QSslSocket::addDefaultCaCertificates(certs);
+        }
+    } else {
+        const std::string& capath = GetSystemCaPath();
+        if (!capath.empty()) {
+            const QList<QSslCertificate> certs = QSslCertificate::fromPath(
+                QString::fromStdString(capath + "/*"), QSsl::Pem, QSslCertificate::PatternSyntax);
+            if (!certs.isEmpty()) {
+                QSslSocket::addDefaultCaCertificates(certs);
+            }
+        }
+    }
+
+    const QByteArray embedded(GetEmbeddedCaPem(), static_cast<int>(GetEmbeddedCaPemSize()));
+    const QList<QSslCertificate> embeddedCerts = QSslCertificate::fromData(embedded, QSsl::Pem);
+    if (!embeddedCerts.isEmpty()) {
+        QSslSocket::addDefaultCaCertificates(embeddedCerts);
+    }
+}
+#endif
+
 int GuiMain(int argc, char* argv[])
 {
 #ifdef WIN32
@@ -472,6 +511,9 @@ int GuiMain(int argc, char* argv[])
 
     // Now that the QApplication is setup and we have parsed our parameters, we can set the platform style
     app.setupPlatformStyle();
+#if defined(Q_OS_LINUX)
+    InitQtSslCertificates();
+#endif
 
     /// 3. Application identification
     // must be set before OptionsModel is initialized or translations are loaded,

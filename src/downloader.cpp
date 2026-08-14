@@ -2,33 +2,34 @@
 
 #include <init.h>
 #include <logging.h>
+#include <util/curlssl.h>
 #include <util/system.h>
+#include <util/time.h>
 
 #include <util/miniunz.h>
 #define CURL_STATICLIB
 #include <curl/curl.h>
 #include <openssl/ssl.h>
 
-/*  Downloader functions for bootstrapping and updating client software
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <mutex>
 
- * This xferinfo_data contains a callback function to be called
- * if the value is not nullptr.
- *
- * void xferinfo_data(curl_off_t total, curl_off_t now);
- *
- * This is admittedly ugly, but it allows us to get a percentage
- * callback in the GUI portion of code. by setting the xinfo_data.
- *
- * XXX it could use some rate limiting
- */
+/*  Downloader functions for bootstrapping and updating client software */
 static void* xferinfo_data = nullptr;
+static std::once_flag g_curl_init_once;
+static std::atomic<bool> g_download_cancelled{false};
+
 static int xferinfo(void *p,
                     curl_off_t dltotal, curl_off_t dlnow,
                     curl_off_t ultotal, curl_off_t ulnow)
 {
+    if (g_download_cancelled.load())
+        return 1;
     void (*ptr)(curl_off_t, curl_off_t) = (void(*)(curl_off_t, curl_off_t))xferinfo_data;
     if (ptr != nullptr) ptr(dltotal, dlnow);
-    return 0; // continue xfer.
+    return 0;
 }
 
 void set_xferinfo_data(void* d)
@@ -36,52 +37,163 @@ void set_xferinfo_data(void* d)
     xferinfo_data = d;
 }
 
-void downloadFile(std::string url, const fs::path& target_file_path) {
+void ensureDownloaderInit()
+{
+    std::call_once(g_curl_init_once, []() {
+        curl_global_init(CURL_GLOBAL_ALL);
+        InitCurlSsl();
+    });
+}
 
-    LogPrintf("Download: Downloading from %s. \n", url);
+static size_t curlWriteToFile(void* ptr, size_t size, size_t nmemb, void* userdata)
+{
+    return fwrite(ptr, size, nmemb, static_cast<FILE*>(userdata));
+}
 
+static constexpr int kDownloadMaxAttempts = 8;
+
+static bool isTransientHttpResponse(long code)
+{
+    return code == 408 || code == 429 || (code >= 500 && code <= 599);
+}
+
+static bool isFatalHttpResponse(long code)
+{
+    return code == 401 || code == 403 || code == 404;
+}
+
+static long parseHttpResponseCode(const std::string& message)
+{
+    long code = 0;
+    const char* patterns[] = {
+        "Server responded with %ld.",
+        "Server responded with a %ld .",
+        "Server responded with %ld",
+        nullptr,
+    };
+    for (const char* const* p = patterns; *p; ++p) {
+        if (sscanf(message.c_str(), *p, &code) == 1) {
+            return code;
+        }
+    }
+    return 0;
+}
+
+static bool isTransientDownloadError(const std::string& message)
+{
+    if (message.find("cancelled") != std::string::npos) {
+        return false;
+    }
+    if (message.find("Download: fatal:") != std::string::npos) {
+        return false;
+    }
+    const long code = parseHttpResponseCode(message);
+    if (code != 0) {
+        if (isFatalHttpResponse(code)) {
+            return false;
+        }
+        if (isTransientHttpResponse(code)) {
+            return true;
+        }
+        return false;
+    }
+    return message.find("Download: error:") != std::string::npos;
+}
+
+static void waitBeforeDownloadRetry(int seconds)
+{
+    for (int elapsed = 0; elapsed < seconds * 10; ++elapsed) {
+        if (g_download_cancelled.load()) {
+            throw std::runtime_error("Download cancelled.");
+        }
+        UninterruptibleSleep(std::chrono::milliseconds{100});
+    }
+}
+
+static void downloadFileOnce(const std::string& url, const fs::path& target_file_path)
+{
     FILE *file = fsbridge::fopen(target_file_path, "wb");
-    if( ! file )
+    if (!file) {
         throw std::runtime_error(strprintf("Download: error: Unable to open output file for writing: %s.", target_file_path.string().c_str()));
+    }
 
     CURL *curlHandle = curl_easy_init();
+    if (!curlHandle) {
+        fclose(file);
+        throw std::runtime_error("Download: error: curl_easy_init failed.");
+    }
 
-    CURLcode res;
     char errbuf[CURL_ERROR_SIZE];
-
-    curl_easy_setopt(curlHandle, CURLOPT_ERRORBUFFER, errbuf);
     errbuf[0] = 0;
 
+    curl_easy_setopt(curlHandle, CURLOPT_ERRORBUFFER, errbuf);
     curl_easy_setopt(curlHandle, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curlHandle, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curlHandle, CURLOPT_NOPROGRESS, 0);
     curl_easy_setopt(curlHandle, CURLOPT_XFERINFODATA, xferinfo_data);
     curl_easy_setopt(curlHandle, CURLOPT_XFERINFOFUNCTION, xferinfo);
+    curl_easy_setopt(curlHandle, CURLOPT_WRITEFUNCTION, curlWriteToFile);
     curl_easy_setopt(curlHandle, CURLOPT_WRITEDATA, file);
-    res = curl_easy_perform(curlHandle);
+    curl_easy_setopt(curlHandle, CURLOPT_CONNECTTIMEOUT, 60L);
+    curl_easy_setopt(curlHandle, CURLOPT_LOW_SPEED_LIMIT, 512L);
+    curl_easy_setopt(curlHandle, CURLOPT_LOW_SPEED_TIME, 600L);
+    ApplyCurlSslOptions(curlHandle);
 
-    if(res != CURLE_OK) {
+    const CURLcode res = curl_easy_perform(curlHandle);
+
+    long response_code = 0;
+    curl_easy_getinfo(curlHandle, CURLINFO_RESPONSE_CODE, &response_code);
+
+    if (res != CURLE_OK) {
         curl_easy_cleanup(curlHandle);
+        fclose(file);
+        boost::filesystem::remove(target_file_path);
         size_t len = strlen(errbuf);
-        if(len)
+        if (len) {
             throw std::runtime_error(strprintf("Download: error: %s%s.", errbuf, ((errbuf[len - 1] != '\n') ? "\n" : "")));
-        else
-            throw std::runtime_error(strprintf("Download: error: %s.", curl_easy_strerror(res)));
+        }
+        throw std::runtime_error(strprintf("Download: error: %s.", curl_easy_strerror(res)));
     }
 
-    long response_code;
-    curl_easy_getinfo(curlHandle, CURLINFO_RESPONSE_CODE, &response_code);
-    if( response_code != 200 )
-        throw std::runtime_error(strprintf("Download: error: Server responded with a %d .", response_code));
+    if (response_code != 200) {
+        curl_easy_cleanup(curlHandle);
+        fclose(file);
+        boost::filesystem::remove(target_file_path);
+        if (isFatalHttpResponse(response_code)) {
+            throw std::runtime_error(strprintf("Download: fatal: Server responded with %ld.", response_code));
+        }
+        throw std::runtime_error(strprintf("Download: error: Server responded with %ld.", response_code));
+    }
 
     curl_easy_cleanup(curlHandle);
     fclose(file);
-
-    LogPrintf("Download: Successful.\n");
-
-    return;
 }
 
+void downloadFile(std::string url, const fs::path& target_file_path)
+{
+    LogPrintf("Download: Downloading from %s.\n", url);
+
+    ensureDownloaderInit();
+
+    int attempt = 0;
+    while (true) {
+        ++attempt;
+        try {
+            downloadFileOnce(url, target_file_path);
+            LogPrintf("Download: Successful.\n");
+            return;
+        } catch (const std::runtime_error& e) {
+            const std::string msg = e.what();
+            if (!isTransientDownloadError(msg) || attempt >= kDownloadMaxAttempts) {
+                throw;
+            }
+            const int delay_sec = std::min(5 * attempt, 60);
+            LogPrintf("download: attempt %d failed (%s); retrying in %d seconds\n",
+                attempt, msg.c_str(), delay_sec);
+            waitBeforeDownloadRetry(delay_sec);
+        }
+    }
+}
 
 // bootstrap
 void extractBootstrap(const fs::path& target_file_path) {
@@ -119,8 +231,10 @@ void extractBootstrap(const fs::path& target_file_path) {
     /* Testnet: always use dest_subdir=nullptr (zip must have bootstrap/ prefix as before) */
 
     int unzip_err = zip_extract_all(uf, GetDataDir(), "bootstrap", dest_subdir);
-    if (unzip_err != UNZ_OK)
+    if (unzip_err != UNZ_OK) {
+        unzClose(uf);
         throw std::runtime_error("bootstrap: Unzip failed\n");
+    }
 
     unzClose(uf);
     LogPrintf("bootstrap: Unzip successful\n");
@@ -182,22 +296,21 @@ void downloadBootstrap() {
 void downloadVersionFile() {
     LogPrintf("Check for update: Getting version file.\n");
 
-    boost::filesystem::path pathVersionFile = GetDataDir() / "VERSION_VRM.json";
+    const boost::filesystem::path pathVersionFile = GetDataDir() / "VERSION_VRM.json";
 
-    downloadFile(VERSIONFILE_URL, pathVersionFile);
-
-    return;
+    try {
+        downloadFile(VERSIONFILE_URL, pathVersionFile);
+    } catch (const std::exception& e) {
+        LogPrintf("Check for update: unable to download version file: %s\n", e.what());
+    }
 }
 
 void downloadClient(std::string fileName) {
     LogPrintf("Check for update: Downloading new client.\n");
 
-    boost::filesystem::path pathClientFile = GetDataDir() / fileName;
-    std::string clientFileUrl = CLIENT_URL + fileName;
-
+    const boost::filesystem::path pathClientFile = GetDataDir() / fileName;
+    const std::string clientFileUrl = CLIENT_URL + fileName;
     downloadFile(clientFileUrl, pathClientFile);
-
-    return;
 }
 
 int getArchitecture()

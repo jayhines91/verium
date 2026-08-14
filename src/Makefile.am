@@ -507,6 +507,7 @@ libbitcoin_util_a_SOURCES = \
   threadinterrupt.cpp \
   util/bip32.cpp \
   util/bytevectorhash.cpp \
+  util/curlssl.cpp \
   util/error.cpp \
   util/fees.cpp \
   util/system.cpp \
