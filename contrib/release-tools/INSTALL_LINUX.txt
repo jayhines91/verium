@@ -5,6 +5,10 @@ Quick start:
   ./verium-qt          # GUI (or add this directory to PATH first)
   ./daemon/veriumd     # Daemon
 
+HTTPS downloads (bootstrap, updates) use a Mozilla CA bundle embedded in the
+binaries. Installing the system `ca-certificates` package is optional but
+recommended if you use custom or corporate CAs (set SSL_CERT_FILE if needed).
+
 To add a desktop launcher with icon:
   1. Add the extraction directory to your PATH, or create a symlink:
        ln -sf $(pwd)/verium-qt ~/bin/verium-qt   # if ~/bin is in PATH

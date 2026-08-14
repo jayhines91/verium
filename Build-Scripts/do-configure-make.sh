@@ -53,6 +53,9 @@ cp -f share/applications/verium-qt.desktop "$OUTDIR/share/applications/"
 cp -f share/pixmaps/verium-qt.png "$OUTDIR/share/pixmaps/"
 cp -f share/pixmaps/verium-qt.png "$OUTDIR/share/icons/hicolor/128x128/apps/"
 cp -f contrib/release-tools/INSTALL_LINUX.txt "$OUTDIR/"
+mkdir -p "$OUTDIR/certs"
+cp -f src/certs/cacert.pem "$OUTDIR/cacert.pem"
+cp -f src/certs/cacert.pem "$OUTDIR/certs/cacert.pem"
 
 PKG="verium-${V}-x86_64-pc-linux-gnu.tar.gz"
 tar -C "$OUTDIR" -czf "$PKG" .
