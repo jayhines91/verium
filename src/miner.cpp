@@ -39,10 +39,30 @@
 
 #include <openssl/sha.h>
 
-int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev)
+void SyncCoinbaseTimestamp(CBlock* pblock)
+{
+    if (pblock->vtx.empty() || !pblock->vtx[0]->IsCoinBase())
+        return;
+    if (pblock->vtx[0]->nTime == pblock->nTime)
+        return;
+
+    CMutableTransaction coinbaseTx(*pblock->vtx[0]);
+    coinbaseTx.nTime = pblock->nTime;
+    pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
+}
+
+int64_t UpdateTime(CBlock* pblock, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev)
 {
     int64_t nOldTime = pblock->nTime;
     int64_t nNewTime = std::max(pindexPrev->GetMedianTimePast()+1, GetAdjustedTime());
+
+    const int nHeight = pindexPrev->nHeight + 1;
+    if (nHeight >= consensusParams.nTimeRulesActivationHeight) {
+        nNewTime = std::max(nNewTime, pindexPrev->GetBlockTime() - MAX_FUTURE_BLOCK_TIME);
+        for (const auto& tx : pblock->vtx) {
+            nNewTime = std::max<int64_t>(nNewTime, tx->nTime);
+        }
+    }
 
     if (nOldTime < nNewTime)
         pblock->nTime = nNewTime;
@@ -159,6 +179,9 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     // Fill in header
     pblock->hashPrevBlock  = pindexPrev->GetBlockHash();
     UpdateTime(pblock, chainparams.GetConsensus(), pindexPrev);
+    if (nHeight >= chainparams.GetConsensus().nTimeRulesActivationHeight) {
+        SyncCoinbaseTimestamp(pblock);
+    }
     pblock->nBits          = GetNextTargetRequired(pindexPrev);
     pblock->nNonce         = 0;
     pblocktemplate->vTxSigOpsCost[0] = WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx[0]);
@@ -683,8 +706,15 @@ void Miner(CWallet *pwallet)
                     break;
 
                 // Update nTime every few seconds
-                UpdateTime(pblock, Params().GetConsensus(), pindexPrev);
-                nBlockTime = ByteReverse(pblock->nTime);
+                int64_t nTimeChange = UpdateTime(pblock, Params().GetConsensus(), pindexPrev);
+                if (nTimeChange != 0) {
+                    const int nHeight = pindexPrev->nHeight + 1;
+                    if (nHeight >= Params().GetConsensus().nTimeRulesActivationHeight) {
+                        SyncCoinbaseTimestamp(pblock);
+                        FormatHashBuffers(pblock, pmidstate, pdata, phash1);
+                    }
+                    nBlockTime = ByteReverse(pblock->nTime);
+                }
             }
         }
     }

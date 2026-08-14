@@ -127,6 +127,9 @@ namespace GUIUtil
     // Open debug.log
     void openDebugLogfile();
 
+    // Open activity.log
+    void openActivityLogfile();
+
     // Open the config file
     bool openBitcoinConf();
 

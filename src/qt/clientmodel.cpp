@@ -15,6 +15,8 @@
 #include <net.h>
 #include <netbase.h>
 #include <util/system.h>
+#include <util/devhelperconfig.h>
+#include <util/devedition.h>
 
 #include <stdint.h>
 
@@ -154,6 +156,10 @@ BanTableModel *ClientModel::getBanTableModel()
 
 QString ClientModel::formatFullVersion() const
 {
+#if ENABLE_DEV_HELPER_WINDOW
+    if (IsDeveloperEditionActive())
+        return QString::fromStdString(GetDeveloperEditionVersionString());
+#endif
     return QString::fromStdString(FormatFullVersion());
 }
 

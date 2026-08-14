@@ -141,6 +141,7 @@ UniValue bootstrap(const JSONRPCRequest& request)
     try {
         downloadBootstrap();
     } catch (const std::exception &e) {
+        restoreNetworkAfterBootstrap();
         ret.pushKV("success", false);
         ret.pushKV("message", e.what());
         return ret;

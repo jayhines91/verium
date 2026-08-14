@@ -74,15 +74,19 @@ public:
         consensus.nPowTargetTimespan = 2 * 24 * 60 * 60; // two days
         consensus.fPowNoRetargeting = false;
 
-        // The best chain should have at least this much work.
-        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000000000000000000000000");
+        // The best chain should have at least this much work (mainnet block 550000).
+        // Peers below this work are ignored; raises the bar against low-work forks.
+        consensus.nMinimumChainWork = uint256S("0x00000000000000000000000000000000000000000000000000000caa7ae09617");
 
-        // By default assume that the signatures in ancestors of this block are valid.
-        consensus.defaultAssumeValid = uint256S("0x0000000000000000000000000000000000000000000000000000000000000000");
+        // During IBD, skip script checks for blocks that are ancestors of this
+        // buried block (mainnet height 550000). PoW/merkle/connect rules still apply.
+        // Override with -assumevalid=0 to verify everything. Bump each release.
+        consensus.defaultAssumeValid = uint256S("0xcf444659c13aa06daae3cb6cbd697780a355e10b6a4d758ace78660bfd91ea61");
 
         // Let's start with VIP (Verium Improvement Protocol)
         // XXX: Use it and set a correct value
         consensus.VIP1Height = 520000; // Change Min Fee
+        // Legacy 1.3.5.2 header/miner rules always on; stricter 2.x rules at this height.
         consensus.nTimeRulesActivationHeight = std::numeric_limits<int>::max();
 
         /**
@@ -104,16 +108,9 @@ public:
         assert(consensus.hashGenesisBlock == uint256S("0x8232c0cf3bd7e05546e3d7aaaaf89fed8bc97c4df1a8c95e9249e13a2734932b"));
         assert(genesis.hashMerkleRoot == uint256S("0x925e430072a1f39b530fc79db162e29433ab0ea266a99c8cab4f03001dc9faa9"));
 
-        // Note that of those which support the service bits prefix, most only support a subset of
-        // possible options.
-        // This is fine at runtime as we'll fall back to using them as a oneshot if they don't support the
-        // service bits we want, but we should get them updated to support all service bits wanted by any
-        // release ASAP to avoid it where possible.
-        // vSeeds.emplace_back("seed.vrm.vericonomy.com");
-        vSeeds.emplace_back("91.121.221.200");
-        vSeeds.emplace_back("104.128.239.215");
-        vSeeds.emplace_back("216.189.149.162");
-        vSeeds.emplace_back("seeder.vrm.vericonomy.com");
+        vFixedSeeds.clear();
+        vSeeds.clear();
+        vSeeds.emplace_back("seed.vrm.vericonomy.com");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,70);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,132);
@@ -164,8 +161,7 @@ public:
 
         // VIP (Verium Improvement Protocol) - same as mainnet for now
         consensus.VIP1Height = 520000;
-        // Testnet-only consensus activation point for stricter timestamp rules.
-        // Keep disabled while evaluating behavior with existing chaindata.
+        // Legacy 1.3.5.2 rules always on; set height when enabling 2.x hardfork on testnet.
         consensus.nTimeRulesActivationHeight = std::numeric_limits<int>::max();
 
         /**
@@ -186,7 +182,7 @@ public:
         assert(consensus.hashGenesisBlock == uint256S("0x4cebbc55af4761b306f05630df20506cd351454eeb7e87b0c8eb5342cb3d7268"));
         assert(genesis.hashMerkleRoot == uint256S("0xb4e66f65015d59122e410e5253da361433cee45a50fed88c51f93e5165b5d157"));
 
-        // Testnet seeds (can be empty initially)
+        // Testnet: no DNS seeds yet — network is small; users bootstrap via -addnode
         vSeeds.clear();
 
         // Testnet address prefixes (different from mainnet)

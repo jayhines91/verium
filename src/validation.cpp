@@ -52,6 +52,7 @@
 #include <sstream>
 #include <string>
 #include <limits> // for std::numeric_limits<int>
+#include <atomic>
 
 
 #include <boost/algorithm/string/replace.hpp>
@@ -60,6 +61,19 @@
 #if defined(NDEBUG)
 # error "Verium cannot be compiled without assertions."
 #endif
+
+static std::atomic<bool> g_chain_sync_paused_for_bootstrap{false};
+
+bool IsChainSyncPausedForBootstrap()
+{
+    return g_chain_sync_paused_for_bootstrap.load();
+}
+
+void SetChainSyncPausedForBootstrap(bool pause)
+{
+    g_chain_sync_paused_for_bootstrap.store(pause);
+    LogPrintf("bootstrap: chain sync %s for bootstrap download\n", pause ? "paused" : "resumed");
+}
 
 #define MICRO 0.000001
 #define MILLI 0.001
@@ -1977,6 +1991,14 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
 
     CBlockUndo blockundo;
 
+    // Parallel script-verification queue: if worker threads are running, batch
+    // script checks instead of executing them inline in CheckInputs. The control
+    // object's destructor will Wait() on any outstanding work, so it must stay
+    // alive until after the loop below. A nullptr queue makes Add/Wait no-ops
+    // and keeps the inline verification path used when -par=1 / -par=0 on a
+    // single-core host.
+    CCheckQueueControl<CScriptCheck> control(fScriptChecks && nScriptCheckThreads ? &scriptcheckqueue : nullptr);
+
     std::vector<int> prevheights;
     CAmount nFees = 0;
     CAmount nValueIn = 0;
@@ -2041,6 +2063,11 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
                     return state.Invalid(ValidationInvalidReason::CONSENSUS, error("ConnectBlock(): %s not paying required fee=%s, paid=%s", tx.GetHash().ToString(), requiredFee, nTxValueIn - nTxValueOut),
                         REJECT_INVALID, "bad-fee-amount");
             }
+
+            // Hand the queued script checks (populated by CheckInputs above
+            // when running with worker threads) off to the parallel queue.
+            // No-op when control was constructed with a nullptr queue.
+            control.Add(vChecks);
         }
 
         CTxUndo undoDummy;
@@ -2056,6 +2083,16 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     // ppcoin: track money supply and mint amount info
     pindex->nMint = nValueOut - nValueIn + nFees;
     pindex->nMoneySupply = (pindex->pprev ? pindex->pprev->nMoneySupply : 0) + nValueOut - nValueIn;
+
+    // Wait for any outstanding parallel script checks to finish. If any failed
+    // we must reject the block; without this Wait, a script verification
+    // failure would be lost when worker threads are in use.
+    if (!control.Wait()) {
+        LogPrintf("ERROR: %s: CheckQueue failed\n", __func__);
+        return state.Invalid(ValidationInvalidReason::CONSENSUS,
+                             error("ConnectBlock(): parallel script check failed"),
+                             REJECT_INVALID, "block-validation-failed");
+    }
 
     int64_t nTime4 = GetTimeMicros(); nTimeVerify += nTime4 - nTime2;
     LogPrint(BCLog::BENCH, "    - Verify %u txins: %.2fms (%.3fms/txin) [%.2fs (%.2fms/blk)]\n", nInputs - 1, MILLI * (nTime4 - nTime2), nInputs <= 1 ? 0 : MILLI * (nTime4 - nTime2) / (nInputs-1), nTimeVerify * MICRO, nTimeVerify * MILLI / nBlocksTotal);
@@ -2680,6 +2717,13 @@ bool CChainState::ActivateBestChain(CValidationState &state, const CChainParams&
     CBlockIndex *pindexNewTip = nullptr;
     int nStopAtHeight = gArgs.GetArg("-stopatheight", DEFAULT_STOPATHEIGHT);
     do {
+        while (IsChainSyncPausedForBootstrap()) {
+            if (ShutdownRequested()) {
+                return false;
+            }
+            UninterruptibleSleep(std::chrono::milliseconds{100});
+        }
+
         boost::this_thread::interruption_point();
 
         // Block until the validation queue drains. This should largely
@@ -3306,26 +3350,27 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block,
         }
     }
 
-    // Height gate for stricter timestamp header consensus checks.
-    const bool enforce_time = EnforceStricterTimeRulesAtHeight(params.GetConsensus(), nHeight);
+    // --- Legacy header timestamp checks (Verium 1.3.5.2, always enforced) ---
 
     // Not older than MedianTimePast
-    if (enforce_time && block.GetBlockTime() <= pindexPrev->GetMedianTimePast()) {
-        return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID,
-                             "time-too-old", "block's timestamp is too early");
-    }
-
-    // Stricter rule from version-2.0.1:
-    // do not allow a block timestamp that is older than previous block time by more than MAX_FUTURE_BLOCK_TIME.
-    if (enforce_time && block.GetBlockTime() + MAX_FUTURE_BLOCK_TIME < pindexPrev->GetBlockTime()) {
+    if (block.GetBlockTime() <= pindexPrev->GetMedianTimePast()) {
         return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID,
                              "time-too-old", "block's timestamp is too early");
     }
 
     // Not too far into the future
-    if (enforce_time && block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME) {
+    if (block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME) {
         return state.Invalid(ValidationInvalidReason::BLOCK_TIME_FUTURE, false, REJECT_INVALID,
                              "time-too-new", "block timestamp too far in the future");
+    }
+
+    // --- Stricter rules (2.x hardfork only, gated by nTimeRulesActivationHeight) ---
+    if (EnforceStricterTimeRulesAtHeight(params.GetConsensus(), nHeight)) {
+        // do not allow a block timestamp that is older than previous block time by more than MAX_FUTURE_BLOCK_TIME.
+        if (block.GetBlockTime() + MAX_FUTURE_BLOCK_TIME < pindexPrev->GetBlockTime()) {
+            return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID,
+                                 "time-too-old", "block's timestamp is too early");
+        }
     }
 
     return true;
@@ -3453,6 +3498,9 @@ bool BlockManager::AcceptBlockHeader(const CBlockHeader& block, CValidationState
 // Exposed wrapper for AcceptBlockHeader
 bool ProcessNewBlockHeaders(const std::vector<CBlockHeader>& headers, CValidationState& state, const CChainParams& chainparams, const CBlockIndex** ppindex, CBlockHeader *first_invalid)
 {
+    if (IsChainSyncPausedForBootstrap()) {
+        return true;
+    }
     if (first_invalid != nullptr) first_invalid->SetNull();
     {
         LOCK(cs_main);

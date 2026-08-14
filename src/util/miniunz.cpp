@@ -20,6 +20,7 @@
 
 #include <fs.h>
 #include <logging.h>
+#include <util/activitylog.h>
 #include <sys/stat.h>
 
 #ifdef _WIN32
@@ -77,7 +78,6 @@ static int zip_extract_currentfile_impl(unzFile uf, const fs::path& root_file_pa
         return err;
     }
 
-    /* When using dest_subdir, reject path traversal in zip entry names */
     if (dest_subdir != nullptr && (strstr(filename_inzip, "..") != nullptr))
     {
         LogPrintf("invalid zipfile: path traversal not allowed: %s\n", filename_inzip);
@@ -124,17 +124,14 @@ static int zip_extract_currentfile_impl(unzFile uf, const fs::path& root_file_pa
     if (err != UNZ_OK)
         LogPrintf("error %d with zipfile in unzOpenCurrentFilePassword\n", err);
 
-    /* Create parent directories and the file on disk so we can unzip to it */
     if (err == UNZ_OK)
     {
         fs::create_directories(file_path.parent_path());
         fout = fopen64(curr_filename, "wb");
-        /* Some zips don't contain directory alone before file */
         if (fout == NULL)
             LogPrintf("error opening %s\n", curr_filename);
     }
 
-    /* Read from the zip, unzip to buffer, and write to disk */
     if (fout != NULL)
     {
         LogPrintf(" extracting: %s\n", curr_filename);
@@ -170,7 +167,7 @@ static int zip_extract_currentfile_impl(unzFile uf, const fs::path& root_file_pa
     return err;
 }
 
-int zip_extract_all(unzFile uf, const fs::path& root_file_path, const char * allowed_dir, const char * dest_subdir)
+int zip_extract_all(unzFile uf, const fs::path& root_file_path, const char * allowed_dir, const char * dest_subdir, ZipExtractProgressFn progress_fn)
 {
     int err = unzGoToFirstFile(uf);
     if (err != UNZ_OK)
@@ -179,11 +176,20 @@ int zip_extract_all(unzFile uf, const fs::path& root_file_path, const char * all
         return 1;
     }
 
+    int files_done = 0;
     do
     {
         err = zip_extract_currentfile_impl(uf, root_file_path, allowed_dir, dest_subdir);
         if (err != UNZ_OK)
             break;
+        ++files_done;
+        if (files_done == 1 || files_done % 250 == 0) {
+            LogActivity("Bootstrap extract: %d files processed", files_done);
+            LogPrintf("bootstrap: extract progress: %d files\n", files_done);
+            if (progress_fn) {
+                progress_fn(files_done);
+            }
+        }
         err = unzGoToNextFile(uf);
     }
     while (err == UNZ_OK);

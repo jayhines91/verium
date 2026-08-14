@@ -17,6 +17,7 @@ $(package)_config_opts+=--enable-symbol-hiding
 $(package)_config_opts+=--without-librtmp
 $(package)_config_opts+=--disable-rtsp
 $(package)_config_opts+=--disable-alt-svc
+$(package)_config_opts+=--disable-smb
 $(package)_config_opts+=--disable-shared --enable-static
 $(package)_config_opts +=--without-libpsl --without-libidn2 --without-nghttp2 --without-ngtcp2
 $(package)_config_opts +=--without-brotli --without-zstd --without-gsasl
@@ -45,55 +46,7 @@ define $(package)_stage_cmds
 endef
 
 # CI: cross-compile opts for Windows
-$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp
-$(package)_config_opts_mingw32 += --with-winssl
-$(package)_config_opts_mingw64 += --with-winssl
-$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes
-
-# CI: cross-compile opts for Windows
-$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp
-$(package)_config_opts_mingw32 += --with-winssl
-$(package)_config_opts_mingw64 += --with-winssl
-$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes
-
-# CI: cross-compile opts for Windows
-$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp
-$(package)_config_opts_mingw32 += --with-winssl
-$(package)_config_opts_mingw64 += --with-winssl
-$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes
-
-# CI: cross-compile opts for Windows
-$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp
-$(package)_config_opts_mingw32 += --with-winssl
-$(package)_config_opts_mingw64 += --with-winssl
-$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes
-
-# CI: cross-compile opts for Windows
-$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp
-$(package)_config_opts_mingw32 += --with-winssl
-$(package)_config_opts_mingw64 += --with-winssl
-$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes
-
-# CI: cross-compile opts for Windows
-$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp
-$(package)_config_opts_mingw32 += --with-winssl
-$(package)_config_opts_mingw64 += --with-winssl
-$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes
-
-# CI: cross-compile opts for Windows
-$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp
-$(package)_config_opts_mingw32 += --with-winssl
-$(package)_config_opts_mingw64 += --with-winssl
-$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes
-
-# CI: cross-compile opts for Windows
-$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp
-$(package)_config_opts_mingw32 += --with-winssl
-$(package)_config_opts_mingw64 += --with-winssl
-$(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes
-
-# CI: cross-compile opts for Windows
-$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp
+$(package)_config_opts += --disable-debug --disable-curldebug --disable-ldap --disable-ldaps --without-libidn2 --without-libpsl --without-brotli --without-zstd --without-nghttp2 --without-ssh --without-libssh2 --without-rtmp --disable-smb
 $(package)_config_opts_mingw32 += --with-winssl
 $(package)_config_opts_mingw64 += --with-winssl
 $(package)_conf_env += ac_cv_func_strerror_r=no ac_cv_strerror_r_char_p=no ac_cv_func_clock_gettime=no ac_cv_header_dlfcn_h=no ac_cv_have_decl_strerror_r=yes

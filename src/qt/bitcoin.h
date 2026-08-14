@@ -87,6 +87,9 @@ public:
     /// Get window identifier of QMainWindow (BitcoinGUI)
     WId getMainWinId() const;
 
+    /// Main window (null before createWindow)
+    BitcoinGUI* getWindow() const { return window; }
+
     /// Setup platform style
     void setupPlatformStyle();
 

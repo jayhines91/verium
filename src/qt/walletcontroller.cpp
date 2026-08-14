@@ -8,6 +8,7 @@
 #include <qt/guiutil.h>
 #include <qt/walletcontroller.h>
 
+#include <util/activitylog.h>
 #include <wallet/wallet.h>
 
 #include <interfaces/handler.h>
@@ -170,7 +171,17 @@ void WalletControllerActivity::showProgressDialog(const QString& label_text)
     m_progress_dialog->setRange(0, 0);
     m_progress_dialog->setCancelButton(nullptr);
     m_progress_dialog->setWindowModality(Qt::ApplicationModal);
+    m_progress_dialog->setMinimumDuration(0);
     GUIUtil::PolishProgressDialog(m_progress_dialog);
+    m_progress_dialog->show();
+    QApplication::processEvents();
+}
+
+void WalletControllerActivity::destroyProgressDialog()
+{
+    assert(m_progress_dialog);
+    delete m_progress_dialog;
+    m_progress_dialog = nullptr;
 }
 
 CreateWalletActivity::CreateWalletActivity(WalletController* wallet_controller, QWidget* parent_widget)
@@ -227,7 +238,7 @@ void CreateWalletActivity::createWallet()
 
 void CreateWalletActivity::finish()
 {
-    m_progress_dialog->hide();
+    destroyProgressDialog();
 
     if (!m_error_message.empty()) {
         QMessageBox::critical(m_parent_widget, tr("Create wallet failed"), QString::fromStdString(m_error_message));
@@ -268,7 +279,7 @@ OpenWalletActivity::OpenWalletActivity(WalletController* wallet_controller, QWid
 
 void OpenWalletActivity::finish()
 {
-    m_progress_dialog->hide();
+    destroyProgressDialog();
 
     if (!m_error_message.empty()) {
         QMessageBox::critical(m_parent_widget, tr("Open wallet failed"), QString::fromStdString(m_error_message));
@@ -294,4 +305,83 @@ void OpenWalletActivity::open(const std::string& path)
 
         QTimer::singleShot(0, this, &OpenWalletActivity::finish);
     });
+}
+
+EncryptWalletActivity::EncryptWalletActivity(WalletController* wallet_controller, QWidget* parent_widget)
+    : WalletControllerActivity(wallet_controller, parent_widget)
+{
+    m_passphrase.reserve(MAX_PASSPHRASE_SIZE);
+}
+
+EncryptWalletActivity::~EncryptWalletActivity()
+{
+    delete m_passphrase_dialog;
+}
+
+void EncryptWalletActivity::encrypt(WalletModel* wallet_model)
+{
+    m_target_model = wallet_model;
+    askPassphrase();
+}
+
+void EncryptWalletActivity::askPassphrase()
+{
+    m_passphrase_dialog = new AskPassphraseDialog(AskPassphraseDialog::Encrypt, m_parent_widget, &m_passphrase);
+    m_passphrase_dialog->setModel(m_target_model);
+    m_passphrase_dialog->setWindowModality(Qt::ApplicationModal);
+    m_passphrase_dialog->show();
+
+    connect(m_passphrase_dialog, &QObject::destroyed, [this] {
+        m_passphrase_dialog = nullptr;
+    });
+    connect(m_passphrase_dialog, &QDialog::accepted, [this] {
+        runEncrypt();
+    });
+    connect(m_passphrase_dialog, &QDialog::rejected, [this] {
+        Q_EMIT finished();
+    });
+}
+
+void EncryptWalletActivity::runEncrypt()
+{
+    showProgressDialog(tr("Encrypting wallet...\nThis may take several minutes."));
+
+    WalletModel* model = m_target_model;
+    SecureString passphrase = m_passphrase;
+
+    LogActivityEx(ActivityLevel::Info, __FILE__, __LINE__, __func__,
+        "Wallet encryption starting (runs in background; UI should stay responsive)");
+
+    QTimer::singleShot(0, worker(), [this, model, passphrase] {
+        m_success = model->setWalletEncrypted(true, passphrase);
+        LogActivityEx(ActivityLevel::Info, __FILE__, __LINE__, __func__,
+            "Wallet encryption background work finished (success=%s)", m_success ? "true" : "false");
+        QTimer::singleShot(0, this, &EncryptWalletActivity::finish);
+    });
+}
+
+void EncryptWalletActivity::finish()
+{
+    destroyProgressDialog();
+
+    const QString encryption_reminder = tr("Remember that encrypting your wallet cannot fully protect "
+        "your veriums from being stolen by malware infecting your computer.");
+
+    if (m_success) {
+        QMessageBox::warning(m_parent_widget, tr("Wallet encrypted"),
+            "<qt>" +
+            tr("Your wallet is now encrypted. ") + encryption_reminder +
+            "<br><br><b>" +
+            tr("IMPORTANT: Any previous backups you have made of your wallet file "
+               "should be replaced with the newly generated, encrypted wallet file. "
+               "For security reasons, previous backups of the unencrypted wallet file "
+               "will become useless as soon as you start using the new, encrypted wallet.") +
+            "</b></qt>");
+        Q_EMIT encrypted(m_target_model);
+    } else if (m_target_model) {
+        QMessageBox::critical(m_parent_widget, tr("Wallet encryption failed"),
+            tr("Wallet encryption failed due to an internal error. Your wallet was not encrypted."));
+    }
+
+    Q_EMIT finished();
 }

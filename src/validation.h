@@ -264,6 +264,9 @@ bool GetTransaction(const uint256& hash, CTransactionRef& tx, const Consensus::P
  * validationinterface callback.
  */
 bool ActivateBestChain(CValidationState& state, const CChainParams& chainparams, std::shared_ptr<const CBlock> pblock = std::shared_ptr<const CBlock>());
+/** True while bootstrap download/extract is pausing header and block sync. */
+bool IsChainSyncPausedForBootstrap();
+void SetChainSyncPausedForBootstrap(bool pause);
 CAmount GetBlockSubsidy(CBlockIndex* pindexPrev);
 
 /** Guess verification progress (as a fraction between 0.0=genesis and 1.0=current tip). */
