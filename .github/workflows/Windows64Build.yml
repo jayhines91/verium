@@ -2,14 +2,14 @@ name: Build Verium (Windows x86_64 via Ubuntu)
 
 on:
   push:
-    branches: [testnet]
+    branches: [master]
     paths: ['**.c', '**.cpp', '**.h', 'depends/**', '.github/workflows/Windows64Build.yml', 'configure.ac', 'Makefile*', 'src/**', 'share/**', 'contrib/**']
   workflow_dispatch:
     inputs:
       target_ref:
         description: "Branch/Tag/SHA to build"
         required: true
-        default: "testnet"
+        default: "master"
       depends_target:
         description: "Optional: build only this depends pkg first (e.g., curl, openssl). Leave empty for full depends."
         required: false

@@ -2,13 +2,13 @@ name: Build Verium (Linux x86_64 • depends)
 
 on:
   push:
-    branches: [ testnet ]
+    branches: [ master ]
   workflow_dispatch:
     inputs:
       target_ref:
         description: "Branch/Tag/SHA to build"
         required: true
-        default: "testnet"
+        default: "master"
       depends_target:
         description: "Optional: build only this depends pkg first (e.g., boost, openssl). Leave empty for full depends."
         required: false
