@@ -1,14 +1,15 @@
 Mozilla CA bundle for Verium
 ============================
 
-Static Linux builds link OpenSSL/curl without relying on the host's CA store.
-Verium ships a Mozilla-derived CA bundle so HTTPS (bootstrap, updates) works even
-when the `ca-certificates` package is not installed.
+Static Linux builds link OpenSSL/curl without relying on the host OpenSSL
+default store. Verium compiles a Mozilla-derived CA bundle into the binary so
+HTTPS (bootstrap, updates) works without shipping a separate cert file in release
+tarballs.
 
 Files
 -----
-- `src/certs/cacert.pem` — PEM file copied into Linux release tarballs
-- `src/certs/cacert_pem.inc` — same bundle compiled into the binary (final fallback)
+- `src/certs/cacert.pem` — source PEM used to regenerate the embedded bundle
+- `src/certs/cacert_pem.inc` — same bundle compiled into the binary
 
 Refresh (before releases)
 -------------------------
@@ -21,6 +22,8 @@ Source: https://curl.se/docs/caextract.html
 Trust order at runtime
 ----------------------
 1. `SSL_CERT_FILE` / `SSL_CERT_DIR` environment variables
-2. Common system paths (`/etc/ssl/certs/...`, etc.)
-3. `cacert.pem` next to the executable (release tarball layout)
-4. Embedded Mozilla bundle (always present in the binary)
+2. Common system paths (`/etc/ssl/certs/...`, etc.) when `ca-certificates` is installed
+3. Embedded Mozilla bundle in the binary (fallback)
+
+Normal desktop Linux already has (2). Minimal systems use (3). No separate
+`cacert.pem` is required next to the executable in release packages.

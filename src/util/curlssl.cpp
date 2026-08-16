@@ -14,16 +14,6 @@
 #include <cstring>
 #include <mutex>
 
-#ifdef WIN32
-#include <windows.h>
-#elif defined(__linux__)
-#include <limits.h>
-#include <unistd.h>
-#elif defined(__APPLE__)
-#include <limits.h>
-#include <mach-o/dyld.h>
-#endif
-
 #include "certs/cacert_pem.inc"
 
 namespace {
@@ -31,7 +21,6 @@ enum class CaSource {
     NONE,
     SYSTEM_FILE,
     SYSTEM_DIR,
-    BUNDLED_FILE,
     EMBEDDED,
 };
 
@@ -59,65 +48,11 @@ bool PathIsReadableDir(const std::string& path)
     return fs::exists(path, ec) && fs::is_directory(path, ec);
 }
 
-fs::path GetExeDir()
-{
-#ifdef WIN32
-    char path[MAX_PATH];
-    if (GetModuleFileNameA(nullptr, path, MAX_PATH) == 0) {
-        return {};
-    }
-    return fs::path(path).remove_filename();
-#elif defined(__linux__)
-    char path[PATH_MAX];
-    const ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
-    if (len <= 0) {
-        return {};
-    }
-    path[len] = '\0';
-    return fs::path(path).remove_filename();
-#elif defined(__APPLE__)
-    char path[PATH_MAX];
-    uint32_t size = sizeof(path);
-    if (_NSGetExecutablePath(path, &size) != 0) {
-        return {};
-    }
-    boost::system::error_code ec;
-    return fs::canonical(fs::path(path), ec).remove_filename();
-#else
-    return {};
-#endif
-}
-
-std::string FindBundledCaFile()
-{
-    const fs::path exe_dir = GetExeDir();
-    if (exe_dir.empty()) {
-        return {};
-    }
-
-    static const char* const REL_PATHS[] = {
-        "cacert.pem",
-        "certs/cacert.pem",
-        "../cacert.pem",
-        "../certs/cacert.pem",
-        nullptr,
-    };
-
-    for (const char* const* rel = REL_PATHS; *rel; ++rel) {
-        const fs::path candidate = exe_dir / *rel;
-        if (PathIsReadableFile(candidate.string())) {
-            return candidate.string();
-        }
-    }
-    return {};
-}
-
 const char* CaSourceLabel(CaSource source)
 {
     switch (source) {
     case CaSource::SYSTEM_FILE: return "system file";
     case CaSource::SYSTEM_DIR: return "system directory";
-    case CaSource::BUNDLED_FILE: return "bundled file";
     case CaSource::EMBEDDED: return "embedded Mozilla CA bundle";
     case CaSource::NONE: return "none";
     }
@@ -190,14 +125,6 @@ void DiscoverCaPaths()
                 }
                 break;
             }
-        }
-    }
-
-    if (g_ca.cainfo.empty()) {
-        const std::string bundled = FindBundledCaFile();
-        if (!bundled.empty()) {
-            g_ca.cainfo = bundled;
-            g_ca.source = CaSource::BUNDLED_FILE;
         }
     }
 

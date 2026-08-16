@@ -8,7 +8,9 @@
 #include <cstddef>
 #include <string>
 
-struct CURL;
+#ifndef CURLINC
+typedef void CURL;
+#endif
 
 /** Discover CA sources once (safe to call repeatedly). */
 void InitCurlSsl();

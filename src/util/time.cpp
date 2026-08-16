@@ -18,6 +18,7 @@ static inline struct tm* gmtime_r_compat(const time_t* t, struct tm* res){ retur
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/thread.hpp>
 #include <ctime>
+#include <thread>
 #include <tinyformat.h>
 
 static std::atomic<int64_t> nMockTime(0); //!< For unit testing
@@ -93,6 +94,11 @@ void MilliSleep(int64_t n)
 //should never get here
 #error missing boost sleep implementation
 #endif
+}
+
+void UninterruptibleSleep(const std::chrono::microseconds& n)
+{
+    std::this_thread::sleep_for(n);
 }
 
 std::string FormatISO8601DateTime(int64_t nTime) {

@@ -30,6 +30,9 @@ int64_t GetMockTime();
 
 void MilliSleep(int64_t n);
 
+/** Sleep for the given duration; not interruptible by signals. */
+void UninterruptibleSleep(const std::chrono::microseconds& n);
+
 /** Return system time (or mocked time, if set) */
 template <typename T>
 T GetTime();
