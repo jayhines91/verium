@@ -18,4 +18,7 @@ void downloadVersionFile();
 void downloadClient(std::string fileName);
 int getArchitecture();
 
+/** Call once before any curl use (thread-safe). */
+void ensureDownloaderInit();
+
 #endif // BITCOIN_DOWNLOADER_H

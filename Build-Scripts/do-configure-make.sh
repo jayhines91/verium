@@ -54,7 +54,14 @@ cp -f share/pixmaps/verium-qt.png "$OUTDIR/share/pixmaps/"
 cp -f share/pixmaps/verium-qt.png "$OUTDIR/share/icons/hicolor/128x128/apps/"
 cp -f contrib/release-tools/INSTALL_LINUX.txt "$OUTDIR/"
 
-PKG="verium-${V}-x86_64-pc-linux-gnu.tar.gz"
+PKG="verium-${V}-${HOST_TRIPLET}.tar.gz"
+echo "=== Removing previous Linux tarballs ==="
+shopt -s nullglob
+for old in verium-*-"${HOST_TRIPLET}".tar.gz verium-*-"${HOST_TRIPLET}".tar.gz.SHA256SUMS; do
+  echo "Deleting $old"
+  rm -f "$old"
+done
+shopt -u nullglob
 tar -C "$OUTDIR" -czf "$PKG" .
 sha256sum "$PKG" > "${PKG}.SHA256SUMS"
 echo "=== Built: $PKG ==="

@@ -36,6 +36,13 @@
 #include <util/system.h>
 #include <util/threadnames.h>
 
+#if defined(Q_OS_LINUX) && defined(ENABLE_BIP70)
+#include <util/curlssl.h>
+#include <QDir>
+#include <QSslCertificate>
+#include <QSslSocket>
+#endif
+
 #include <memory>
 
 #include <QApplication>
@@ -413,6 +420,54 @@ static void SetupUIArgs()
     gArgs.AddArg("-uiplatform", strprintf("Select platform to customize UI for (one of windows, macosx, other; default: %s)", BitcoinGUI::DEFAULT_UIPLATFORM), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::GUI);
 }
 
+#if defined(Q_OS_LINUX) && defined(ENABLE_BIP70)
+static void InitQtSslCertificates()
+{
+    if (!QSslSocket::supportsSsl()) {
+        return;
+    }
+    InitCurlSsl();
+
+    const std::string& cafile = GetSystemCaFile();
+    if (!cafile.empty()) {
+        const QList<QSslCertificate> certs = QSslCertificate::fromPath(QString::fromStdString(cafile), QSsl::Pem);
+        if (!certs.isEmpty()) {
+            QSslSocket::addDefaultCaCertificates(certs);
+            return;
+        }
+    }
+
+    const std::string& capath = GetSystemCaPath();
+    if (!capath.empty()) {
+        QList<QSslCertificate> certs;
+#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+        certs = QSslCertificate::fromPath(
+            QString::fromStdString(capath + "/*"), QSsl::Pem, QSslCertificate::PatternSyntax);
+#else
+        QDir dir(QString::fromStdString(capath));
+        const QStringList files = dir.entryList(QStringList() << "*.pem" << "*.crt", QDir::Files);
+        for (const QString& file : files) {
+            certs += QSslCertificate::fromPath(dir.absoluteFilePath(file), QSsl::Pem);
+        }
+#endif
+        if (!certs.isEmpty()) {
+            QSslSocket::addDefaultCaCertificates(certs);
+            return;
+        }
+    }
+
+    if (!UsingEmbeddedCaBundle()) {
+        return;
+    }
+
+    const QByteArray embedded(GetEmbeddedCaPem(), static_cast<int>(GetEmbeddedCaPemSize()));
+    const QList<QSslCertificate> embeddedCerts = QSslCertificate::fromData(embedded, QSsl::Pem);
+    if (!embeddedCerts.isEmpty()) {
+        QSslSocket::addDefaultCaCertificates(embeddedCerts);
+    }
+}
+#endif
+
 int GuiMain(int argc, char* argv[])
 {
 #ifdef WIN32
@@ -472,6 +527,24 @@ int GuiMain(int argc, char* argv[])
 
     // Now that the QApplication is setup and we have parsed our parameters, we can set the platform style
     app.setupPlatformStyle();
+#if defined(Q_OS_LINUX) && defined(ENABLE_BIP70)
+    // Payment-request HTTPS only; bootstrap/update use curl (ApplyCurlSslOptions).
+    InitQtSslCertificates();
+#endif
+
+    // Show splash before datadir/config/options work so Linux startup is not a blank hang.
+    QScopedPointer<const NetworkStyle> splashNetworkStyle;
+    try {
+        splashNetworkStyle.reset(NetworkStyle::instantiate(gArgs.GetChainName()));
+    } catch (const std::exception&) {
+        splashNetworkStyle.reset(NetworkStyle::instantiate(CBaseChainParams::MAIN));
+    }
+    if (!splashNetworkStyle) {
+        splashNetworkStyle.reset(NetworkStyle::instantiate(CBaseChainParams::MAIN));
+    }
+    assert(!splashNetworkStyle.isNull());
+    if (gArgs.GetBoolArg("-splash", DEFAULT_SPLASHSCREEN) && !gArgs.GetBoolArg("-min", false))
+        app.createSplashScreen(splashNetworkStyle.data());
 
     /// 3. Application identification
     // must be set before OptionsModel is initialized or translations are loaded,
@@ -576,9 +649,6 @@ int GuiMain(int argc, char* argv[])
         // Store intro dialog settings other than datadir (network specific)
         app.SetPrune(prune, true);
     }
-
-    if (gArgs.GetBoolArg("-splash", DEFAULT_SPLASHSCREEN) && !gArgs.GetBoolArg("-min", false))
-        app.createSplashScreen(networkStyle.data());
 
     int rv = EXIT_SUCCESS;
     try
